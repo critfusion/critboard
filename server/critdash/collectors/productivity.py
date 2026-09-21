@@ -67,10 +67,10 @@ than one root) are compared by identity; every linked worktree keeps its own
 path-scoped identity and is
 never merged with anything.
 
-Fixture-repo split: a handful of synthetic fixture/scratch repos (none
-excluded by default; configurable via config/sources.json:excluded_repos as a
-list of glob patterns, e.g. `["scratch-*"]`) can generate commit volume that
-has nothing to do with product work and dominates the raw 7d/30d totals.
+Fixture-repo split: synthetic repos matching configurable glob patterns can
+generate commit volume unrelated to product work. Repos matching these patterns
+(configured via config/sources.json:excluded_repos as a list of glob patterns,
+e.g. `["scratch-*"]`) are reported separately, not silently dropped.
 Rather than silently subtracting them from the headline
 numbers, this collector reports three views of the same shape: the top-level
 fields (unchanged, everything included -- backward compatible), plus
@@ -93,7 +93,7 @@ _LOG_FORMAT = f"COMMIT{_SEP}%H{_SEP}%ct{_SEP}%an"
 _BY_REPO_N = 30
 
 _RETRY_INITIAL_S = 3.0
-_DEFAULT_EXCLUDED_REPOS = ("pr3-codex-wave*",)
+_DEFAULT_EXCLUDED_REPOS = ()
 
 
 async def _git_log_numstat(path: str, since: str, timeout: float) -> str | None:

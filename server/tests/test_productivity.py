@@ -489,18 +489,18 @@ async def test_compute_repo_identity_falls_back_to_path_when_git_fails():
 
 
 def test_is_excluded_repo_matches_glob_pattern():
-    assert is_excluded_repo("pr3-codex-wave7", ["pr3-codex-wave*"]) is True
-    assert is_excluded_repo("demo-mailer", ["pr3-codex-wave*"]) is False
+    assert is_excluded_repo("demo-fixture-repo", ["demo-fixture-*"]) is True
+    assert is_excluded_repo("demo-mailer", ["demo-fixture-*"]) is False
 
 
 def test_split_commits_by_exclusion():
     commits_by_repo = {
         "realproj": [{"epoch_s": 1, "lines_added": 1, "lines_removed": 0, "files_changed": 1}],
-        "pr3-codex-wave7": [{"epoch_s": 1, "lines_added": 1, "lines_removed": 0, "files_changed": 1}],
+        "demo-fixture-repo": [{"epoch_s": 1, "lines_added": 1, "lines_removed": 0, "files_changed": 1}],
     }
-    included, excluded = split_commits_by_exclusion(commits_by_repo, ["pr3-codex-wave*"])
+    included, excluded = split_commits_by_exclusion(commits_by_repo, ["demo-fixture-*"])
     assert set(included) == {"realproj"}
-    assert set(excluded) == {"pr3-codex-wave7"}
+    assert set(excluded) == {"demo-fixture-repo"}
 
 
 @pytest.mark.asyncio
@@ -509,31 +509,50 @@ async def test_productivity_collector_splits_excluded_fixture_repos(tmp_path):
     real_repo.mkdir()
     _init_repo(real_repo)
 
-    fixture_repo = tmp_path / "pr3-codex-wave7"
+    fixture_repo = tmp_path / "demo-fixture-repo"
     fixture_repo.mkdir()
     _init_repo(fixture_repo)
 
     worktrees = [
         {"path": str(real_repo), "repo": "realproj", "host": "localhost"},
-        {"path": str(fixture_repo), "repo": "pr3-codex-wave7", "host": "localhost"},
+        {"path": str(fixture_repo), "repo": "demo-fixture-repo", "host": "localhost"},
     ]
     ctx = _FakeCtx(worktrees)
-    collector = ProductivityCollector(ctx=ctx, store=None, host="localhost")
+    collector = ProductivityCollector(
+        ctx=ctx, store=None, host="localhost", excluded_repos=["demo-fixture-*"]
+    )
     await collector.collect()
 
     prod = ctx.latest_productivity
     # top-level stays inclusive of everything -- nothing is silently dropped
     assert prod["commits_7d"] == 4
-    assert {r["repo"] for r in prod["by_repo"]} == {"realproj", "pr3-codex-wave7"}
-    assert prod["excluded_repo_patterns"] == ["pr3-codex-wave*"]
+    assert {r["repo"] for r in prod["by_repo"]} == {"realproj", "demo-fixture-repo"}
+    assert prod["excluded_repo_patterns"] == ["demo-fixture-*"]
 
     excl = prod["excluding_fixtures"]
     assert {r["repo"] for r in excl["by_repo"]} == {"realproj"}
     assert excl["commits_7d"] == 2
 
     fix = prod["fixtures"]
-    assert {r["repo"] for r in fix["by_repo"]} == {"pr3-codex-wave7"}
+    assert {r["repo"] for r in fix["by_repo"]} == {"demo-fixture-repo"}
     assert fix["commits_7d"] == 2
+
+
+@pytest.mark.asyncio
+async def test_productivity_collector_default_excludes_nothing(tmp_path):
+    fixture_repo = tmp_path / "demo-fixture-repo"
+    fixture_repo.mkdir()
+    _init_repo(fixture_repo)
+
+    ctx = _FakeCtx([{"path": str(fixture_repo), "repo": "demo-fixture-repo", "host": "localhost"}])
+    collector = ProductivityCollector(ctx=ctx, store=None, host="localhost")
+    await collector.collect()
+
+    prod = ctx.latest_productivity
+    # default excludes nothing -- all repos are included
+    assert prod["excluded_repo_patterns"] == []
+    assert {r["repo"] for r in prod["by_repo"]} == {"demo-fixture-repo"}
+    assert prod["excluding_fixtures"]["commits_7d"] == 2
 
 
 @pytest.mark.asyncio
