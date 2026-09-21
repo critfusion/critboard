@@ -95,6 +95,16 @@ DEFAULT_SOURCES = {
     "ssh_opts": [
         "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
     ],
+    # Collector cadence preset (briefing Task 5): "normal" (today's
+    # intervals_s numbers) or "relaxed" (~3x longer, for a laptop on
+    # battery). See Config.refresh_multiplier().
+    "refresh_preset": "normal",
+    # Settings UI writes config/layout.json and config/theme.json via
+    # POST /api/config/layout|theme -- that's the point of the settings
+    # panel. An operator exposing this dashboard beyond 127.0.0.1 (e.g.
+    # bind_host: 0.0.0.0 on a LAN) can set this false to make the dashboard
+    # read-only from the browser; both POSTs then return 403.
+    "allow_config_writes": True,
 }
 
 # Fallback used only if config/pricing.json is missing or fails to parse.
@@ -192,7 +202,24 @@ class Config:
                 return float(override)
             except ValueError:
                 pass
-        return float(self.sources.get("intervals_s", {}).get(name, 30))
+        base = float(self.sources.get("intervals_s", {}).get(name, 30))
+        return base * self.refresh_multiplier()
+
+    def remote_interval(self) -> float:
+        base = float(self.sources.get("remote_interval_s", 120))
+        return base * self.refresh_multiplier()
+
+    def refresh_multiplier(self) -> float:
+        """Settings panel cadence preset (briefing Task 5): "normal" (1x,
+        today's intervals_s numbers unchanged) or "relaxed" (~3x longer --
+        for a laptop on battery). Applied as a multiplier over the existing
+        per-collector numbers rather than a second set of interval values, so
+        config/sources.example.json's documented defaults stay the single
+        source of truth. An unrecognized value is treated as "normal" (1x),
+        never an error -- a typo'd preset must not silently slow every
+        collector to nothing."""
+        preset = self.sources.get("refresh_preset", "normal")
+        return 3.0 if preset == "relaxed" else 1.0
 
 
 def load_config() -> Config:
@@ -210,4 +237,23 @@ def load_config() -> Config:
     if db_override:
         sources["db_path"] = db_override
 
-    return Config(sources=sources, pricing=pricing)
+    # Bug fix: Config.config_dir/dashboard_root/server_dir are dataclass
+    # fields whose declared defaults (`= CONFIG_DIR`, `= DASHBOARD_ROOT`,
+    # `= SERVER_DIR`) are bound ONCE, at class-definition time (this
+    # module's first import) -- not re-evaluated per call. Relying on those
+    # defaults here silently ignored CRITDASH_CONFIG_DIR and any test's
+    # `monkeypatch.setattr(config_mod, "CONFIG_DIR", ...)` for config_dir
+    # specifically (load_config()'s own CONFIG_DIR-based lookups above, and
+    # sources["bind_host"] etc., were unaffected -- they read the module
+    # global fresh on every call). A Config built via the old
+    # `Config(sources=sources, pricing=pricing)` therefore had a CORRECTLY
+    # isolated `.sources` dict but a `.config_dir` (and `.layout_path`/
+    # `.theme_path`) still pointing at the REAL, un-isolated config
+    # directory -- exactly the kind of test-isolation gap that lets a test
+    # believe it's writing to a tmp_path config dir while actually writing
+    # to a real machine's config/layout.json or config/theme.json. Passing
+    # these three explicitly makes every Config instance reflect whatever
+    # CONFIG_DIR/DASHBOARD_ROOT/SERVER_DIR are AT CALL TIME, matching every
+    # other CONFIG_DIR-derived value load_config() already computes.
+    return Config(sources=sources, pricing=pricing, config_dir=CONFIG_DIR,
+                  dashboard_root=DASHBOARD_ROOT, server_dir=SERVER_DIR)

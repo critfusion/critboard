@@ -597,6 +597,28 @@ def build_quota_response(cache: dict[str, dict], stale_after_s: float) -> dict:
     return {"providers": providers, "stale": any_stale, "generated_at": _now_iso()}
 
 
+# -- static provider-availability classification (GET /api/settings/suggest) -
+# Derived from this module's own verified per-provider findings above (never
+# a live call -- see the hard rules in the module docstring; this endpoint is
+# a GET that must never make one). never_available providers have NO live
+# endpoint at all (check_opencode_zen/check_google never issue a network
+# request -- source is always None). needs_credential providers DO have a
+# real, documented endpoint, but the only credential found on disk on the
+# hosts this was verified against is the wrong type or expired. working
+# providers succeed with what's on disk today.
+NEVER_AVAILABLE_PROVIDERS: tuple[str, ...] = ("opencode_zen", "google")
+NEEDS_CREDENTIAL_PROVIDERS: tuple[str, ...] = ("kimi", "xai", "openai")
+WORKING_PROVIDERS: tuple[str, ...] = ("openrouter", "claude")
+
+
+def provider_availability_buckets() -> dict[str, list[str]]:
+    return {
+        "never_available": list(NEVER_AVAILABLE_PROVIDERS),
+        "needs_credential": list(NEEDS_CREDENTIAL_PROVIDERS),
+        "working": list(WORKING_PROVIDERS),
+    }
+
+
 class RateLimited(Exception):
     def __init__(self, retry_after_s: float):
         super().__init__(f"refresh rate-limited; retry in {retry_after_s:.0f}s")
@@ -638,10 +660,14 @@ async def do_refresh(
 
 
 __all__ = [
+    "NEEDS_CREDENTIAL_PROVIDERS",
+    "NEVER_AVAILABLE_PROVIDERS",
     "PROVIDER_NAMES",
+    "WORKING_PROVIDERS",
     "RateLimited",
     "RefreshState",
     "build_quota_response",
+    "provider_availability_buckets",
     "check_claude_block",
     "check_google",
     "check_kimi",

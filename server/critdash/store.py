@@ -9,6 +9,55 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .tzutil import safe_zoneinfo
+
+# Widened lookback used whenever a day-bucketed query needs to be re-bucketed
+# by a non-UTC local calendar day (see fold_hour_rows_to_local_day below): no
+# IANA timezone offset exceeds +-14h, so a flat 24h widen always pulls in
+# every hour that could shift into the requested local-day range. The caller
+# discards any bucket outside what it actually asked for (a bucket_set filter
+# in history.py, or zero_fill_daily's own dense-key lookup), so over-fetching
+# here is free -- it can never leak an extra day into a response.
+_TZ_WIDEN_HOURS = 24
+
+
+def _widen_since_hour(since_iso: str, hours: int = _TZ_WIDEN_HOURS) -> str:
+    dt = datetime.fromisoformat(since_iso.replace("Z", "+00:00")) - timedelta(hours=hours)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fold_hour_rows_to_local_day(
+    rows: Iterable[sqlite3.Row], tz_name: str, key_cols: tuple[str, ...] = ()
+) -> list[dict]:
+    """Re-buckets hour-granularity rows (each with a 'bucket' column of the
+    form 'YYYY-MM-DDTHH:00:00Z') into local-calendar-day buckets for
+    `tz_name`, summing every other numeric column. `key_cols` (e.g.
+    ('host', 'model')) are carried through and included in the fold key, for
+    grouped queries -- pass () for a flat (ungrouped) timeline. This is what
+    lets day-bucketed history honor a non-UTC timezone: SQLite has no IANA
+    timezone database, so the day boundary is computed in Python instead of
+    SQL, over rows already fetched at hour granularity (which needs no
+    timezone -- an hour boundary is the same instant everywhere)."""
+    tz = safe_zoneinfo(tz_name)
+    acc: dict[tuple, dict] = {}
+    for r in rows:
+        dt = datetime.fromisoformat(r["bucket"].replace("Z", "+00:00"))
+        day_key = dt.astimezone(tz).date().isoformat()
+        fold_key = (day_key, *(r[c] for c in key_cols))
+        entry = acc.get(fold_key)
+        if entry is None:
+            entry = {"bucket": day_key, **{c: r[c] for c in key_cols}}
+            for col in r.keys():
+                if col in ("bucket", *key_cols):
+                    continue
+                entry[col] = 0.0 if isinstance(r[col], float) else 0
+            acc[fold_key] = entry
+        for col in r.keys():
+            if col in ("bucket", *key_cols):
+                continue
+            entry[col] += r[col]
+    return list(acc.values())
+
 # The Anthropic rate-limit block duration. A block starts at some message and
 # ends exactly this long after -- see current_usage_block_start() below.
 BLOCK_DURATION = timedelta(hours=5)
@@ -579,6 +628,19 @@ class Store:
                 (since_iso,),
             ).fetchall()
 
+    def usage_timeline_daily_tz(self, since_iso: str, tz_name: str = "UTC") -> list[dict]:
+        """Same shape as usage_timeline_daily, but day buckets are the local
+        calendar day in `tz_name` rather than UTC's. tz_name="UTC" (or a
+        falsy value) takes the plain SQL path above unchanged -- byte-
+        identical to the pre-existing behavior. Any other timezone re-buckets
+        from the existing hourly query (widened so a local day near the
+        window edge is never cut short) via fold_hour_rows_to_local_day, so
+        SQLite never needs to know about IANA timezones."""
+        if not tz_name or tz_name == "UTC":
+            return [dict(r) for r in self.usage_timeline_daily(since_iso)]
+        hourly = self.usage_timeline_hourly(_widen_since_hour(since_iso))
+        return fold_hour_rows_to_local_day(hourly, tz_name)
+
     # -- grouped timeline queries (history.py: GET /api/history/usage
     # group_by=model/provider/host) -----------------------------------------
     # Each of the four source tables gets one bucketed-by-(bucket, host,
@@ -589,13 +651,22 @@ class Store:
     # remote_kimi_usage_buckets are every OTHER host's pre-aggregated
     # buckets -- RemoteCollector only probes hosts with mode == "ssh", never
     # the local one, so the two sets are always disjoint by host).
-    def usage_events_grouped_timeline(self, since_iso: str, bucket: str) -> list[sqlite3.Row]:
+    def usage_events_grouped_timeline(
+        self, since_iso: str, bucket: str, tz_name: str = "UTC"
+    ) -> list[sqlite3.Row] | list[dict]:
         """(bucket, host, model) token+cost sums from local usage_events.
         cost_usd is the per-row value already stored at ingest time (see
         collectors/usage.py), safe to SUM directly -- no re-costing needed
-        here, unlike the remote path below."""
+        here, unlike the remote path below.
+
+        bucket='day' with tz_name != 'UTC' re-buckets from the hour query
+        (widened) via fold_hour_rows_to_local_day, same technique as
+        usage_timeline_daily_tz -- SQLite has no IANA timezone database."""
         if bucket not in ("hour", "day"):
             raise ValueError(f"invalid bucket: {bucket!r}")
+        if bucket == "day" and tz_name and tz_name != "UTC":
+            hourly = self.usage_events_grouped_timeline(_widen_since_hour(since_iso), "hour")
+            return fold_hour_rows_to_local_day(hourly, tz_name, key_cols=("host", "model"))
         bucket_expr = "substr(ts,1,10)" if bucket == "day" else "substr(ts,1,13) || ':00:00Z'"
         with self._lock:
             return self._conn.execute(
@@ -611,16 +682,25 @@ class Store:
                 (since_iso,),
             ).fetchall()
 
-    def remote_usage_grouped_timeline(self, since_iso: str, bucket: str) -> list[sqlite3.Row]:
+    def remote_usage_grouped_timeline(
+        self, since_iso: str, bucket: str, tz_name: str = "UTC"
+    ) -> list[sqlite3.Row] | list[dict]:
         """Same grain as usage_events_grouped_timeline but from
         remote_usage_buckets (every other host). cache_write_5m/1h are kept
         SEPARATE (not combined like the local query above) because the two
         TTL buckets price differently -- see pricing.compute_cost_usd -- and
         no cost_usd is stored on this table (pricing is applied centrally on
         the local host at query time), so the caller needs the split figures to
-        cost each row correctly."""
+        cost each row correctly.
+
+        bucket='day' with tz_name != 'UTC': same hour-widen-and-fold
+        technique as usage_events_grouped_timeline above -- remote_usage_buckets
+        is hour-granularity, so this is exact, not a further approximation."""
         if bucket not in ("hour", "day"):
             raise ValueError(f"invalid bucket: {bucket!r}")
+        if bucket == "day" and tz_name and tz_name != "UTC":
+            hourly = self.remote_usage_grouped_timeline(_widen_since_hour(since_iso), "hour")
+            return fold_hour_rows_to_local_day(hourly, tz_name, key_cols=("host", "model"))
         bucket_expr = "substr(hour,1,10)" if bucket == "day" else "hour || ':00:00Z'"
         with self._lock:
             return self._conn.execute(
@@ -636,13 +716,21 @@ class Store:
                 (since_iso[:13],),
             ).fetchall()
 
-    def kimi_turn_grouped_timeline(self, since_iso: str, bucket: str) -> list[sqlite3.Row]:
+    def kimi_turn_grouped_timeline(
+        self, since_iso: str, bucket: str, tz_name: str = "UTC"
+    ) -> list[sqlite3.Row] | list[dict]:
         """(bucket, host, model) sums from local kimi_turn_events. Kimi has
         no input/output/cache split (one `tokens` total per turn -- see
         collectors/kimi.py) and no cost (subscription billing, not
-        per-token)."""
+        per-token).
+
+        bucket='day' with tz_name != 'UTC': same hour-widen-and-fold
+        technique as usage_events_grouped_timeline above."""
         if bucket not in ("hour", "day"):
             raise ValueError(f"invalid bucket: {bucket!r}")
+        if bucket == "day" and tz_name and tz_name != "UTC":
+            hourly = self.kimi_turn_grouped_timeline(_widen_since_hour(since_iso), "hour")
+            return fold_hour_rows_to_local_day(hourly, tz_name, key_cols=("host", "model"))
         bucket_expr = "substr(ts,1,10)" if bucket == "day" else "substr(ts,1,13) || ':00:00Z'"
         with self._lock:
             return self._conn.execute(
@@ -660,7 +748,13 @@ class Store:
         remote_usage_buckets above. Callers only use this when the requested
         bucket is 'day'; an hour-bucketed grouped query cannot place a
         remote host's Kimi tokens within the day, so it is left out there
-        (a real resolution gap, not fabricated placement -- see history.py)."""
+        (a real resolution gap, not fabricated placement -- see history.py).
+
+        NOT timezone-aware: this table is pre-aggregated to a UTC calendar
+        day by the remote probe before it ever reaches this host, so the
+        day boundary it was bucketed at cannot be recovered here -- a real
+        architectural limitation (see history.py's _accumulate), not an
+        oversight."""
         with self._lock:
             return self._conn.execute(
                 """SELECT day AS bucket, host, model,
@@ -1319,16 +1413,26 @@ def _zero_fill_row(key: str, row: sqlite3.Row | None) -> dict:
     }
 
 
-def dense_bucket_keys(end: datetime, bucket: str, count: int) -> list[str]:
+def dense_bucket_keys(end: datetime, bucket: str, count: int, tz_name: str = "UTC") -> list[str]:
     """Exactly `count` contiguous bucket keys ending at the bucket containing
     `end` (inclusive), in the same string format the *_grouped_timeline and
     usage_timeline_hourly/daily 'bucket' columns use ('YYYY-MM-DD' for day,
     'YYYY-MM-DDTHH:00:00Z' for hour). Shared by zero_fill_hourly/daily below
     and by history.py's grouped (group_by=model/provider/host) response, so
-    the flat and grouped paths can never disagree on bucket boundaries."""
+    the flat and grouped paths can never disagree on bucket boundaries.
+
+    `tz_name` only affects the day-bucket case: `end` (always UTC-aware) is
+    converted to that timezone's local calendar date before counting
+    backward, so a user in UTC-6 gets day boundaries that fall at their own
+    midnight, not UTC's. Day arithmetic is done on plain `date` objects
+    (never `timedelta` against an aware datetime) so it can never double- or
+    skip a day across a DST transition -- a calendar day is always exactly
+    one date step, never a fixed 24h span. tz_name="UTC" (the default)
+    reproduces the exact pre-existing UTC-only behavior. Hour buckets never
+    need a timezone -- an hour boundary is the same instant everywhere."""
     if bucket == "day":
-        end_b = end.replace(hour=0, minute=0, second=0, microsecond=0)
-        return [(end_b - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(count - 1, -1, -1)]
+        end_local_date = end.astimezone(safe_zoneinfo(tz_name)).date()
+        return [(end_local_date - timedelta(days=i)).isoformat() for i in range(count - 1, -1, -1)]
     end_b = end.replace(minute=0, second=0, microsecond=0)
     return [(end_b - timedelta(hours=i)).strftime("%Y-%m-%dT%H:00:00Z") for i in range(count - 1, -1, -1)]
 
@@ -1341,8 +1445,16 @@ def zero_fill_hourly(rows: Iterable[sqlite3.Row], end: datetime, count: int) -> 
     return [_zero_fill_row(key, by_bucket.get(key)) for key in dense_bucket_keys(end, "hour", count)]
 
 
-def zero_fill_daily(rows: Iterable[sqlite3.Row], end: datetime, count: int) -> list[dict]:
+def zero_fill_daily(
+    rows: Iterable[sqlite3.Row], end: datetime, count: int, tz_name: str = "UTC"
+) -> list[dict]:
     """Same as zero_fill_hourly but for day buckets ('YYYY-MM-DD'), matching
-    usage_timeline_daily's 'bucket' column."""
+    usage_timeline_daily/usage_timeline_daily_tz's 'bucket' column. `rows`
+    must already be bucketed in the same timezone as `tz_name` (see
+    Store.usage_timeline_daily_tz) -- this function only decides which
+    `count` local-day keys to render and zero-fills the gaps, it does not
+    itself re-bucket anything."""
     by_bucket = {row["bucket"]: row for row in rows}
-    return [_zero_fill_row(key, by_bucket.get(key)) for key in dense_bucket_keys(end, "day", count)]
+    return [
+        _zero_fill_row(key, by_bucket.get(key)) for key in dense_bucket_keys(end, "day", count, tz_name)
+    ]

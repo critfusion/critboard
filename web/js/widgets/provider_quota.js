@@ -5,7 +5,10 @@
 // GETs the last cached result, same as usage_history.js's own-fetch pattern.
 import { el, fmtRelTime, fmtCost, fmtTokens, fmtInt, clamp } from "../utils.js";
 
-const PROVIDER_LABELS = {
+// Exported so settings.js can build the provider-quota-visibility checklist
+// off the same canonical id -> display-name map this widget renders with,
+// instead of keeping a second copy that could drift.
+export const PROVIDER_LABELS = {
   openrouter: "OpenRouter",
   opencode_zen: "OpenCode Zen",
   google: "Google / Gemini",
@@ -126,8 +129,15 @@ function renderRows(host, providers) {
   for (const entry of providers) host.appendChild(renderRow(entry));
 }
 
-function mount(container) {
+function mount(container, ctx = {}) {
   container.innerHTML = "";
+
+  // Provider rows a user hid from the settings dialog (layout.panels[].
+  // options.hidden_providers, written by settings.js) -- filtered out here
+  // so the setting actually affects what renders, not just a checkbox
+  // that's cosmetic. never_available providers (no endpoint, will never
+  // report data) default to this list unless the user overrides it.
+  const hidden = new Set(((ctx.options || {}).hidden_providers) || []);
 
   const status = el("span", { class: "faint mono", style: "font-size:9px;" }, "");
   const btn = el("button", { type: "button", class: "show-all-btn quota-refresh-btn" }, "Refresh");
@@ -162,7 +172,7 @@ function mount(container) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (!rowsHost.isConnected) return;
-      renderRows(rowsHost, json.providers);
+      renderRows(rowsHost, (json.providers || []).filter((p) => !hidden.has(p.provider)));
     } catch (err) {
       if (!rowsHost.isConnected) return;
       rowsHost.innerHTML = "";
@@ -206,7 +216,7 @@ function mount(container) {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      if (rowsHost.isConnected) renderRows(rowsHost, json.providers);
+      if (rowsHost.isConnected) renderRows(rowsHost, (json.providers || []).filter((p) => !hidden.has(p.provider)));
       setBtn(false, "Refresh");
     } catch (err) {
       status.textContent = "refresh failed";
@@ -221,7 +231,7 @@ export default {
   title: "Provider quota",
   minW: 4,
   minH: 3,
-  render(container) {
-    mount(container);
+  render(container, ctx) {
+    mount(container, ctx || {});
   },
 };

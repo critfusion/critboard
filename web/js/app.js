@@ -1,6 +1,7 @@
 import { getWidget, dependencies } from "./registry.js";
-import { get, setPath, fmtRelTime, el } from "./utils.js";
+import { get, setPath, fmtRelTime, el, applyTheme } from "./utils.js";
 import * as modal from "./modal.js";
+import { setupSettingsGear } from "./settings.js";
 
 // ---------------- data source resolution ----------------
 // Two ways to run against the fixture instead of the live API (documented
@@ -59,19 +60,19 @@ const bus = {
 };
 window.__critdashBus = bus;
 
-// ---------------- theme ----------------
-
-function applyTheme(theme) {
-  if (!theme) return;
-  const root = document.documentElement.style;
-  const groups = { color: theme.colors, font: theme.fonts, radius: theme.radius, density: theme.density, motion: theme.motion };
-  for (const [prefix, obj] of Object.entries(groups)) {
-    if (!obj) continue;
-    for (const [k, v] of Object.entries(obj)) {
-      root.setProperty(`--${prefix}-${k}`, v);
-    }
+// Settings dialog (js/settings.js) saves config over its own fetch calls,
+// then emits this event instead of importing app.js's internals directly
+// (keeps the module graph one-directional: app.js -> settings.js only).
+// Re-pulls layout+theme and rebuilds so a saved title/panel-visibility/theme
+// change shows up immediately, no manual page reload required.
+bus.on("settings:saved", async () => {
+  try {
+    await loadConfig();
+    renderAllPanels();
+  } catch (e) {
+    console.error("post-save config reload failed", e);
   }
-}
+});
 
 // ---------------- layout / grid ----------------
 //
@@ -116,7 +117,11 @@ const CHART_PANEL_TYPES = new Set(["spend_timeline", "usage_history"]);
 // declaration order for panels that don't specify one. Tablet keeps
 // declaration order (two-column reflow only, no reordering).
 function panelsForBreakpoint(layout, bp) {
-  const panels = layout.panels || [];
+  // panel.hidden (set from the settings dialog's panel-visibility list) is
+  // filtered out at every breakpoint, before idx assignment -- geometry
+  // (x/y/w/h) is never touched, so re-showing a panel restores it to its
+  // original grid position instead of appending it at the end.
+  const panels = (layout.panels || []).filter((p) => !p.hidden);
   const withIdx = panels.map((panel, idx) => ({ panel, idx }));
   if (bp !== "mobile") return withIdx;
   const visible = withIdx.filter(({ panel }) => !(panel.mobile && panel.mobile.hidden));
@@ -613,9 +618,18 @@ async function boot() {
   setupKeyboard();
   setupResponsive();
   buildWindowSelector();
+  // Wired before loadConfig()/buildGrid() below, and lives in the static
+  // header markup outside #grid entirely -- so a layout that fails to load
+  // or fails to render never takes the settings dialog down with it. That
+  // is the way back in if a saved panel config breaks the grid.
+  setupSettingsGear();
   setConn(FIXTURE_MODE ? "live" : "offline");
 
-  await loadConfig();
+  try {
+    await loadConfig();
+  } catch (e) {
+    console.error("initial config load failed", e);
+  }
 
   try {
     await loadSnapshot();

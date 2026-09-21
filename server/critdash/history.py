@@ -89,6 +89,7 @@ def _empty_totals() -> dict:
 
 def _accumulate(
     store: Store, pricing: dict, since_iso: str, since_day: str, bucket: str, bucket_set: set[str],
+    tz_name: str = "UTC",
 ):
     """Returns acc: dict[(provider, host, model)][bucket_key] -> mutable
     totals dict. Every one of the four source queries feeds into the SAME
@@ -97,17 +98,21 @@ def _accumulate(
     remote rows in the same bucket (impossible today since local/remote are
     disjoint by host, but true in general for two hosts sharing a model in
     one bucket) is summed correctly rather than overwritten. `bucket_set` is
-    a defensive filter (build_grouped_history already anchors since_iso/
-    since_day to the first dense bucket's own start, so this should never
-    trim anything in practice) against a row landing outside the rendered
-    range."""
+    a defensive filter for the UTC (tz_name="UTC") case (build_grouped_history
+    already anchors since_iso/since_day to the first dense bucket's own
+    start, so this should never trim anything there in practice) -- but for
+    bucket='day' with a non-UTC tz_name it does real work: the three local/
+    remote-hourly sources below are queried with a widened lookback so a
+    local day near the window edge is never cut short (see Store's
+    *_grouped_timeline day+tz_name path), and bucket_set is what trims that
+    deliberate over-fetch back down to exactly the requested range."""
     acc: dict[tuple[str, str, str], dict[str, dict]] = {}
 
     def cell(provider: str, host: str, model: str, bkey: str) -> dict:
         by_bucket = acc.setdefault((provider, host, model), {})
         return by_bucket.setdefault(bkey, _empty_totals())
 
-    for r in store.usage_events_grouped_timeline(since_iso, bucket):
+    for r in store.usage_events_grouped_timeline(since_iso, bucket, tz_name):
         if r["bucket"] not in bucket_set:
             continue
         c = cell("claude", r["host"], r["model"] or "unknown", r["bucket"])
@@ -119,7 +124,7 @@ def _accumulate(
         c["cost"] = (c["cost"] or 0.0) + r["cost_usd"]
         c["tokens"] += r["input"] + r["output"] + r["cache_read"] + r["cache_write"]
 
-    for r in store.remote_usage_grouped_timeline(since_iso, bucket):
+    for r in store.remote_usage_grouped_timeline(since_iso, bucket, tz_name):
         if r["bucket"] not in bucket_set:
             continue
         cost = compute_cost_usd(
@@ -136,7 +141,7 @@ def _accumulate(
         c["cost"] = (c["cost"] or 0.0) + cost
         c["tokens"] += r["input"] + r["output"] + r["cache_read"] + cw
 
-    for r in store.kimi_turn_grouped_timeline(since_iso, bucket):
+    for r in store.kimi_turn_grouped_timeline(since_iso, bucket, tz_name):
         if r["bucket"] not in bucket_set:
             continue
         c = cell("kimi", r["host"], r["model"] or "unknown", r["bucket"])
@@ -146,6 +151,10 @@ def _accumulate(
         # subscription quota, not per token; see module docstring).
 
     if bucket == "day":
+        # NOT timezone-aware -- remote_kimi_usage_buckets is pre-aggregated
+        # to a UTC calendar day before it reaches this host (see
+        # Store.remote_kimi_grouped_timeline's docstring); a real resolution
+        # gap for a non-UTC tz_name, not an oversight.
         for r in store.remote_kimi_grouped_timeline(since_day):
             if r["bucket"] not in bucket_set:
                 continue
@@ -343,10 +352,10 @@ def _coverage(fs, group_by: str, series: list[dict], since_dt: datetime, until_d
 
 def build_grouped_history(
     store: Store, pricing: dict, window: str, bucket: str, group_by: str,
-    since_dt: datetime, until_dt: datetime,
+    since_dt: datetime, until_dt: datetime, tz_name: str = "UTC",
 ) -> dict:
     count = bucket_count(since_dt, until_dt, bucket, window)
-    bucket_keys = dense_bucket_keys(until_dt, bucket, count)
+    bucket_keys = dense_bucket_keys(until_dt, bucket, count, tz_name)
     bucket_set = set(bucket_keys)
 
     # Query from the FIRST DENSE BUCKET's own start, not from since_dt's raw
@@ -363,7 +372,7 @@ def build_grouped_history(
     since_iso = first_bucket if bucket == "hour" else first_bucket + "T00:00:00Z"
     since_day = first_bucket if bucket == "day" else first_bucket[:10]
 
-    acc = _accumulate(store, pricing, since_iso, since_day, bucket, bucket_set)
+    acc = _accumulate(store, pricing, since_iso, since_day, bucket, bucket_set, tz_name)
 
     total_tokens = 0
     total_cost = 0.0

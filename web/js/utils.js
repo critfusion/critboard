@@ -134,6 +134,21 @@ export function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+// Applies a theme document's colors/fonts/radius/density/motion groups as
+// CSS custom properties on :root. Shared by app.js (boot-time theme load)
+// and settings.js (live preview of a preset before Save is clicked).
+export function applyTheme(theme) {
+  if (!theme) return;
+  const root = document.documentElement.style;
+  const groups = { color: theme.colors, font: theme.fonts, radius: theme.radius, density: theme.density, motion: theme.motion };
+  for (const [prefix, obj] of Object.entries(groups)) {
+    if (!obj) continue;
+    for (const [k, v] of Object.entries(obj)) {
+      root.setProperty(`--${prefix}-${k}`, v);
+    }
+  }
+}
+
 // localStorage helpers -- wrapped in try/catch so a private window or
 // blocked storage degrades to "nothing persisted" instead of breaking
 // rendering. Used by table widgets to remember per-panel sort/filter state.

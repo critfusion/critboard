@@ -1,5 +1,5 @@
 {
-  "_readme": "Copy of the defaults used to seed config/sources.json on first run. This file IS tracked in git; config/sources.json is NOT (see .gitignore) -- it holds machine-local paths and hostnames and is generated from this file automatically the first time the dashboard starts. Edit config/sources.json directly for your own machine; edit this file only if you want to change what a fresh install starts with.",
+  "_readme": "Copy of the defaults used to seed config/sources.json on first run. This file IS tracked in git; config/sources.json is NOT (see .gitignore) -- it holds machine-local paths and hostnames and is generated from this file automatically the first time the dashboard starts. Edit config/sources.json directly for your own machine; edit this file only if you want to change what a fresh install starts with. `refresh_preset` is 'normal' (the intervals_s below, unchanged) or 'relaxed' (roughly 3x longer -- for a laptop on battery); it is a multiplier over intervals_s, not a second set of numbers. `allow_config_writes` (default true) gates POST /api/config/layout and POST /api/config/theme -- the settings panel needs it true to save changes; set it false if you bind this dashboard beyond 127.0.0.1 (e.g. bind_host 0.0.0.0 on a LAN) and want it read-only from the browser.",
   "beads_env": "~/.config/beads/env",
   "beads_actor": "critdash",
   "bd_bin": "~/.local/bin/bd",
@@ -42,6 +42,8 @@
     ".tox",
     ".gradle"
   ],
+  "refresh_preset": "normal",
+  "allow_config_writes": true,
   "host": "localhost",
   "bind_host": "127.0.0.1",
   "bind_port": 9999,

@@ -628,6 +628,21 @@ def test_build_quota_response_old_entry_is_stale():
     assert resp["stale"] is True
 
 
+def test_provider_availability_buckets_partition_all_providers_once():
+    buckets = quota.provider_availability_buckets()
+    assert set(buckets) == {"never_available", "needs_credential", "working"}
+    all_listed = buckets["never_available"] + buckets["needs_credential"] + buckets["working"]
+    assert sorted(all_listed) == sorted(quota.PROVIDER_NAMES)
+    assert len(all_listed) == len(set(all_listed))  # no provider listed twice
+
+
+def test_provider_availability_buckets_matches_documented_findings():
+    buckets = quota.provider_availability_buckets()
+    assert set(buckets["never_available"]) == {"opencode_zen", "google"}
+    assert set(buckets["needs_credential"]) == {"kimi", "xai", "openai"}
+    assert set(buckets["working"]) == {"openrouter", "claude"}
+
+
 def test_check_refresh_rate_limit_allows_first_call():
     state = quota.RefreshState()
     quota.check_refresh_rate_limit(state, time.monotonic(), min_interval_s=30)  # no raise

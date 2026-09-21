@@ -14,6 +14,17 @@
 //                 while the modal is open. Must be safe to call repeatedly.
 //     triggerEl -> element to return focus to on close (only captured the
 //                 first time the modal opens for a given interaction).
+//     noLiveRefresh -> opt-in; when true, app.js's periodic refreshOpen()
+//                 calls (fired after every snapshot/SSE patch) are skipped
+//                 while this modal is open. For a form the user is actively
+//                 typing into (e.g. settings.js), the default behaviour --
+//                 wipe bodyEl and rebuild from scratch on every tick -- would
+//                 drop focus and in-progress edits every few seconds.
+//     onClose    -> optional callback invoked once, at the start of
+//                 closeModal(), however the modal closes (X, backdrop,
+//                 Escape, or a widget's own explicit closeModal() call).
+//                 Used by settings.js to revert its live theme-preset
+//                 preview when the dialog is closed without saving.
 //   registerResolver(kind, (id) => {...}) lets a detail module open itself
 //     when the page loads with a matching #kind/id hash, or on back/forward.
 
@@ -31,6 +42,8 @@ const state = {
   id: null,
   rebuild: null,
   lastFocused: null,
+  noLiveRefresh: false,
+  onClose: null,
 };
 
 const resolvers = {};
@@ -112,7 +125,7 @@ function clearHash() {
   }
 }
 
-export function openModal({ kind, id, title, rebuild, triggerEl }) {
+export function openModal({ kind, id, title, rebuild, triggerEl, noLiveRefresh = false, onClose = null }) {
   ensureDom();
   const wasOpen = state.open;
   if (!wasOpen) {
@@ -122,6 +135,8 @@ export function openModal({ kind, id, title, rebuild, triggerEl }) {
   state.kind = kind;
   state.id = id;
   state.rebuild = rebuild;
+  state.noLiveRefresh = noLiveRefresh;
+  state.onClose = onClose;
 
   titleEl.textContent = title || String(id ?? "");
   renderBody();
@@ -137,6 +152,11 @@ export function openModal({ kind, id, title, rebuild, triggerEl }) {
 function renderBody() {
   if (!bodyEl || !state.rebuild) return;
   bodyEl.innerHTML = "";
+  // Reset to the baseline class every render so a class a widget's rebuild()
+  // added (e.g. settings.js's settings-modal-body, which changes this
+  // element's padding) never leaks into a different kind of modal opened
+  // afterwards -- same wipe-and-rebuild guarantee innerHTML already gets.
+  bodyEl.className = "detail-modal-body";
   try {
     state.rebuild(bodyEl, window.__critdashData || null);
   } catch (err) {
@@ -148,6 +168,14 @@ function renderBody() {
 
 export function closeModal(opts = {}) {
   if (!state.open) return;
+  const onClose = state.onClose;
+  if (typeof onClose === "function") {
+    try {
+      onClose();
+    } catch (e) {
+      console.error("[modal] onClose handler threw", e);
+    }
+  }
   overlayEl.classList.remove("open");
   overlayEl.setAttribute("data-open", "false");
   const focusTarget = state.lastFocused;
@@ -156,6 +184,8 @@ export function closeModal(opts = {}) {
   state.id = null;
   state.rebuild = null;
   state.lastFocused = null;
+  state.noLiveRefresh = false;
+  state.onClose = null;
   if (!opts.fromHashChange) clearHash();
   if (focusTarget && typeof focusTarget.focus === "function") {
     try {
@@ -170,7 +200,7 @@ export function closeModal(opts = {}) {
 // an open modal's content re-reads the latest snapshot instead of going
 // stale behind the user. No-op when nothing is open.
 export function refreshOpen() {
-  if (!state.open) return;
+  if (!state.open || state.noLiveRefresh) return;
   renderBody();
 }
 

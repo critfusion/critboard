@@ -166,6 +166,24 @@ body {
   50% { opacity: 0.35; }
 }
 
+/* Settings gear -- always last in #app-header, outside #grid entirely so
+   it survives a layout that fails to render (see settings.js). */
+#settings-gear.icon-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-bright);
+  background: var(--color-bg-panel);
+  color: var(--color-text-dim);
+  cursor: pointer;
+}
+#settings-gear.icon-btn:hover { background: var(--color-bg-panel-hover); color: var(--color-text); }
+#settings-gear.icon-btn:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
 #clock {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
@@ -1107,6 +1125,18 @@ table.dtable th .sort-indicator {
     width: 44px;
     height: 44px;
   }
+  #settings-gear.icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .settings-btn-secondary,
+  .settings-btn-primary,
+  .settings-chip-remove {
+    min-height: 44px;
+  }
+  .settings-checkbox-row {
+    min-height: 44px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1145,6 +1175,9 @@ table.dtable th .sort-indicator {
     flex: 1 1 100%;
   }
   #clock { display: none; }
+  #settings-gear.icon-btn {
+    order: 2;
+  }
 
   /* Modal goes full-screen: large close target, body scrolls. */
   .detail-modal-overlay { padding: 0; }
@@ -1280,4 +1313,231 @@ table.dtable th .sort-indicator {
   height: 100%;
   border-radius: 3px;
   transition: width var(--motion-transition-med);
+}
+
+/* ---------- settings dialog (js/settings.js, rendered inside the shared
+   .detail-modal from modal.js) ---------- */
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.settings-section {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-grid-line);
+}
+.settings-section:last-of-type { border-bottom: none; }
+
+.settings-section-title {
+  margin: 0 0 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.settings-hint {
+  font-size: 12px;
+  color: var(--color-text-dim);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.settings-degraded {
+  font-size: 12px;
+  color: var(--color-status-warn);
+  background: rgba(242, 169, 59, 0.08);
+  border: 1px solid var(--color-accent-amber-dim);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+.settings-degraded-main {
+  font-size: 13px;
+}
+
+.settings-field-error {
+  font-size: 12px;
+  color: var(--color-status-crit);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.settings-field-error:empty { display: none; }
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-input {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  border-radius: 5px;
+  color: var(--color-text);
+  padding: 8px 10px;
+  min-height: 36px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.settings-input:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+.settings-input-inline { flex: 1 1 160px; }
+
+.settings-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  border-radius: var(--radius-pill);
+  padding: 4px 6px 4px 10px;
+}
+.settings-chip-remove {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+}
+.settings-chip-remove:hover { background: var(--color-bg-panel-hover); color: var(--color-status-crit); }
+
+.settings-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.settings-btn-secondary,
+.settings-btn-primary {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  border-radius: 5px;
+  padding: 8px 14px;
+  cursor: pointer;
+  min-height: 36px;
+}
+.settings-btn-secondary {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  color: var(--color-text-dim);
+}
+.settings-btn-secondary:hover:not(:disabled) { background: var(--color-bg-panel-hover); color: var(--color-text); }
+.settings-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.settings-btn-primary {
+  background: var(--color-accent-cyan-dim);
+  border: 1px solid var(--color-accent-cyan);
+  color: var(--color-accent-cyan);
+  font-weight: 700;
+}
+.settings-btn-primary:hover:not(:disabled) { background: var(--color-accent-cyan); color: var(--color-bg); }
+.settings-btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.settings-btn-secondary:focus-visible,
+.settings-btn-primary:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+.settings-checkbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent-cyan);
+  flex: none;
+}
+.settings-inline-pill {
+  font-size: 9px;
+  padding: 1px 7px;
+}
+
+/* The footer is the last child inside .detail-modal-body (the shared
+   modal's own scroll container -- see modal.js) and sticks to its bottom
+   as the dialog scrolls. .detail-modal-body normally carries its own
+   bottom padding for regular (non-settings) modal content; settings.js
+   moves that padding onto .settings-form instead (via the
+   .settings-modal-body override below) so bottom:0 here lands flush
+   against the true bottom edge instead of leaving a gap the size of that
+   padding underneath the stuck footer. */
+.detail-modal-body.settings-modal-body { padding-bottom: 0; }
+.settings-form { padding-bottom: 6px; }
+
+.settings-footer {
+  position: sticky;
+  bottom: 0;
+  margin: 16px -24px 0;
+  padding: 14px 24px;
+  background: var(--color-bg-panel);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-footer-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--color-text-faint);
+}
+.settings-dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+  flex: none;
+}
+.settings-dirty-dot.dirty { background: var(--color-status-warn); box-shadow: 0 0 6px var(--color-status-warn); }
+.settings-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.settings-save-error {
+  border: 1px solid var(--color-status-crit);
+  background: rgba(242, 80, 59, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.settings-save-confirm {
+  color: var(--color-status-ok);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 640px) {
+  .settings-footer {
+    margin: 16px -16px 0;
+    padding: 14px 16px;
+  }
+  .settings-input { flex-basis: 100%; }
 }

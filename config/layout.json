@@ -1,7 +1,9 @@
 {
   "version": 1,
   "title": "CritBoard Mission Control",
-  "human_labels": ["bryan"],
+  "human_labels": [
+    "bryan"
+  ],
   "grid": {
     "columns": 12,
     "row_height": 80,

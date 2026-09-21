@@ -81,6 +81,49 @@ def test_load_config_env_overrides_bind_host_and_port(isolated_config_dir, monke
     assert cfg.sources["bind_port"] == 8123
 
 
+def test_refresh_multiplier_default_is_normal_1x(isolated_config_dir):
+    (isolated_config_dir / "sources.json").write_text(json.dumps(config_mod.DEFAULT_SOURCES))
+    cfg = config_mod.load_config()
+    assert cfg.refresh_multiplier() == 1.0
+    assert cfg.interval("beads") == config_mod.DEFAULT_SOURCES["intervals_s"]["beads"]
+
+
+def test_refresh_multiplier_relaxed_is_3x(isolated_config_dir):
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, refresh_preset="relaxed"))
+    )
+    cfg = config_mod.load_config()
+    assert cfg.refresh_multiplier() == 3.0
+    assert cfg.interval("beads") == config_mod.DEFAULT_SOURCES["intervals_s"]["beads"] * 3
+    assert cfg.interval("usage") == config_mod.DEFAULT_SOURCES["intervals_s"]["usage"] * 3
+
+
+def test_refresh_multiplier_applies_to_remote_interval(isolated_config_dir):
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, refresh_preset="relaxed", remote_interval_s=120))
+    )
+    cfg = config_mod.load_config()
+    assert cfg.remote_interval() == 360.0
+
+
+def test_refresh_multiplier_unknown_preset_falls_back_to_1x(isolated_config_dir):
+    # A typo'd preset must not silently slow every collector to a stop.
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, refresh_preset="turbo"))
+    )
+    cfg = config_mod.load_config()
+    assert cfg.refresh_multiplier() == 1.0
+
+
+def test_env_interval_override_still_wins_over_relaxed_preset(isolated_config_dir, monkeypatch):
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, refresh_preset="relaxed"))
+    )
+    monkeypatch.setenv("CRITDASH_INTERVAL_BEADS", "7")
+    cfg = config_mod.load_config()
+    assert cfg.interval("beads") == 7.0
+
+
 def test_default_sources_are_host_agnostic():
     """The in-memory fallback must never bake in a specific machine's
     hostnames or absolute home-dir paths -- it's what ships to everyone."""

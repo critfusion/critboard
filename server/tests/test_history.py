@@ -13,6 +13,7 @@ from critdash.history import (
     build_grouped_history,
     parse_window,
 )
+from critdash.store import dense_bucket_keys, fold_hour_rows_to_local_day
 
 PRICING = {
     "models": {
@@ -316,3 +317,65 @@ def test_coverage_series_never_fabricates_zeros_before_first_data(tmp_store):
     localhost = next(s for s in resp["series"] if s["key"] == "localhost")
     pre_first_data_idx = resp["buckets"].index("2026-09-14")
     assert localhost["tokens"][pre_first_data_idx] == 0
+
+
+# -- timezone day-bucketing (briefing Task 4) ---------------------------------
+# "Etc/GMT+6" is a fixed UTC-6 offset (note the POSIX sign flip) -- no DST, so
+# these tests are deterministic regardless of calendar date.
+
+
+def test_dense_bucket_keys_day_shifts_with_timezone():
+    end = datetime(2026, 9, 21, 2, 0, 0, tzinfo=UTC)  # 2am UTC on the 21st
+    assert dense_bucket_keys(end, "day", 1) == ["2026-09-21"]
+    # UTC-6 local time is 2026-09-20T20:00 -- still the 20th.
+    assert dense_bucket_keys(end, "day", 1, "Etc/GMT+6") == ["2026-09-20"]
+
+
+def test_fold_hour_rows_to_local_day_groups_by_local_calendar_day():
+    rows = [
+        {"bucket": "2026-09-20T23:00:00Z", "host": "h", "model": "m", "tokens": 10, "messages": 1},
+        {"bucket": "2026-09-21T01:00:00Z", "host": "h", "model": "m", "tokens": 5, "messages": 1},
+    ]
+    utc_folded = fold_hour_rows_to_local_day(rows, "UTC", key_cols=("host", "model"))
+    assert {r["bucket"] for r in utc_folded} == {"2026-09-20", "2026-09-21"}
+
+    # Both hours (23:00 and next-day 01:00 UTC) fall on the same UTC-6
+    # calendar day (17:00 and 19:00 the same evening), so they fold together.
+    tz_folded = fold_hour_rows_to_local_day(rows, "Etc/GMT+6", key_cols=("host", "model"))
+    assert {r["bucket"] for r in tz_folded} == {"2026-09-20"}
+    assert tz_folded[0]["tokens"] == 15
+
+
+def test_usage_timeline_daily_tz_shifts_day_boundary(tmp_store):
+    # 2am UTC on the 20th is still evening of the 19th at UTC-6 -- the exact
+    # "user in UTC-6 sees days split at 18:00 (i.e. their evening bleeds into
+    # the next UTC day)" bug the briefing calls out.
+    tmp_store.insert_usage_events([_local_row("2026-09-20T02:00:00Z", "claude-opus-5")])
+
+    utc_rows = tmp_store.usage_timeline_daily_tz("2026-09-18T00:00:00Z", "UTC")
+    tz_rows = tmp_store.usage_timeline_daily_tz("2026-09-18T00:00:00Z", "Etc/GMT+6")
+
+    assert any(r["bucket"] == "2026-09-20" for r in utc_rows)
+    assert not any(r["bucket"] == "2026-09-20" for r in tz_rows)
+    assert any(r["bucket"] == "2026-09-19" for r in tz_rows)
+
+
+def test_grouped_history_day_bucket_moves_with_timezone(tmp_store):
+    tmp_store.insert_usage_events([
+        _local_row("2026-09-20T02:00:00Z", "claude-opus-5", tokens_in=100, tokens_out=50),
+    ])
+    since, until = parse_window("7d", NOW)  # NOW = 2026-09-20T12:00:00Z
+
+    utc_resp = build_grouped_history(tmp_store, PRICING, "7d", "day", "host", since, until, "UTC")
+    tz_resp = build_grouped_history(tmp_store, PRICING, "7d", "day", "host", since, until, "Etc/GMT+6")
+
+    localhost_utc = next(s for s in utc_resp["series"] if s["key"] == "localhost")
+    localhost_tz = next(s for s in tz_resp["series"] if s["key"] == "localhost")
+
+    i_utc_20 = utc_resp["buckets"].index("2026-09-20")
+    i_tz_19 = tz_resp["buckets"].index("2026-09-19")
+    i_tz_20 = tz_resp["buckets"].index("2026-09-20")
+
+    assert localhost_utc["tokens"][i_utc_20] == 150
+    assert localhost_tz["tokens"][i_tz_19] == 150
+    assert localhost_tz["tokens"][i_tz_20] == 0

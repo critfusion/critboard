@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import quota
+from . import settings as settings_mod
 from . import update as update_mod
 from .collectors import Scheduler
 from .collectors.agents import AgentsCollector
@@ -31,12 +32,13 @@ from .collectors.remote import RemoteCollector
 from .collectors.system import SystemCollector
 from .collectors.usage import UsageCollector
 from .collectors.worktrees import WorktreesCollector
-from .config import load_config
+from .config import Config, load_config
 from .ctx import AppContext
 from .history import InvalidWindowError, bucket_count, build_grouped_history, parse_window
 from .pricing import compute_cost_usd
 from .state import SnapshotStore
 from .store import Store, zero_fill_daily, zero_fill_hourly
+from .tzutil import DEFAULT_TZ, is_valid_timezone
 from .version import VersionTracker
 
 logger = logging.getLogger("critdash")
@@ -47,6 +49,71 @@ logging.basicConfig(level=os.environ.get("CRITDASH_LOG_LEVEL", "INFO"))
 # keyed by id. id -> (expires_at_monotonic, detail_dict_or_None, status_code).
 _BEAD_DETAIL_TTL_S = 30.0
 _bead_detail_cache: dict[str, tuple[float, dict | None, int]] = {}
+
+# POST /api/config/layout|theme write server-side config from a browser
+# request. Defaults bind to 127.0.0.1, but a user may bind 0.0.0.0 on a
+# LAN -- see AGENTS.md briefing's security section. _MAX_CONFIG_BODY_BYTES
+# caps the request body (these documents are a few KB; 1MB is generous
+# headroom, not a real limit for a legitimate save) against someone on the
+# same network sending an oversized body at an exposed instance.
+_MAX_CONFIG_BODY_BYTES = 1_000_000
+
+
+def _read_layout_timezone(config: Config) -> str:
+    """The "timezone" key in config/layout.json (IANA name), defaulting to
+    UTC. Read fresh on every call (not cached) so a POST /api/config/layout
+    that changes it takes effect immediately, no restart needed. Any
+    problem reading/parsing the file, or an unrecognized zone name, falls
+    back to UTC rather than 500ing -- this is presentation-only (see
+    tzutil.py); it must never break a history query."""
+    try:
+        with config.layout_path.open() as f:
+            doc = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return DEFAULT_TZ
+    if not isinstance(doc, dict):
+        return DEFAULT_TZ
+    tz = doc.get("timezone")
+    if isinstance(tz, str) and is_valid_timezone(tz):
+        return tz
+    return DEFAULT_TZ
+
+
+async def _read_config_body(request: Request) -> dict:
+    """Shared body handling for the config POST endpoints: size-capped read,
+    then JSON-object parse. Raises HTTPException (413/400) rather than
+    returning an error value, so callers can just `body = await
+    _read_config_body(request)`."""
+    raw = await request.body()
+    if len(raw) > _MAX_CONFIG_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="request body too large")
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"malformed JSON body: {exc.msg}") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    return body
+
+
+def _check_config_writes_allowed(config: Config) -> None:
+    if not config.sources.get("allow_config_writes", True):
+        raise HTTPException(
+            status_code=403,
+            detail="config writes are disabled (allow_config_writes is false in sources.json)",
+        )
+
+
+def _safe_config_path(path: Path, config_dir: Path) -> Path:
+    """Defense-in-depth: both config POSTs only ever pass a fixed constant
+    path (config.layout_path / config.theme_path), so this can't be tripped
+    today -- but it guarantees a write can never land outside config_dir even
+    if that ever changes, without echoing a filesystem path back to the
+    browser (see AGENTS.md briefing's security section)."""
+    resolved = path.resolve()
+    if not resolved.is_relative_to(config_dir.resolve()):
+        raise HTTPException(status_code=400, detail="invalid config path")
+    return resolved
 
 
 def build_app() -> FastAPI:
@@ -266,9 +333,26 @@ def build_app() -> FastAPI:
             response.headers["Cache-Control"] = "no-cache"
         return response
 
+    def _settings_block() -> dict:
+        """Not layout geometry -- everything a settings panel needs to know
+        about server-side state that isn't part of config/layout.json's
+        panels/grid. Computed fresh per request (not cached in `snap`) so a
+        POST /api/config/layout that changes "timezone" is reflected on the
+        very next /api/snapshot or /api/stream connect, no restart needed."""
+        return {
+            "timezone": _read_layout_timezone(config),
+            "allow_config_writes": bool(config.sources.get("allow_config_writes", True)),
+            "refresh_preset": config.sources.get("refresh_preset", "normal"),
+        }
+
+    def _snapshot_with_settings() -> dict:
+        body = dict(snap.full_snapshot())
+        body["settings"] = _settings_block()
+        return body
+
     @app.get("/api/snapshot")
     async def get_snapshot():
-        return JSONResponse(snap.full_snapshot())
+        return JSONResponse(_snapshot_with_settings())
 
     @app.get("/api/stream")
     async def stream(request: Request):
@@ -276,7 +360,14 @@ def build_app() -> FastAPI:
 
         async def event_gen():
             try:
-                yield _sse_format("snapshot", snap.full_snapshot())
+                # Only the initial frame on a fresh connection carries
+                # "settings" -- periodic resync frames (resync_loop, every
+                # 60s) call snap.publish_resync() directly and only patch
+                # collector-owned data, not config-file-derived state. A
+                # client picks up a settings change on its next reconnect or
+                # GET /api/snapshot, which is the same cadence a
+                # POST /api/config/* response already gives it.
+                yield _sse_format("snapshot", _snapshot_with_settings())
                 while True:
                     if await request.is_disconnected():
                         break
@@ -306,14 +397,20 @@ def build_app() -> FastAPI:
                 status_code=400, detail=f"invalid bucket: {bucket!r} (expected 'hour' or 'day')"
             )
 
+        tz_name = _read_layout_timezone(config)
+
         if group_by == "none":
-            # Unchanged: the exact query + zero-fill this endpoint has always
-            # run, byte-compatible for the existing 48h timeline widget --
-            # only the window string it accepts got richer (see history.py).
+            # Unchanged for tz_name="UTC" (the default): the exact query +
+            # zero-fill this endpoint has always run, byte-compatible for
+            # the existing 48h timeline widget -- only the window string it
+            # accepts got richer (see history.py), and now bucket='day' also
+            # honors config/layout.json's "timezone" (see
+            # Store.usage_timeline_daily_tz).
             since = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
             count = bucket_count(since_dt, until_dt, bucket, window)
             if bucket == "day":
-                return zero_fill_daily(store.usage_timeline_daily(since), until_dt, count)
+                daily_rows = store.usage_timeline_daily_tz(since, tz_name)
+                return zero_fill_daily(daily_rows, until_dt, count, tz_name)
             return zero_fill_hourly(store.usage_timeline_hourly(since), until_dt, count)
 
         if group_by not in ("model", "provider", "host"):
@@ -322,7 +419,9 @@ def build_app() -> FastAPI:
                 detail=f"invalid group_by: {group_by!r} (expected 'none', 'model', 'provider', or 'host')",
             )
         return JSONResponse(
-            build_grouped_history(store, app_ctx.pricing, window, bucket, group_by, since_dt, until_dt)
+            build_grouped_history(
+                store, app_ctx.pricing, window, bucket, group_by, since_dt, until_dt, tz_name
+            )
         )
 
     @app.get("/api/history/agents")
@@ -350,12 +449,47 @@ def build_app() -> FastAPI:
 
     @app.post("/api/config/layout")
     async def post_layout(request: Request):
-        body = await request.json()
+        _check_config_writes_allowed(config)
+        body = await _read_config_body(request)
         errors = validate_layout(body)
         if errors:
-            raise HTTPException(status_code=422, detail={"errors": errors})
-        _atomic_write_json(config.layout_path, body)
-        return {"ok": True}
+            raise HTTPException(status_code=400, detail={"errors": errors})
+        path = _safe_config_path(config.layout_path, config.config_dir)
+        try:
+            _atomic_write_json(path, body)
+        except OSError:
+            # Never echo a filesystem path back to the browser (briefing's
+            # security section) -- the real path/errno only goes to the log.
+            logger.exception("failed to write config/layout.json")
+            raise HTTPException(status_code=500, detail="failed to write layout config") from None
+        return JSONResponse(body)
+
+    @app.post("/api/config/theme")
+    async def post_theme(request: Request):
+        _check_config_writes_allowed(config)
+        body = await _read_config_body(request)
+        errors = validate_theme(body)
+        if errors:
+            raise HTTPException(status_code=400, detail={"errors": errors})
+        path = _safe_config_path(config.theme_path, config.config_dir)
+        try:
+            _atomic_write_json(path, body)
+        except OSError:
+            logger.exception("failed to write config/theme.json")
+            raise HTTPException(status_code=500, detail="failed to write theme config") from None
+        return JSONResponse(body)
+
+    @app.get("/api/settings/suggest")
+    async def get_settings_suggest():
+        beads_items = (snap.snapshot.get("beads") or {}).get("items") or []
+        dispatch_routes = (snap.snapshot.get("dispatch") or {}).get("routes") or []
+        human_labels = settings_mod.suggest_human_labels(beads_items, dispatch_routes)
+        tz_detected, tz_source = settings_mod.detect_timezone()
+        return {
+            "human_labels": human_labels,
+            "timezone": {"detected": tz_detected, "source": tz_source},
+            "quota_providers": quota.provider_availability_buckets(),
+        }
 
     @app.get("/api/bead/{bead_id}")
     async def get_bead_detail(bead_id: str):
@@ -483,22 +617,53 @@ def _window_to_since(window: str) -> str:
 
 
 def validate_layout(doc: dict) -> list[str]:
+    """Rejects anything that would make the dashboard unrenderable. Unknown
+    top-level keys (e.g. a future "timezone" or settings-panel addition) are
+    NOT rejected -- forward compatibility -- only the specific shapes below
+    that would break rendering: a panel missing required geometry/identity
+    fields, two panels overlapping, a panel extending past the configured
+    grid width, a non-string title/timezone, or (see the 'panels' check
+    below) an empty panel list that would silently wipe every panel."""
     errors = []
     if not isinstance(doc, dict):
         return ["layout must be a JSON object"]
     if "version" not in doc:
         errors.append("missing 'version'")
-    if "grid" not in doc or not isinstance(doc.get("grid"), dict):
+
+    grid = doc.get("grid")
+    columns = None
+    if "grid" not in doc or not isinstance(grid, dict):
         errors.append("missing or invalid 'grid'")
     else:
         for key in ("columns", "row_height", "gap"):
-            if key not in doc["grid"]:
+            if key not in grid:
                 errors.append(f"grid missing '{key}'")
+        if isinstance(grid.get("columns"), int) and not isinstance(grid.get("columns"), bool):
+            if grid["columns"] > 0:
+                columns = grid["columns"]
+            else:
+                errors.append("grid.columns must be a positive integer")
+
+    tz = doc.get("timezone")
+    if tz is not None:
+        if not isinstance(tz, str):
+            errors.append("'timezone' must be a string")
+        elif not is_valid_timezone(tz):
+            errors.append(f"'timezone' is not a recognized IANA timezone name: {tz!r}")
+
     panels = doc.get("panels")
     if not isinstance(panels, list):
         errors.append("missing or invalid 'panels' (must be a list)")
+    elif not panels:
+        # Same data-loss shape as validate_theme's empty-colors bug: an empty
+        # list IS a list, so `isinstance(panels, list)` alone lets a request
+        # that (accidentally or otherwise) drops every panel overwrite
+        # layout.json with a dashboard that has none, with no error. A saved
+        # layout must keep at least one panel.
+        errors.append("'panels' must not be empty")
     else:
         seen_ids = set()
+        rects: list[tuple[int, str, float, float, float, float]] = []
         for idx, panel in enumerate(panels):
             if not isinstance(panel, dict):
                 errors.append(f"panels[{idx}] must be an object")
@@ -510,6 +675,114 @@ def validate_layout(doc: dict) -> list[str]:
             if pid in seen_ids:
                 errors.append(f"duplicate panel id '{pid}'")
             seen_ids.add(pid)
+
+            title = panel.get("title")
+            if title is not None and not isinstance(title, str):
+                errors.append(f"panels[{idx}] (id={pid!r}) 'title' must be a string")
+
+            x, y, w, h = panel.get("x"), panel.get("y"), panel.get("w"), panel.get("h")
+            geometry_ok = all(
+                isinstance(v, int | float) and not isinstance(v, bool) for v in (x, y, w, h)
+            )
+            if geometry_ok:
+                if columns is not None and x + w > columns:
+                    errors.append(
+                        f"panels[{idx}] (id={pid!r}) extends past grid columns "
+                        f"({x}+{w} > {columns})"
+                    )
+                rects.append((idx, pid, x, y, w, h))
+
+        for i in range(len(rects)):
+            idx_a, id_a, xa, ya, wa, ha = rects[i]
+            for j in range(i + 1, len(rects)):
+                idx_b, id_b, xb, yb, wb, hb = rects[j]
+                overlaps = xa < xb + wb and xb < xa + wa and ya < yb + hb and yb < ya + ha
+                if overlaps:
+                    errors.append(
+                        f"panels[{idx_a}] (id={id_a!r}) overlaps panels[{idx_b}] (id={id_b!r})"
+                    )
+    return errors
+
+
+#  Every `--color-<token>` custom property the frontend actually reads --
+#  either directly via `var(--color-<token>)` in web/css/style.css, or
+#  JS-constructed (utils.js statusColorVar/severityColorVar/priorityColorVar,
+#  interpolated into an inline `style` attribute) in web/js/*.js. Derived
+#  with:
+#    grep -ohE -- '--color-[a-zA-Z0-9_-]+' web/js/*.js web/css/style.css \
+#      | sort -u
+#  This is exactly the 28-key set config/theme.json's "colors" object ships
+#  with today -- if the frontend starts reading a new token, add it here too,
+#  and if a token stops being read anywhere, it can come out.
+_REQUIRED_COLOR_TOKENS = (
+    "accent-amber", "accent-amber-dim", "accent-cyan", "accent-cyan-dim",
+    "agent-glow", "bg", "bg-elevated", "bg-panel", "bg-panel-hover",
+    "border", "border-bright", "grid-line",
+    "priority-0", "priority-1", "priority-2", "priority-3",
+    "severity-crit", "severity-info", "severity-warn",
+    "status-crit", "status-done", "status-idle", "status-ok",
+    "status-warn", "status-working",
+    "text", "text-dim", "text-faint",
+)
+
+
+def validate_theme(doc: dict) -> list[str]:
+    """Same "cannot brick the dashboard" contract as validate_layout, scaled
+    to theme.json's shape: unknown top-level keys are allowed (forward
+    compatibility), but a known section with the wrong type -- one that the
+    frontend would fail to apply -- is rejected.
+
+    `colors` is REQUIRED (bug fix): every check used to be gated behind
+    `if <field> is not None`, so a document that omitted a field validated
+    it, requiring nothing. `POST /api/config/theme` with `{}` therefore
+    passed with zero errors and silently overwrote theme.json, wiping every
+    colour token and both presets -- while the page kept rendering, because
+    style.css's own `:root` block still has a hardcoded value for each
+    token, so the loss wasn't visible. `colors` must now be present, be a
+    non-empty object, and contain every token in _REQUIRED_COLOR_TOKENS (the
+    set the frontend actually consumes -- nothing invented, nothing that
+    isn't read somewhere in web/). `fonts`/`radius`/`density`/`motion`/
+    `reload_banner`/`_presets` stay optional and forward-compatible, exactly
+    as before: type-checked only when present."""
+    errors = []
+    if not isinstance(doc, dict):
+        return ["theme must be a JSON object"]
+
+    colors = doc.get("colors")
+    if colors is None:
+        errors.append("'colors' is required")
+    elif not isinstance(colors, dict):
+        errors.append("'colors' must be an object")
+    elif not colors:
+        errors.append("'colors' must not be empty")
+    else:
+        for key, value in colors.items():
+            if not isinstance(value, str):
+                errors.append(f"colors.{key} must be a string")
+        missing = [t for t in _REQUIRED_COLOR_TOKENS if t not in colors]
+        if missing:
+            errors.append("colors missing required token(s): " + ", ".join(missing))
+
+    fonts = doc.get("fonts")
+    if fonts is not None:
+        if not isinstance(fonts, dict):
+            errors.append("'fonts' must be an object")
+        else:
+            for key, value in fonts.items():
+                if not isinstance(value, str):
+                    errors.append(f"fonts.{key} must be a string")
+
+    reload_banner = doc.get("reload_banner")
+    if reload_banner is not None:
+        if not isinstance(reload_banner, dict):
+            errors.append("'reload_banner' must be an object")
+        elif "enabled" in reload_banner and not isinstance(reload_banner["enabled"], bool):
+            errors.append("reload_banner.enabled must be a boolean")
+
+    presets = doc.get("_presets")
+    if presets is not None and not isinstance(presets, dict):
+        errors.append("'_presets' must be an object")
+
     return errors
 
 

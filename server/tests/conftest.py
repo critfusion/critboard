@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -7,6 +8,42 @@ from pathlib import Path
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# The real, live config files this repo ships with (server/tests/ -> two
+# parents up is the dashboard root, same math as critdash.config.SERVER_DIR/
+# DASHBOARD_ROOT). Tests must build their own isolated Config (see
+# `isolated_app` / `_write_isolated_config` in test_main_helpers.py,
+# CONFIG_DIR monkeypatched) rather than ever writing here -- this fixture is
+# the safety net that catches a regression of that isolation, not a
+# guarantee by itself.
+_LIVE_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+_LIVE_CONFIG_FILES = [_LIVE_CONFIG_DIR / "layout.json", _LIVE_CONFIG_DIR / "theme.json"]
+
+
+def _hash_live_config_files() -> dict[Path, str | None]:
+    hashes: dict[Path, str | None] = {}
+    for path in _LIVE_CONFIG_FILES:
+        if path.exists():
+            hashes[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            hashes[path] = None
+    return hashes
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _live_config_files_untouched():
+    """Session-wide guardrail: hash config/layout.json and config/theme.json
+    before the suite runs and again after, and fail loudly if either changed
+    -- no test in this suite is allowed to write to the real config
+    directory, only to an isolated tmp_path one (CRITDASH_CONFIG_DIR /
+    monkeypatched config.CONFIG_DIR)."""
+    before = _hash_live_config_files()
+    yield
+    after = _hash_live_config_files()
+    assert after == before, (
+        "a test wrote to the live config/*.json files -- tests must use an "
+        "isolated config dir (see isolated_app / _write_isolated_config)"
+    )
 
 
 @pytest.fixture
