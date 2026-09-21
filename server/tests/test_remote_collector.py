@@ -507,3 +507,34 @@ async def test_worktrees_collector_merges_remote_worktrees_and_does_not_cross_jo
     assert remote_wt["agents"] == []  # remote worktree's own (empty) join, untouched by local agent
     if local_wt:
         assert "local-agent" in local_wt[0]["agents"]
+
+
+# -- availability_issue (Bug 2: auto-disable when no ssh-mode host is configured)
+
+
+def test_availability_issue_none_when_ssh_host_configured():
+    hosts = [
+        {"name": "localhost", "mode": "local", "enabled": True},
+        {"name": "box", "mode": "ssh", "enabled": True},
+    ]
+    assert remote_mod.availability_issue(hosts) is None
+
+
+def test_availability_issue_config_missing_when_only_local_host():
+    hosts = [{"name": "localhost", "mode": "local", "enabled": True}]
+    issue = remote_mod.availability_issue(hosts)
+    assert issue is not None
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is True
+
+
+def test_availability_issue_config_missing_when_no_hosts_at_all():
+    assert remote_mod.availability_issue([]) is not None
+    assert remote_mod.availability_issue(None) is not None
+
+
+def test_availability_issue_ignores_disabled_ssh_host():
+    hosts = [{"name": "box", "mode": "ssh", "enabled": False}]
+    issue = remote_mod.availability_issue(hosts)
+    assert issue is not None
+    assert issue.reason_code == "config_missing"

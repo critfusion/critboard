@@ -21,14 +21,22 @@ from fastapi.staticfiles import StaticFiles
 from . import quota
 from . import settings as settings_mod
 from . import update as update_mod
-from .collectors import Scheduler
+from .collectors import CollectorIssue, Scheduler, SourceHealth
 from .collectors.agents import AgentsCollector
 from .collectors.analytics import AnalyticsCollector
-from .collectors.beads import BeadNotFoundError, BeadsCollector, fetch_bead_detail, validate_bead_id
+from .collectors.beads import (
+    BeadNotFoundError,
+    BeadsCollector,
+    fetch_bead_detail,
+    validate_bead_id,
+)
+from .collectors.beads import availability_issue as beads_availability_issue
 from .collectors.dispatch import DispatchCollector
+from .collectors.dispatch import availability_issue as dispatch_availability_issue
 from .collectors.kimi import KimiCollector
 from .collectors.productivity import ProductivityCollector
 from .collectors.remote import RemoteCollector
+from .collectors.remote import availability_issue as remote_availability_issue
 from .collectors.system import SystemCollector
 from .collectors.usage import UsageCollector
 from .collectors.worktrees import WorktreesCollector
@@ -116,6 +124,41 @@ def _safe_config_path(path: Path, config_dir: Path) -> Path:
     return resolved
 
 
+def _collector_override(config: Config, name: str) -> bool | None:
+    """Explicit True/False from sources.json's "collectors": {"<name>":
+    {"enabled": true|false}} block. None means no override -- fall back to
+    auto-detection (an absent or empty "collectors" block, the default)."""
+    entry = (config.sources.get("collectors") or {}).get(name) or {}
+    val = entry.get("enabled")
+    return val if isinstance(val, bool) else None
+
+
+def _resolve_enablement(
+    name: str, override: bool | None, issue: CollectorIssue | None
+) -> tuple[bool, CollectorIssue | None]:
+    """Combine an auto-detected availability issue (None = the dependency
+    was found) with an explicit sources.json override, which always wins
+    either way. Returns (enabled, issue-to-report-when-inactive)."""
+    if override is True:
+        return True, None
+    if override is False:
+        return False, CollectorIssue(
+            "config_missing",
+            f"{name} disabled via collectors.{name}.enabled=false in sources.json",
+            remedy=f"Set collectors.{name}.enabled to true in config/sources.json to re-enable.",
+            optional=True,
+        )
+    return issue is None, issue
+
+
+def _inactive_health_dict(issue: CollectorIssue) -> dict:
+    return SourceHealth(
+        ok=False, stale=True, optional=issue.optional,
+        reason_code=issue.reason_code, detail=issue.detail, remedy=issue.remedy,
+        error=f"{issue.reason_code}: {issue.detail}",
+    ).to_dict()
+
+
 def build_app() -> FastAPI:
     config = load_config()
     store = Store(config.db_path)
@@ -161,20 +204,55 @@ def build_app() -> FastAPI:
             snap.update_path("events", events)
 
     def on_health(_name: str, _health) -> None:
-        snap.update_sources(scheduler.health_snapshot())
+        snap.update_sources({**_inactive_health, **scheduler.health_snapshot()})
 
     scheduler = Scheduler(on_result=on_result, on_health=on_health)
 
+    # Per-collector enablement (Bug 2): a collector whose optional dependency
+    # is absent (no `bd`, no ~/.overlord, no ssh-mode host configured) starts
+    # INACTIVE and is never registered with the scheduler -- no repeated
+    # failing subprocess every cycle on a fresh install. It still shows up in
+    # /api/healthz and the "sources" snapshot key (via _inactive_health,
+    # merged in below and in on_health/the healthz endpoint) with
+    # optional=true and a reason, so the UI can say "not configured" instead
+    # of the panel silently vanishing -- same sourceIssueNotice() contract
+    # the frontend already uses for beads (see web/js/utils.js). An explicit
+    # "collectors.<name>.enabled" in sources.json overrides the
+    # auto-detection either way (see _resolve_enablement).
+    # collector name -> its current inactive SourceHealth dict.
+    _inactive_health: dict[str, dict] = {}
+    # Specs for collectors currently inactive under auto-detection (not a
+    # hard `enabled: false`) -- periodically re-checked (collector_redetect_
+    # loop below) so e.g. installing `bd` after the dashboard started brings
+    # the panel alive with no restart needed.
+    _redetect_specs: list[dict] = []
+
+    def _apply_enablement(name, detect_fn, build_fn) -> None:
+        issue = detect_fn()
+        override = _collector_override(config, name)
+        enabled, report_issue = _resolve_enablement(name, override, issue)
+        if enabled:
+            scheduler.register(build_fn())
+            return
+        _inactive_health[name] = _inactive_health_dict(report_issue)
+        logger.info("collector %s: inactive (%s: %s)", name, report_issue.reason_code, report_issue.detail)
+        if override is not False:
+            _redetect_specs.append({"name": name, "detect": detect_fn, "build": build_fn})
+
     repo_roots = config.sources.get("repo_roots", [])
-    beads_collector = BeadsCollector(
-        ctx=app_ctx,
-        beads_env=config.expand("beads_env"),
-        bd_bin=config.expand("bd_bin") or "bd",
-        actor=config.sources.get("beads_actor", "critdash"),
-        store=store,
+
+    beads_env = config.expand("beads_env")
+    bd_bin = config.expand("bd_bin") or "bd"
+    beads_actor = config.sources.get("beads_actor", "critdash")
+
+    def _build_beads_collector() -> BeadsCollector:
+        c = BeadsCollector(ctx=app_ctx, beads_env=beads_env, bd_bin=bd_bin, actor=beads_actor, store=store)
+        c.interval_s = config.interval("beads")
+        return c
+
+    _apply_enablement(
+        "beads", lambda: beads_availability_issue(bd_bin, beads_env), _build_beads_collector
     )
-    beads_collector.interval_s = config.interval("beads")
-    scheduler.register(beads_collector)
 
     local_host = config.sources.get("host", "localhost")
 
@@ -218,36 +296,57 @@ def build_app() -> FastAPI:
     kimi_collector.interval_s = config.interval("kimi")
     scheduler.register(kimi_collector)
 
-    dispatch_collector = DispatchCollector(ctx=app_ctx, overlord_dir=config.expand("overlord_dir"))
-    dispatch_collector.interval_s = config.interval("dispatch")
-    scheduler.register(dispatch_collector)
+    overlord_dir = config.expand("overlord_dir")
 
-    system_collector = SystemCollector(ctx=app_ctx, disk_mounts=["/", "/srv"])
+    def _build_dispatch_collector() -> DispatchCollector:
+        c = DispatchCollector(ctx=app_ctx, overlord_dir=overlord_dir)
+        c.interval_s = config.interval("dispatch")
+        return c
+
+    _apply_enablement(
+        "dispatch",
+        lambda: dispatch_availability_issue(Path(overlord_dir).expanduser()),
+        _build_dispatch_collector,
+    )
+
+    # No more hardcoded "/srv" (Bug 1) -- "/" plus whatever the install
+    # configures in sources.json's "disk_mounts". A configured mount that
+    # doesn't exist on this host is skipped by SystemCollector/RemoteCollector
+    # (see collectors/system.py's _disk()), not a failure.
+    disk_mounts = config.sources.get("disk_mounts") or ["/"]
+
+    system_collector = SystemCollector(ctx=app_ctx, disk_mounts=disk_mounts)
     system_collector.interval_s = config.interval("system")
     scheduler.register(system_collector)
 
-    remote_collector = RemoteCollector(
-        ctx=app_ctx,
-        hosts=config.sources.get("hosts", []),
-        ssh_opts=config.sources.get("ssh_opts", []),
-        ssh_timeout_s=config.sources.get("ssh_timeout_s", 45),
-        store=store,
-        local_host=local_host,
-        repo_roots=repo_roots,
-        # NOT config.expand() here -- a remote host's "~" must be expanded on
-        # THAT host (remote_probe.py does this), never pre-expanded against
-        # the local host's own home directory. See RemoteCollector._probe_args.
-        claude_projects_dir=config.sources.get("claude_projects_dir", "~/.claude/projects"),
-        herdr_bin=herdr_bin,
-        disk_mounts=["/", "/srv"],
-        worker_pool=config.sources.get("worktree_worker_pool", 32),
-        git_timeout_s=config.sources.get("worktree_git_timeout_s", 5),
-        max_depth=config.sources.get("repo_scan_depth", 4),
-        session_active_window_s=session_active_window_s,
-        kimi_dir=config.sources.get("kimi_dir", "~/.kimi-code"),
-    )
-    remote_collector.interval_s = config.sources.get("remote_interval_s", 120)
-    scheduler.register(remote_collector)
+    hosts_cfg = config.sources.get("hosts", [])
+
+    def _build_remote_collector() -> RemoteCollector:
+        c = RemoteCollector(
+            ctx=app_ctx,
+            hosts=hosts_cfg,
+            ssh_opts=config.sources.get("ssh_opts", []),
+            ssh_timeout_s=config.sources.get("ssh_timeout_s", 45),
+            store=store,
+            local_host=local_host,
+            repo_roots=repo_roots,
+            # NOT config.expand() here -- a remote host's "~" must be
+            # expanded on THAT host (remote_probe.py does this), never
+            # pre-expanded against the local host's own home directory. See
+            # RemoteCollector._probe_args.
+            claude_projects_dir=config.sources.get("claude_projects_dir", "~/.claude/projects"),
+            herdr_bin=herdr_bin,
+            disk_mounts=disk_mounts,
+            worker_pool=config.sources.get("worktree_worker_pool", 32),
+            git_timeout_s=config.sources.get("worktree_git_timeout_s", 5),
+            max_depth=config.sources.get("repo_scan_depth", 4),
+            session_active_window_s=session_active_window_s,
+            kimi_dir=config.sources.get("kimi_dir", "~/.kimi-code"),
+        )
+        c.interval_s = config.sources.get("remote_interval_s", 120)
+        return c
+
+    _apply_enablement("remote", lambda: remote_availability_issue(hosts_cfg), _build_remote_collector)
 
     # ProductivityCollector must be registered before AnalyticsCollector so
     # ctx.latest_productivity has a first value as soon as possible -- not
@@ -269,6 +368,40 @@ def build_app() -> FastAPI:
     )
     analytics_collector.interval_s = config.interval("analytics")
     scheduler.register(analytics_collector)
+
+    # Seed "sources" with every inactive collector's reason immediately --
+    # otherwise GET /api/snapshot (or the first /api/stream frame) before any
+    # collector has completed a cycle would show nothing for e.g. beads on a
+    # fresh install, instead of "not configured" right away.
+    snap.update_sources({**_inactive_health, **scheduler.health_snapshot()})
+
+    collector_redetect_interval_s = config.sources.get("collector_redetect_interval_s", 60)
+
+    async def collector_redetect_loop():
+        """Bug 2's "re-detect periodically... so installing bd later makes
+        the panel come alive without editing config": re-run every inactive
+        collector's auto-detection on a slow interval and, the moment its
+        dependency shows up, register and start it live -- no restart. Only
+        touches collectors that are inactive AND not held off by an explicit
+        `enabled: false` override (_apply_enablement never adds those to
+        _redetect_specs in the first place)."""
+        while True:
+            await asyncio.sleep(collector_redetect_interval_s)
+            activated = False
+            for spec in _redetect_specs:
+                name = spec["name"]
+                if name not in _inactive_health:
+                    continue  # already activated on an earlier tick
+                issue = spec["detect"]()
+                if issue is not None:
+                    continue
+                scheduler.register(spec["build"]())
+                scheduler.start_one(name)
+                del _inactive_health[name]
+                activated = True
+                logger.info("collector %s: dependency now available, activated", name)
+            if activated:
+                snap.update_sources({**_inactive_health, **scheduler.health_snapshot()})
 
     async def pricing_refresh_loop():
         while True:
@@ -306,6 +439,7 @@ def build_app() -> FastAPI:
         background_tasks.append(asyncio.create_task(ping_loop()))
         background_tasks.append(asyncio.create_task(vacuum_loop()))
         background_tasks.append(asyncio.create_task(version_loop()))
+        background_tasks.append(asyncio.create_task(collector_redetect_loop()))
         yield
         for t in background_tasks:
             t.cancel()
@@ -550,7 +684,7 @@ def build_app() -> FastAPI:
 
     @app.get("/api/healthz")
     async def healthz():
-        return {"ok": True, "collectors": scheduler.health_snapshot()}
+        return {"ok": True, "collectors": {**_inactive_health, **scheduler.health_snapshot()}}
 
     @app.get("/api/version")
     async def get_version():
@@ -573,6 +707,7 @@ def build_app() -> FastAPI:
 
     _UPDATE_APPLY_STATUS = {
         "self_update_disabled": 403,
+        "update_repo_not_configured": 409,
         "not_a_git_checkout": 409,
         "dirty_working_tree": 409,
         "no_origin_remote": 409,

@@ -126,3 +126,24 @@ async def test_success_clears_previous_failure_reason_code():
     assert health["reason_code"] is None
     assert health["remedy"] is None
     assert health["optional"] is False
+
+
+@pytest.mark.asyncio
+async def test_start_one_starts_a_single_collector_after_start_already_ran():
+    """Bug 2's periodic re-detection: a collector that was inactive at
+    startup (registered later, once its dependency shows up) must be able to
+    join the running loop without restarting every other collector's task."""
+    scheduler = Scheduler(on_result=lambda name, data: None)
+    scheduler.register(GoodCollector())
+    scheduler.start()
+    try:
+        late = GoodCollector()
+        late.name = "late"
+        scheduler.register(late)
+        scheduler.start_one("late")
+        await asyncio.sleep(0.05)
+        health = scheduler.health_snapshot()
+        assert health["late"]["ok"] is True
+        assert health["good"]["ok"] is True
+    finally:
+        await scheduler.stop()

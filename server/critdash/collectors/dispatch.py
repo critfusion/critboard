@@ -6,9 +6,32 @@ import os
 import re
 from pathlib import Path
 
-from . import BaseCollector
+from . import BaseCollector, CollectorIssue
 
 _TS_PREFIX_RE = re.compile(r"^(\S+)\s+(.*)$")
+
+_DISPATCH_REMEDY = (
+    "Create ~/.overlord (see the fleet-dispatch docs), or ignore this panel "
+    "if you do not run a dispatch/overlord workflow."
+)
+
+
+def availability_issue(overlord_dir: Path) -> CollectorIssue | None:
+    """None if `overlord_dir` exists -- a fresh install with no fleet-dispatch
+    workflow at all has no ~/.overlord directory, which is a normal, expected
+    state, not a failure (same "optional, auto-detected" treatment as
+    beads.availability_issue). collect() itself still degrades gracefully
+    (empty routes/log) if this collector is force-enabled anyway despite the
+    directory being absent -- this check only decides whether main.py
+    schedules it at all."""
+    if not overlord_dir.exists():
+        return CollectorIssue(
+            "config_missing",
+            f"overlord directory not found: {overlord_dir}",
+            remedy=_DISPATCH_REMEDY,
+            optional=True,
+        )
+    return None
 
 
 def parse_routes_conf(text: str) -> list[dict]:

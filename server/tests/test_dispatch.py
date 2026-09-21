@@ -1,6 +1,11 @@
 import pytest
 
-from critdash.collectors.dispatch import DispatchCollector, parse_log_line, parse_routes_conf
+from critdash.collectors.dispatch import (
+    DispatchCollector,
+    availability_issue,
+    parse_log_line,
+    parse_routes_conf,
+)
 
 
 def test_parse_routes_conf(fixtures_dir):
@@ -65,3 +70,21 @@ async def test_collect_paused_all(tmp_path):
     d = result["dispatch"]
     assert d["paused_all"] is True
     assert d["routes"][0]["paused"] is True
+
+
+# -- availability_issue (Bug 2: auto-disable when ~/.overlord is absent) -----
+
+
+def test_availability_issue_none_when_overlord_dir_exists(tmp_path):
+    overlord = tmp_path / "overlord"
+    overlord.mkdir()
+    assert availability_issue(overlord) is None
+
+
+def test_availability_issue_config_missing_when_overlord_dir_absent(tmp_path):
+    overlord = tmp_path / "does-not-exist"
+    issue = availability_issue(overlord)
+    assert issue is not None
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is True
+    assert str(overlord) in issue.detail

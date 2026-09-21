@@ -22,6 +22,13 @@ Nothing else is required before the check above passes. `git` and either
 this itself and fails with a clear message naming what's missing, it does
 not silently continue with an unusable interpreter.
 
+**Platforms:** Linux and macOS. The system panel (load average, memory,
+disk) uses `os.getloadavg()` and `/proc/meminfo` on Linux, `sysctl`/`vm_stat`
+on macOS -- no platform-specific setup needed either way. Every collector
+that shells out to an optional tool (`bd`, `herdr`, `ssh`) degrades to
+"inactive, not configured" rather than failing when that tool is absent, on
+either platform -- see "Config reference" below.
+
 ---
 
 ## Prerequisites
@@ -32,7 +39,7 @@ not silently continue with an unusable interpreter.
 | `python3` | >=3.11 | Required *unless* `uv` is installed (see below). `datetime.UTC`, used throughout the backend, needs 3.11+. |
 | `uv` (https://docs.astral.sh/uv/) | any recent | Recommended, not required. If present, `install.sh` uses it to create the venv and install dependencies, and it will provision a compatible Python itself even if the system `python3` is too old or missing. Without it, `install.sh` falls back to `python3 -m venv` + `pip`. |
 | `ssh` | any | Optional. Needed only for multi-host fleet collection (`hosts: [...]` with `mode: "ssh"` in `config/sources.json`). Single-host mode works fully without it. |
-| `bd` (beads CLI) | any | Optional. Needed only for the beads/work-queue panel. Without it, that panel stays empty/inactive; nothing else is affected. |
+| `bd` (beads CLI) | any | Optional. Needed only for the beads/work-queue panel. Without it, that panel stays inactive (auto-detected, not scheduled); nothing else is affected. |
 | `herdr` | any | Optional. Needed only for pane-level agent detection (which terminal pane an agent is running in). Without it, agent detection still works from `~/.claude/projects/*/*.jsonl` session files -- you lose the pane/workspace fields, not the agent list itself. |
 
 `install.sh` checks `git` and the Python floor and **fails with a specific
@@ -77,8 +84,12 @@ curl -fs http://127.0.0.1:9999/api/healthz | python3 -m json.tool
 
 `"ok": true` at the top level means the process is up and answering.
 Per-collector `"ok"` fields inside `"collectors"` reflect what's actually
-configured -- `beads`/`remote` staying `false` is expected if you don't have
-`bd` installed or no remote `hosts` configured; it is not a failed install.
+configured -- `beads`/`dispatch`/`remote` staying `false` with
+`"optional": true` and a `reason_code` is expected if you don't have `bd`
+installed, no `~/.overlord`, or no remote `hosts` configured; it is not a
+failed install. A collector in that state is auto-detected as inactive and
+is not scheduled at all (no repeated failing subprocess every cycle) -- see
+"Config reference" below.
 
 ```sh
 curl -s http://127.0.0.1:9999/api/version
@@ -137,6 +148,22 @@ if a key is missing entirely. Notable ones for a fresh install:
   live.
 - `hosts` -- for multi-host fleet collection over `ssh`. A single-host
   install needs no changes here.
+- `disk_mounts` -- mounts the system panel reports on, local and remote.
+  Defaults to `["/"]`; add more (e.g. `"/srv"`, `"/mnt/data"`) if you want
+  them shown. A configured mount that doesn't exist on a given host is
+  skipped, not a failure.
+- `collectors` -- per-collector `{"enabled": true|false}` overrides. Defaults
+  to `{}` (auto-detect everything): `beads`/`dispatch`/`remote` start
+  inactive on their own when their dependency (`bd`, `~/.overlord`, an
+  `ssh`-mode host) is absent, and are re-checked every
+  `collector_redetect_interval_s` (default 60s) -- installing `bd` later
+  brings that panel alive with no restart. Force one on or off regardless of
+  detection with e.g. `{"beads": {"enabled": false}}`.
 - `allow_self_update` -- `false` by default. See `SPEC.md` for the
   `/api/update/check` and `/api/update/apply` contract before turning this
   on.
+- `update_repo` -- empty by default. This dashboard's own upstream repo is
+  private, so a third-party install's update check would 404 against a repo
+  it can't read; leaving this empty makes `/api/update/check` report "no
+  update repo configured" instead. If you forked this repo and want
+  self-update, set `update_repo` to your own `"owner/repo"`.

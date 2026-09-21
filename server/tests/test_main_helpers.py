@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -634,3 +635,93 @@ def test_snapshot_settings_timezone_reflects_saved_layout(isolated_app):
     assert post_resp.status_code == 200
     snap_resp = isolated_app.get("/api/snapshot")
     assert snap_resp.json()["settings"]["timezone"] == "America/Chicago"
+
+
+# -- per-collector enablement (Bug 2) ------------------------------------------
+# Every assertion here reads /api/healthz (or /api/snapshot's "sources" key)
+# immediately after build_app() returns, BEFORE the scheduler's background
+# loop has run a single cycle -- deliberately: this never lets a test
+# actually shell out to `bd`/probe the filesystem via a running collector, and
+# it is exactly what tells an auto-disabled ("not scheduled at all", the
+# synthetic _inactive_health entry: optional=True, a real reason_code) collector
+# apart from one that IS registered but simply hasn't completed its first run
+# yet (the scheduler's default SourceHealth(): optional=False, reason_code=
+# None, error=None).
+
+_NO_DEPS_SOURCES = {
+    "bd_bin": "/nonexistent/no-such-bd-binary",
+    "beads_env": "/nonexistent/no-such-beads-env",
+    "overlord_dir": "/nonexistent/no-such-overlord",
+    "hosts": [{"name": "localhost", "mode": "local", "enabled": True}],
+}
+
+
+def test_healthz_beads_auto_disabled_when_bd_and_env_absent(tmp_path, monkeypatch):
+    client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=_NO_DEPS_SOURCES)
+    collectors = client.get("/api/healthz").json()["collectors"]
+    beads = collectors["beads"]
+    assert beads["ok"] is False
+    assert beads["optional"] is True
+    assert beads["reason_code"] == "dependency_missing"
+    assert "no-such-bd-binary" in beads["detail"]
+
+
+def test_healthz_dispatch_auto_disabled_when_overlord_dir_absent(tmp_path, monkeypatch):
+    client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=_NO_DEPS_SOURCES)
+    dispatch = client.get("/api/healthz").json()["collectors"]["dispatch"]
+    assert dispatch["ok"] is False
+    assert dispatch["optional"] is True
+    assert dispatch["reason_code"] == "config_missing"
+    assert "no-such-overlord" in dispatch["detail"]
+
+
+def test_healthz_remote_auto_disabled_when_no_ssh_host_configured(tmp_path, monkeypatch):
+    client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=_NO_DEPS_SOURCES)
+    remote = client.get("/api/healthz").json()["collectors"]["remote"]
+    assert remote["ok"] is False
+    assert remote["optional"] is True
+    assert remote["reason_code"] == "config_missing"
+
+
+def test_healthz_inactive_collectors_are_not_scheduled_but_visible_in_sources(tmp_path, monkeypatch):
+    """Still appears in `sources` with optional: true, per Bug 2 -- it must
+    not vanish from the API just because it isn't scheduled."""
+    client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=_NO_DEPS_SOURCES)
+    sources = client.get("/api/snapshot").json()["sources"]
+    for name in ("beads", "dispatch", "remote"):
+        assert sources[name]["optional"] is True
+        assert sources[name]["ok"] is False
+
+
+def test_healthz_explicit_enable_true_registers_beads_despite_missing_dependency(tmp_path, monkeypatch):
+    """An explicit override wins over auto-detection in both directions --
+    this is the "force on" direction: bd/env are still absent, but the
+    collector must be registered with the scheduler (not the synthetic
+    inactive entry) because of the override."""
+    extra = dict(_NO_DEPS_SOURCES, collectors={"beads": {"enabled": True}})
+    client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=extra)
+    beads = client.get("/api/healthz").json()["collectors"]["beads"]
+    # A real (if not-yet-run) scheduler entry, not the synthetic inactive
+    # one: optional False, no reason_code/error yet.
+    assert beads["optional"] is False
+    assert beads["reason_code"] is None
+    assert beads["error"] is None
+
+
+def test_healthz_explicit_enable_false_disables_beads_despite_dependency_present(tmp_path, monkeypatch):
+    """The "force off" direction: bd_bin/beads_env both resolve fine (using
+    this interpreter and a real file as harmless stand-ins), but an explicit
+    `enabled: false` must still keep it out of the scheduler."""
+    env_path = tmp_path / "fake-beads-env"
+    env_path.write_text("")
+    extra = {
+        "bd_bin": sys.executable,
+        "beads_env": str(env_path),
+        "collectors": {"beads": {"enabled": False}},
+    }
+    client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=extra)
+    beads = client.get("/api/healthz").json()["collectors"]["beads"]
+    assert beads["ok"] is False
+    assert beads["optional"] is True
+    assert beads["reason_code"] == "config_missing"
+    assert "collectors.beads.enabled=false" in beads["detail"]

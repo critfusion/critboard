@@ -161,17 +161,17 @@ for f in "${FILES[@]}"; do
     grep_pattern "$f" '/home/(?!user2?\b)[A-Za-z0-9_.-]+' \
         "real-looking /home/<user> path (use /home/user or /home/user2)" -P
 
-    # private IPv4 ranges (RFC 1918), excluding the two fictional example
-    # addresses the sanitized fixtures deliberately use in place of the real
-    # LAN/tailnet IPs that used to be there (10.0.0.5, 100.64.0.5 below).
+    # private IPv4 ranges (RFC 1918). Fixtures/docs use hostnames or
+    # 127.0.0.1/0.0.0.0 placeholders instead of a real LAN address, so
+    # nothing needs to be excluded here.
     grep_pattern "$f" \
-        '\b(10\.(?!0\.0\.5\b)[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})\b' \
+        '\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})\b' \
         "private IPv4 address" -P
 
-    # tailnet / CGNAT range 100.64.0.0/10, excluding the fictional example above
+    # tailnet / CGNAT range (RFC 6598)
     grep_pattern "$f" \
-        '\b100\.(?!64\.0\.5\b)(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b' \
-        "tailnet-range (100.64.0.0/10) address" -P
+        '\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b' \
+        "tailnet-range (RFC 6598) address" -P
 
     # common live-credential shapes
     grep_pattern "$f" 'sk-[A-Za-z0-9]{16,}' "OpenAI-style API key (sk-...)"

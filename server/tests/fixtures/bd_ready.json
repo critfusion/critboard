@@ -2,8 +2,8 @@
   {
     "id": "demo-fleet-q733",
     "title": "CritBoard — zero-token fleet mission control at :9999",
-    "description": "Build and maintain CritBoard (http://10.0.0.5:9999/), a mission-control UI monitoring every bead, agent, and worktree across the fleet, plus token usage and spend. Repo: github.com/demo-org/demo-dashboard, working tree ~/work/dashboard. Hard constraint: the running dashboard makes ZERO LLM calls -- collectors are subprocess+file parsing only. Layout is data (config/layout.json) so the UI can be reshaped without code changes.",
-    "acceptance_criteria": "1. http://10.0.0.5:9999/ serves the dashboard. 2. Beads, agents, worktrees, token spend all render live. 3. No LLM API call is made by any collector. 4. Editing config/layout.json changes the panel layout with no JS edit.",
+    "description": "Build and maintain CritBoard (http://localhost:9999/), a mission-control UI monitoring every bead, agent, and worktree across the fleet, plus token usage and spend. Repo: github.com/demo-org/demo-dashboard, working tree ~/work/dashboard. Hard constraint: the running dashboard makes ZERO LLM calls -- collectors are subprocess+file parsing only. Layout is data (config/layout.json) so the UI can be reshaped without code changes.",
+    "acceptance_criteria": "1. http://localhost:9999/ serves the dashboard. 2. Beads, agents, worktrees, token spend all render live. 3. No LLM API call is made by any collector. 4. Editing config/layout.json changes the panel layout with no JS edit.",
     "status": "open",
     "priority": 1,
     "issue_type": "epic",

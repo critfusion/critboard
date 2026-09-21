@@ -48,9 +48,35 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..pricing import compute_cost_usd
-from . import BaseCollector, now_iso
+from . import BaseCollector, CollectorIssue, now_iso
 
 _PROBE_PATH = Path(__file__).resolve().parent.parent / "remote_probe.py"
+
+_REMOTE_REMEDY = (
+    'Add a host with "mode": "ssh" to the "hosts" list in config/sources.json '
+    "to probe another machine over SSH, or ignore this panel if this is your "
+    "only machine."
+)
+
+
+def availability_issue(hosts: list[dict] | None) -> CollectorIssue | None:
+    """None if at least one enabled ssh-mode host is configured -- a single
+    laptop with only the default "localhost" (mode: local) entry has nothing
+    to probe over SSH, which is a normal, expected state, not a failure
+    (same "optional, auto-detected" treatment as beads/dispatch). Unlike
+    those two, this is not something collect() itself needs to check --
+    zero ssh hosts already makes collect() a fast no-op -- this only decides
+    whether main.py schedules the collector at all, so the `remote` panel
+    shows "not configured" instead of quietly running an idle task forever."""
+    for h in hosts or []:
+        if h.get("enabled", True) and h.get("mode") == "ssh":
+            return None
+    return CollectorIssue(
+        "config_missing",
+        "no ssh-mode host is configured in sources.json's \"hosts\" list",
+        remedy=_REMOTE_REMEDY,
+        optional=True,
+    )
 
 
 class RemoteCollector(BaseCollector):
@@ -88,7 +114,7 @@ class RemoteCollector(BaseCollector):
         self.repo_roots = repo_roots or []
         self.claude_projects_dir = claude_projects_dir
         self.herdr_bin = herdr_bin
-        self.disk_mounts = disk_mounts or ["/", "/srv"]
+        self.disk_mounts = disk_mounts or ["/"]
         self.worker_pool = worker_pool
         self.git_timeout_s = git_timeout_s
         self.max_depth = max_depth

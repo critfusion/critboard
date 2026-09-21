@@ -205,6 +205,55 @@ async def test_check_for_update_refreshes_once_interval_elapses(tmp_path, monkey
     assert state.last_checked_monotonic > first_checked_at
 
 
+async def test_check_for_update_empty_repo_reports_not_configured_with_no_http_call(tmp_path):
+    """Bug 3: update_repo defaults to "" (a third party has no access to
+    critfusion/critboard, now private) -- the check must report this plainly
+    and never touch the network."""
+    _init_repo(tmp_path)
+    current = _head(tmp_path)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"sha": "deadbeef"})
+
+    cfg = _Cfg(update_repo="", update_branch="main")
+    state = update.CheckState()
+    result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
+
+    assert calls["n"] == 0
+    assert result["current"] == current
+    assert result["latest"] is None
+    assert result["behind"] is None
+    assert result["update_available"] is False
+    assert result["repo_configured"] is False
+    assert result["message"] == "no update repo configured"
+
+
+async def test_check_for_update_default_repo_is_empty_when_unset(tmp_path):
+    """No update_repo key at all in sources.json -- same "not configured"
+    behavior as an explicit empty string, via DEFAULT_UPDATE_REPO."""
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"sha": "deadbeef"})
+
+    cfg = _Cfg()  # no update_repo at all
+    state = update.CheckState()
+    result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
+
+    assert calls["n"] == 0
+    assert result["repo_configured"] is False
+
+
+def test_apply_update_refuses_empty_repo(tmp_path):
+    _init_repo(tmp_path)
+    with pytest.raises(update.UpdateError) as exc_info:
+        update.apply_update(_Cfg(allow_self_update=True, update_repo=""), tmp_path)
+    assert exc_info.value.reason == "update_repo_not_configured"
+
+
 # -- apply_update: refusal paths -----------------------------------------------
 
 
@@ -225,7 +274,7 @@ def test_apply_update_refuses_dirty_working_tree(tmp_path):
     _init_repo(tmp_path)
     (tmp_path / "a.txt").write_text("uncommitted change\n")
     with pytest.raises(update.UpdateError) as exc_info:
-        update.apply_update(_Cfg(allow_self_update=True), tmp_path)
+        update.apply_update(_Cfg(allow_self_update=True, update_repo="o/r"), tmp_path)
     assert exc_info.value.reason == "dirty_working_tree"
 
 

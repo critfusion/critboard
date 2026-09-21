@@ -132,3 +132,17 @@ def test_default_sources_are_host_agnostic():
     assert config_mod.DEFAULT_SOURCES["bind_host"] == "127.0.0.1"
     assert config_mod.DEFAULT_SOURCES["host"] == "localhost"
     assert config_mod.DEFAULT_SOURCES["hosts"] == [{"name": "localhost", "mode": "local", "enabled": True}]
+
+
+def test_default_sources_disk_mounts_no_srv():
+    # Bug 1: no more hardcoded "/srv" -- just "/" by default.
+    assert config_mod.DEFAULT_SOURCES["disk_mounts"] == ["/"]
+
+
+def test_default_sources_collectors_empty_means_auto_detect():
+    assert config_mod.DEFAULT_SOURCES["collectors"] == {}
+
+
+def test_default_sources_update_repo_is_empty():
+    # Bug 3: the upstream repo is private -- a fork must opt in explicitly.
+    assert config_mod.DEFAULT_SOURCES["update_repo"] == ""

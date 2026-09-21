@@ -27,6 +27,78 @@ def _assistant_line(message_id, model, ts, input_tokens=2, output_tokens=10, cac
     })
 
 
+# -- collect_system (mirrors collectors/system.py -- Bug 1: cross-platform.
+# Linux is exercised for real (this test host); the macOS branch is exercised
+# by monkeypatching sys.platform and rp._run_command with captured-format
+# fixtures -- implemented-but-unverified on real macOS, see that module's
+# docstring / collectors/system.py's docstring.) ------------------------------
+
+_SYSCTL_MEMSIZE_OUTPUT = "hw.memsize: 17179869184\n"
+_VM_STAT_OUTPUT = """Mach Virtual Memory Statistics: (page size of 4096 bytes)
+Pages free:                             212345.
+Pages active:                          1234567.
+Pages inactive:                         345678.
+Pages wired down:                       456789.
+Pages occupied by compressor:            23456.
+"""
+
+
+def test_collect_system_linux_reports_real_loadavg_and_meminfo():
+    result = rp.collect_system(["/"])
+    assert isinstance(result["load1"], float)
+    assert result["mem_total_gb"] > 0
+    assert result["mem_used_gb"] is not None
+    assert any(d["mount"] == "/" for d in result["disks"])
+
+
+def test_collect_system_default_disk_mount_no_longer_hardcodes_srv():
+    import inspect
+    src = inspect.getsource(rp.main)
+    assert '["/"]' in src
+    assert "/srv" not in src
+
+
+def test_collect_system_darwin_branch_via_monkeypatched_platform(monkeypatch):
+    monkeypatch.setattr(rp.sys, "platform", "darwin")
+
+    def fake_run_command(args, timeout=5.0):
+        if args[0] == "sysctl":
+            return _SYSCTL_MEMSIZE_OUTPUT
+        if args[0] == "vm_stat":
+            return _VM_STAT_OUTPUT
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(rp, "_run_command", fake_run_command)
+
+    result = rp.collect_system(["/"])
+    assert result["mem_total_gb"] == pytest.approx(17179869184 / (1024 ** 3), rel=1e-3)
+    expected_used_gb = round((1234567 + 456789 + 23456) * 4096 / (1024 ** 3), 1)
+    assert result["mem_used_gb"] == pytest.approx(expected_used_gb)
+
+
+def test_collect_system_darwin_branch_used_none_when_vm_stat_unparseable(monkeypatch):
+    monkeypatch.setattr(rp.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        rp, "_run_command",
+        lambda args, timeout=5.0: _SYSCTL_MEMSIZE_OUTPUT if args[0] == "sysctl" else "garbage\n",
+    )
+    result = rp.collect_system(["/"])
+    assert result["mem_total_gb"] > 0
+    assert result["mem_used_gb"] is None
+
+
+def test_collect_system_unsupported_platform_returns_empty_dict(monkeypatch):
+    monkeypatch.setattr(rp.sys, "platform", "win32")
+    assert rp.collect_system(["/"]) == {}
+
+
+def test_collect_system_skips_configured_mount_that_does_not_exist(tmp_path):
+    missing = str(tmp_path / "does-not-exist")
+    result = rp.collect_system(["/", missing])
+    mounts = {d["mount"] for d in result["disks"]}
+    assert mounts == {"/"}
+
+
 # -- extract_usage_fields (token counts only, no cost) -----------------------
 
 

@@ -18,9 +18,9 @@ thing to ship and upsert on RemoteCollector's replace-semantics tables.
 
 Design notes:
   - Every section (worktrees / agents / system / usage) is collected inside
-    its own try/except so one broken subsystem (e.g. no herdr, no /srv) never
-    blanks the others -- same "degrade gracefully" rule as the local
-    collectors.
+    its own try/except so one broken subsystem (e.g. no herdr, an
+    unsupported OS for system metrics) never blanks the others -- same
+    "degrade gracefully" rule as the local collectors.
   - `agents`/`worktrees` reuse the exact same parsing rules as the local
     collectors (critdash/collectors/agents.py, worktrees.py), duplicated here
     intentionally rather than imported, because this file must survive being
@@ -57,6 +57,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1300,21 +1301,29 @@ def join_agents_to_worktrees(worktrees: list[dict], agents: list[dict]) -> None:
         wt["agents"] = [aid for _len, aid in matched if aid]
 
 
-# -- system (mirrors collectors/system.py) -------------------------------------
+# -- system (mirrors collectors/system.py -- cross-platform: Linux + macOS.
+# See that module's docstring for what's verified on Linux vs
+# implemented-but-unverified on macOS; the logic is duplicated here rather
+# than imported for the same reason every other section of this file
+# duplicates the local collectors' parsing rules -- this script must survive
+# being copied alone to a host with no critdash package installed.) --------
 
 _GB = 1024 ** 3
+_SUPPORTED_SYSTEM_PLATFORMS = ("linux", "darwin")
+
+_SYSCTL_MEMSIZE_RE = re.compile(r"(\d+)")
+_VM_STAT_PAGE_SIZE_RE = re.compile(r"page size of (\d+) bytes")
+_VM_STAT_LINE_RE = re.compile(r'^"?([^":]+)"?:\s*([\d,]+)\.?\s*$')
 
 
 def _read_loadavg():
     try:
-        with open("/proc/loadavg") as f:
-            parts = f.read().split()
-        return float(parts[0]), float(parts[1]), float(parts[2])
+        return os.getloadavg()
     except OSError:
         return 0.0, 0.0, 0.0
 
 
-def _read_meminfo():
+def _read_meminfo_linux():
     total_kb = avail_kb = 0
     try:
         with open("/proc/meminfo") as f:
@@ -1330,6 +1339,66 @@ def _read_meminfo():
     return used_gb, total_gb
 
 
+def _parse_sysctl_memsize(output: str):
+    m = _SYSCTL_MEMSIZE_RE.search(output)
+    return int(m.group(1)) if m else None
+
+
+def _parse_vm_stat(output: str):
+    page_size_m = _VM_STAT_PAGE_SIZE_RE.search(output)
+    page_size = int(page_size_m.group(1)) if page_size_m else 4096
+    pages: dict[str, int] = {}
+    for raw_line in output.splitlines():
+        m = _VM_STAT_LINE_RE.match(raw_line.strip())
+        if not m:
+            continue
+        key = m.group(1).strip().lower()
+        try:
+            pages[key] = int(m.group(2).replace(",", ""))
+        except ValueError:
+            continue
+    return pages, page_size
+
+
+def _macos_mem_used_gb(vm_stat_output: str):
+    pages, page_size = _parse_vm_stat(vm_stat_output)
+    try:
+        used_pages = (
+            pages["pages active"] + pages["pages wired down"]
+            + pages.get("pages occupied by compressor", 0)
+        )
+    except KeyError:
+        return None
+    return used_pages * page_size / _GB
+
+
+def _run_command(args, timeout: float = 5.0):
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def _read_meminfo():
+    """(used_gb, total_gb), both possibly None -- see collectors/system.py's
+    read_meminfo docstring: total-only (used=None) when used memory can't be
+    determined reliably, both None on a platform this has no support for."""
+    plat = sys.platform
+    if plat == "darwin":
+        sysctl_out = _run_command(["sysctl", "hw.memsize"])
+        total_bytes = _parse_sysctl_memsize(sysctl_out) if sysctl_out else None
+        total_gb = total_bytes / _GB if total_bytes is not None else None
+        vm_stat_out = _run_command(["vm_stat"])
+        used_gb = _macos_mem_used_gb(vm_stat_out) if vm_stat_out else None
+        return used_gb, total_gb
+    if plat == "linux":
+        return _read_meminfo_linux()
+    return None, None
+
+
 def _disk(mount: str) -> dict | None:
     if not os.path.exists(mount):
         return None
@@ -1341,13 +1410,16 @@ def _disk(mount: str) -> dict | None:
 
 
 def collect_system(disk_mounts: list[str]) -> dict:
+    if sys.platform not in _SUPPORTED_SYSTEM_PLATFORMS:
+        return {}
     load1, load5, load15 = _read_loadavg()
     mem_used_gb, mem_total_gb = _read_meminfo()
     disks = [d for d in (_disk(m) for m in disk_mounts) if d is not None]
     return {
         "load1": load1, "load5": load5, "load15": load15,
         "cpu_count": os.cpu_count() or 0,
-        "mem_used_gb": round(mem_used_gb, 1), "mem_total_gb": round(mem_total_gb, 1),
+        "mem_used_gb": round(mem_used_gb, 1) if mem_used_gb is not None else None,
+        "mem_total_gb": round(mem_total_gb, 1) if mem_total_gb is not None else None,
         "disks": disks,
     }
 
@@ -1541,7 +1613,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     repo_roots = args.repo_root or ["~/repos", "~/src", "~/work"]
     repo_roots = [os.path.expanduser(r) for r in repo_roots]
-    disk_mounts = args.disk_mount or ["/", "/srv"]
+    disk_mounts = args.disk_mount or ["/"]
 
     try:
         result = build_result(

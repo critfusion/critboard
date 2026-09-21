@@ -318,3 +318,27 @@ async def test_run_timeout_is_unreachable(monkeypatch):
     issue = exc_info.value
     assert issue.reason_code == "unreachable"
     assert issue.optional is False
+
+
+# -- availability_issue (Bug 2: shared preflight, used by collect() and by
+# main.py's startup auto-detection) -----------------------------------------
+
+
+def test_availability_issue_none_when_bd_and_env_present(tmp_path):
+    env_path = tmp_path / "env"
+    env_path.write_text("")
+    assert beads_mod.availability_issue(sys.executable, str(env_path)) is None
+
+
+def test_availability_issue_dependency_missing_when_bd_absent(tmp_path):
+    env_path = tmp_path / "env"
+    env_path.write_text("")
+    issue = beads_mod.availability_issue(str(tmp_path / "no-such-bd"), str(env_path))
+    assert issue.reason_code == "dependency_missing"
+    assert issue.optional is True
+
+
+def test_availability_issue_config_missing_when_env_absent():
+    issue = beads_mod.availability_issue(sys.executable, "/nonexistent/beads/env")
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is True

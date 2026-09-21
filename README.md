@@ -37,8 +37,10 @@ systemd setup and uninstall: [INSTALL.md](INSTALL.md).
 | **Errors** | Tool failure patterns and per-tool error rates from the transcripts. |
 | **Quota** | Manually-triggered remaining-balance check per provider. Never polled. |
 
-Supports Claude Code and Kimi Code today, on one host or many over SSH.
-A provider whose files are absent is simply inactive — nothing to configure.
+Supports Claude Code and Kimi Code today, on one host or many over SSH, on
+Linux or macOS. A provider or optional dependency (`bd`, `~/.overlord`, an
+SSH host) whose files are absent is simply inactive — nothing to configure,
+and nothing gets scheduled to fail on a loop until it's installed.
 
 ## How the numbers are kept honest
 
@@ -65,11 +67,14 @@ uPlot vendored locally so the page works offline.
 
 ## Updating
 
-The dashboard can check this repo for a newer commit and apply it.
+The dashboard can check a repo for a newer commit and apply it.
 Self-update is **disabled by default**: it refuses a dirty working tree,
 refuses anything that is not a fast-forward, and only pulls from the
-configured origin. Enable with `"allow_self_update": true` in
-`config/sources.json`.
+configured origin. `update_repo` is empty by default (this repo's own
+upstream is private, so a third-party install has nothing it could 404
+against) -- if you forked this repo, set `update_repo` to your own
+`"owner/repo"` in `config/sources.json`, then enable with
+`"allow_self_update": true`.
 
 ## Privacy
 

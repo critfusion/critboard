@@ -205,6 +205,15 @@ class Scheduler:
         for name in self._states:
             self._tasks.append(asyncio.create_task(self._loop_for(name), name=f"collector:{name}"))
 
+    def start_one(self, name: str) -> None:
+        """Start a single collector's loop task after start() has already
+        run -- used when a collector that was inactive at startup (its
+        optional dependency was absent) gets registered live once periodic
+        re-detection finds the dependency now present (e.g. `bd` got
+        installed after the dashboard started). Every other collector's task
+        is untouched."""
+        self._tasks.append(asyncio.create_task(self._loop_for(name), name=f"collector:{name}"))
+
     async def stop(self) -> None:
         self._stopping = True
         for t in self._tasks:

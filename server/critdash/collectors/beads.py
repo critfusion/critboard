@@ -303,6 +303,31 @@ async def _run(cmd: str, timeout: float = 20.0) -> str:
     return stdout.decode(errors="replace")
 
 
+def availability_issue(bd_bin: str, beads_env: str) -> CollectorIssue | None:
+    """None if `bd` is installed and its env file exists -- the two
+    preflight checks BeadsCollector.collect() runs before ever shelling out,
+    factored out so main.py can run the exact same check at startup (and on
+    periodic re-detection) to decide whether to schedule this collector at
+    all, without duplicating the logic or actually running collect()."""
+    if resolve_bd_bin(bd_bin) is None:
+        return CollectorIssue(
+            "dependency_missing",
+            f"bd is not installed: {bd_bin!r} was not found on PATH",
+            remedy=_BD_DEPENDENCY_REMEDY,
+            optional=True,
+        )
+    env_path = Path(os.path.expanduser(beads_env))
+    if not env_path.is_file():
+        return CollectorIssue(
+            "config_missing",
+            f"beads env file not found: {env_path}",
+            remedy=f"Create {env_path} (see your beads setup docs), "
+            "or ignore this panel if you do not use beads.",
+            optional=True,
+        )
+    return None
+
+
 class BeadsCollector(BaseCollector):
     name = "beads"
     interval_s = 30.0
@@ -321,22 +346,9 @@ class BeadsCollector(BaseCollector):
         return f". {env_path} 2>/dev/null; export BEADS_ACTOR={shlex.quote(self.actor)};"
 
     async def collect(self) -> dict:
-        if resolve_bd_bin(self.bd_bin) is None:
-            raise CollectorIssue(
-                "dependency_missing",
-                f"bd is not installed: {self.bd_bin!r} was not found on PATH",
-                remedy=_BD_DEPENDENCY_REMEDY,
-                optional=True,
-            )
-        env_path = Path(os.path.expanduser(self.beads_env))
-        if not env_path.is_file():
-            raise CollectorIssue(
-                "config_missing",
-                f"beads env file not found: {env_path}",
-                remedy=f"Create {env_path} (see your beads setup docs), "
-                "or ignore this panel if you do not use beads.",
-                optional=True,
-            )
+        issue = availability_issue(self.bd_bin, self.beads_env)
+        if issue is not None:
+            raise issue
 
         bd = shlex.quote(self.bd_bin)
         list_out, stats_out, ready_out = await asyncio.gather(

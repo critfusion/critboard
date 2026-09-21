@@ -1820,7 +1820,7 @@
           "count": 58,
           "last_seen": "2026-09-18T15:22:29Z",
           "pct": 0.4028,
-          "example": "<tool_use_error>Blocked: sleep 45 followed by: curl -s --max-time 20 http://10.0.0.5:9999/api/snapshot ..."
+          "example": "<tool_use_error>Blocked: sleep 45 followed by: curl -s --max-time 20 http://localhost:9999/api/snapshot ..."
         },
         {
           "kind": "command_failed",

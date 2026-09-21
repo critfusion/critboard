@@ -15,6 +15,14 @@ Hard rules (mirrors quota.py's manual-only contract):
     `message`; main.py maps each reason to a specific HTTP status, never a
     bare 500. It refuses a dirty working tree, anything that is not a clean
     fast-forward, and a pull from any remote other than the configured repo.
+  - `update_repo` defaults to "" (empty), not a specific repo -- the
+    upstream critfusion/critboard repo this dashboard was originally built
+    against is now private, so a third-party install's update check would
+    404 against a repo it has no access to. GET /api/update/check reports
+    "no update repo configured" for an empty repo instead of hitting GitHub
+    at all; POST /api/update/apply refuses the same way (reason
+    "update_repo_not_configured"). A fork that wants self-update should set
+    "update_repo" in config/sources.json to its own "owner/repo".
 """
 
 from __future__ import annotations
@@ -31,7 +39,7 @@ import httpx
 
 logger = logging.getLogger("critdash.update")
 
-DEFAULT_UPDATE_REPO = "critfusion/critboard"
+DEFAULT_UPDATE_REPO = ""
 DEFAULT_UPDATE_BRANCH = "main"
 DEFAULT_CHECK_TIMEOUT_S = 10.0
 DEFAULT_CHECK_MIN_INTERVAL_S = 300.0
@@ -164,6 +172,23 @@ async def check_for_update(
     timeout = float(config.sources.get("quota_timeout_s", DEFAULT_CHECK_TIMEOUT_S))
     current = git_identity(dashboard_root)["commit"]
 
+    if not repo:
+        # No update_repo configured (the default -- see module docstring):
+        # report this plainly instead of a GitHub 404/error, and never make
+        # a network call for it.
+        result = {
+            "current": current,
+            "latest": None,
+            "behind": None,
+            "checked_at": _now_iso(),
+            "update_available": False,
+            "repo_configured": False,
+            "message": "no update repo configured",
+        }
+        state.cached = result
+        state.last_checked_monotonic = now
+        return result
+
     own_client = client is None
     if own_client:
         client = httpx.AsyncClient()
@@ -257,6 +282,13 @@ def apply_update(config, dashboard_root: Path) -> dict:
 
     repo = config.sources.get("update_repo") or DEFAULT_UPDATE_REPO
     branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
+
+    if not repo:
+        raise UpdateError(
+            "update_repo_not_configured",
+            'no update repo configured. Set "update_repo" to "owner/repo" in '
+            "config/sources.json (e.g. your own fork) to enable self-update.",
+        )
 
     _refuse_if_dirty(root)
     _refuse_if_wrong_origin(root, repo)

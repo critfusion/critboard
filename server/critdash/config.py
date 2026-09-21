@@ -72,6 +72,19 @@ DEFAULT_SOURCES = {
     "hosts": [
         {"name": "localhost", "mode": "local", "enabled": True},
     ],
+    # Disk mounts the system panel reports on, local and remote -- "/" plus
+    # whatever else you add here (e.g. "/srv" or "/mnt/data"). A configured
+    # mount that doesn't exist on a given host is skipped, not a failure --
+    # see collectors/system.py.
+    "disk_mounts": ["/"],
+    # Per-collector enablement override (Bug 2). Empty/absent = every
+    # collector auto-detects: one whose optional dependency is missing (no
+    # `bd`, no ~/.overlord, no ssh-mode host) starts inactive and is
+    # re-checked every collector_redetect_interval_s rather than scheduled
+    # to fail every cycle. Force one on or off regardless of detection with
+    # e.g. {"beads": {"enabled": false}}.
+    "collectors": {},
+    "collector_redetect_interval_s": 60,
     "session_active_window_s": 900,
     "remote_interval_s": 120,
     "ssh_timeout_s": 45,
@@ -89,7 +102,11 @@ DEFAULT_SOURCES = {
     # `git pull` from update_repo/update_branch and restarts the service, so
     # a fresh install must opt in explicitly (see that module's docstring).
     "allow_self_update": False,
-    "update_repo": "critfusion/critboard",
+    # Empty by default -- the dashboard's own upstream repo is private, so a
+    # third-party install's update check would 404 against a repo it can't
+    # read. A fork that wants self-update sets this to its own "owner/repo".
+    # See update.py's module docstring.
+    "update_repo": "",
     "update_branch": "main",
     "update_check_min_interval_s": 300,
     "ssh_opts": [
