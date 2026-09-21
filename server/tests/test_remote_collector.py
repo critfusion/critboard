@@ -356,7 +356,7 @@ async def test_host_with_only_historical_usage_still_persists_and_is_ok(ctx, mon
     old_hour_payload = _probe_payload(
         "host-c",
         usage_buckets=[
-            {"hour": "2026-06-01T09", "model": "claude-sonnet-4-6", "project": "appstore",
+            {"hour": "2026-06-01T09", "model": "claude-sonnet-4-6", "project": "sample-project",
              "input": 5, "output": 100, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0,
              "messages": 3},
         ],

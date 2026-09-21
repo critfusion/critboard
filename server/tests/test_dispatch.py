@@ -16,8 +16,8 @@ def test_parse_routes_conf(fixtures_dir):
     assert "grok-review" in labels
     for r in routes:
         assert r["kind"]
-    # comment-only / commented-out lines (e.g. "# android-test ...") must not appear
-    assert "android-test" not in labels
+    # comment-only / commented-out lines (e.g. "# device-check ...") must not appear
+    assert "device-check" not in labels
 
 
 def test_parse_routes_conf_ignores_comments_and_blank_lines():
@@ -27,9 +27,9 @@ def test_parse_routes_conf_ignores_comments_and_blank_lines():
 
 
 def test_parse_routes_conf_with_precheck():
-    text = "android-test claude adb devices | grep -q '^ABC device'\n"
+    text = "device-check claude adb devices | grep -q '^ABC device'\n"
     routes = parse_routes_conf(text)
-    assert routes[0]["label"] == "android-test"
+    assert routes[0]["label"] == "device-check"
     assert routes[0]["kind"] == "claude"
     assert "adb devices" in routes[0]["precheck"]
 

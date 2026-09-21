@@ -9,6 +9,12 @@
 # Run standalone from anywhere in the repo:
 #   bash scripts/check-public.sh
 #
+# Optional ground-truth mode derives the name list from THIS machine (repo
+# roots, local beads data, GitHub org) instead of relying on a hand-written
+# list -- opt-in only, see the "ground-truth" block below:
+#   CHECK_PUBLIC_GROUND_TRUTH=1 bash scripts/check-public.sh
+#   bash scripts/check-public.sh --ground-truth
+#
 # This is the thing that stops a sanitized leak from coming back: run it
 # before every commit that touches fixtures, docs, or config defaults.
 
@@ -111,10 +117,197 @@ for h in "$_live_hostname" "$_live_fqdn"; do
     HOST_LITERALS+=("$h")
 done
 
+# -- optional: derive the private-name list from THIS machine ---------------
+# A hand-written list is exactly how a real client/repo name survives an
+# audit: it ships until someone remembers to add it. This mode instead reads
+# ground truth at scan time -- directory names under this machine's repo
+# roots, repo values/labels from local beads data, and repo names from the
+# GitHub org -- the same three sources a human sweep would use. Opt-in only
+# (env var or flag): a third-party clone has no beads server and no GitHub
+# auth, so every source here is skipped, not failed, when unavailable, and
+# the shipped default (no flag/env, e.g. `make check`) never touches this
+# block at all.
+#
+# Enable with:
+#   CHECK_PUBLIC_GROUND_TRUTH=1 bash scripts/check-public.sh
+#   bash scripts/check-public.sh --ground-truth
+# Force a fresh derive (skip the cache): add CHECK_PUBLIC_REFRESH=1.
+ground_truth_mode=0
+for _arg in "$@"; do
+    [ "$_arg" = "--ground-truth" ] && ground_truth_mode=1
+done
+[ "${CHECK_PUBLIC_GROUND_TRUTH:-0}" = "1" ] && ground_truth_mode=1
+
+ground_truth_pattern=""
+if [ "$ground_truth_mode" -eq 1 ]; then
+    cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/critboard-check-public"
+    cache_file="$cache_dir/ground-truth.list"
+    cache_ttl="${CHECK_PUBLIC_CACHE_TTL:-3600}"  # seconds
+
+    use_cache=0
+    if [ -f "$cache_file" ] && [ "${CHECK_PUBLIC_REFRESH:-0}" != "1" ]; then
+        _mtime="$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)"
+        _age=$(( $(date +%s) - _mtime ))
+        [ "$_age" -lt "$cache_ttl" ] && use_cache=1
+    fi
+
+    if [ "$use_cache" -eq 0 ]; then
+        # Small, named stop-list: product vocabulary this project ships on
+        # purpose (its own routing-label names) plus the one owner name
+        # that has been explicitly reviewed and accepted (see report). Every
+        # entry here is something a human reviewed and said is not private
+        # -- not a token added because it happened to fail the scan.
+        declare -a STOP_LIST=(
+            dashboard fleet medium profile smoke handoff critboard
+            __pycache__ readme.md
+            needs-codex needs-grok needs-claude needs-opencode
+            grok-review waiting-review
+            bryan
+        )
+
+        declare -a repo_roots
+        if [ -n "${CHECK_PUBLIC_REPO_ROOTS:-}" ]; then
+            IFS=':' read -r -a repo_roots <<< "$CHECK_PUBLIC_REPO_ROOTS"
+        else
+            repo_roots=("$HOME/repos" "/srv/work/repos" "$HOME/work" "/srv/work/projects")
+        fi
+
+        raw_names_file="$(mktemp)"
+        trap 'rm -f "$raw_names_file"' EXIT
+
+        # Source 1: directory names under the configured repo roots.
+        for root in "${repo_roots[@]}"; do
+            [ -d "$root" ] || continue
+            ls -1 "$root" 2>/dev/null >> "$raw_names_file"
+        done
+
+        # Source 2: repo values + labels from local beads data. Skipped
+        # entirely if `bd` isn't on PATH or the call fails for any reason --
+        # beads is an optional workflow, per collectors/beads.py.
+        if command -v bd >/dev/null 2>&1; then
+            bd_env="$HOME/.config/beads/env"
+            bd_json=""
+            if [ -f "$bd_env" ]; then
+                bd_json="$(. "$bd_env" 2>/dev/null && bd list --json --all --limit 0 2>/dev/null)" || bd_json=""
+            else
+                bd_json="$(bd list --json --all --limit 0 2>/dev/null)" || bd_json=""
+            fi
+            if [ -n "$bd_json" ]; then
+                printf '%s' "$bd_json" | python3 -c '
+import sys, json
+try:
+    items = json.load(sys.stdin)
+except ValueError:
+    items = []
+if isinstance(items, dict):
+    items = items.get("issues") or items.get("items") or []
+for it in items or []:
+    if not isinstance(it, dict):
+        continue
+    r = it.get("repo")
+    if r:
+        print(r)
+    for l in (it.get("labels") or []):
+        print(l)
+' 2>/dev/null >> "$raw_names_file" || true
+            fi
+        fi
+
+        # Source 3: repo names from the GitHub org. Skipped entirely if `gh`
+        # isn't on PATH or isn't authenticated.
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+            gh_org="${CHECK_PUBLIC_GH_ORG:-critfusion}"
+            gh repo list "$gh_org" --limit 200 --json name --jq '.[].name' 2>/dev/null >> "$raw_names_file" || true
+        fi
+
+        mkdir -p "$cache_dir" 2>/dev/null || true
+        tr 'A-Z' 'a-z' < "$raw_names_file" \
+            | sed 's/\.git$//' \
+            | grep -vE '^$|^\.|^wt-|^repo$' \
+            | awk 'length($0) >= 4' \
+            | sort -u \
+            > "${cache_file}.tmp" 2>/dev/null || : > "${cache_file}.tmp"
+
+        if [ -s "${cache_file}.tmp" ]; then
+            printf '%s\n' "${STOP_LIST[@]}" | tr 'A-Z' 'a-z' | sort -u > "${cache_file}.stop"
+            comm -23 "${cache_file}.tmp" "${cache_file}.stop" > "$cache_file" 2>/dev/null \
+                || mv "${cache_file}.tmp" "$cache_file"
+            rm -f "${cache_file}.tmp" "${cache_file}.stop"
+        else
+            mv "${cache_file}.tmp" "$cache_file"
+        fi
+        rm -f "$raw_names_file"
+        trap - EXIT
+    fi
+
+    declare -a GROUND_TRUTH=()
+    [ -f "$cache_file" ] && mapfile -t GROUND_TRUTH < "$cache_file"
+
+    if [ "${#GROUND_TRUTH[@]}" -gt 0 ]; then
+        # One combined alternation per file beats one grep per derived name
+        # per file -- this is what keeps a few hundred derived names cheap.
+        declare -a _esc_terms=()
+        for _t in "${GROUND_TRUTH[@]}"; do
+            [ -n "$_t" ] || continue
+            _esc_terms+=("$(printf '%s' "$_t" | sed -E 's/[.[\*^$+?(){}|\\]/\\&/g')")
+        done
+        ground_truth_pattern="$(IFS='|'; echo "${_esc_terms[*]}")"
+    fi
+fi
+
+# config/layout.json (and its shipped config/layout.example.json) holds
+# personal settings the settings panel writes: title and human_labels (the
+# bead labels that mean "a person owns this", e.g. a maintainer's real
+# first name). A literal-string grep can't catch an arbitrary owner's name
+# -- that requires adding every name to scripts/check-public.local by hand,
+# which is exactly the gap that let a real name ship in a tracked
+# config/layout.json in the first place (it never showed up in that local
+# override list). This check instead reads the JSON structure: ANY tracked
+# layout config whose human_labels is non-empty, or whose title differs
+# from the shipped default below, holds a personal value that must never be
+# committed -- regardless of what the name or title actually is. The
+# default is hardcoded here (not read back from layout.example.json) so a
+# corrupted/personalized example can't validate itself.
+_LAYOUT_DEFAULT_TITLE="CritBoard"
+check_layout_json() { # file
+    local file="$1"
+    python3 - "$file" "$_LAYOUT_DEFAULT_TITLE" <<'PYEOF'
+import json
+import sys
+
+path, default_title = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as fh:
+        doc = json.load(fh)
+except (OSError, ValueError):
+    sys.exit(0)
+if not isinstance(doc, dict):
+    sys.exit(0)
+
+labels = doc.get("human_labels")
+if isinstance(labels, list) and len(labels) > 0:
+    print(f"human_labels|human_labels is non-empty ({labels!r}) in a tracked layout config -- a real name would ship publicly")
+
+title = doc.get("title")
+if isinstance(title, str) and title != default_title:
+    print(f"title|title {title!r} differs from the shipped default {default_title!r} in a tracked layout config -- a personalized title would ship publicly")
+PYEOF
+}
+
 for f in "${FILES[@]}"; do
     [ -f "$f" ] || continue
     # This script names its own patterns in plain text -- never scan itself.
     [ "$f" = "scripts/check-public.sh" ] && continue
+
+    case "$f" in
+        config/layout.json|config/layout.example.json|*/config/layout.json|*/config/layout.example.json)
+            while IFS='|' read -r _kind _reason; do
+                [ -n "$_kind" ] || continue
+                lineno="$(grep -n "\"$_kind\"" "$f" 2>/dev/null | head -n1 | cut -d: -f1)"
+                report "$f" "${lineno:-1}" "$_reason"
+            done < <(check_layout_json "$f")
+            ;;
+    esac
     # config/sources.json is gitignored and machine-local BY DESIGN (see
     # .gitignore and server/critdash/config.py) -- holding this machine's
     # real hosts/paths is its whole job, never scanned here. It may still
@@ -156,6 +349,11 @@ for f in "${FILES[@]}"; do
             "this machine's real hostname ($h) -- see the dynamic HOST_LITERALS check" -i
     done
 
+    if [ "$ground_truth_mode" -eq 1 ] && [ -n "$ground_truth_pattern" ]; then
+        grep_pattern "$f" "$ground_truth_pattern" \
+            "matches a name derived from this machine's repo roots/beads/GitHub org (--ground-truth mode) -- confirm it is not a real private name, or extend the stop-list if it's generic" -i
+    fi
+
     # a real user's home dir, e.g. /home/alice -- but not the /home/user or
     # /home/user2 placeholders used throughout the sanitized fixtures/docs.
     grep_pattern "$f" '/home/(?!user2?\b)[A-Za-z0-9_.-]+' \
@@ -191,5 +389,9 @@ if [ "$loaded_local" -eq 1 ]; then
 else
     local_msg=" (no local overrides file)"
 fi
-echo "check-public.sh: clean -- no personal/infrastructure data found in $(printf '%s\n' "${FILES[@]}" | wc -l) files (tracked + untracked)$local_msg."
+gt_msg=" (ground-truth mode off)"
+if [ "$ground_truth_mode" -eq 1 ]; then
+    gt_msg=" (ground-truth mode on, ${#GROUND_TRUTH[@]} derived names)"
+fi
+echo "check-public.sh: clean -- no personal/infrastructure data found in $(printf '%s\n' "${FILES[@]}" | wc -l) files (tracked + untracked)$local_msg$gt_msg."
 exit 0

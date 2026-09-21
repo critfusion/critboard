@@ -465,7 +465,7 @@
       "branch": "content/unit-7",
       "pane": "w3:p1",
       "workspace": "w3",
-      "title": "CM Academy Content",
+      "title": "CM Demo Content",
       "focused": false,
       "session_id": "c82e3b21-4d5e-5f6a-9b0c-2d3e4f506172",
       "bead": "demo-fleet-3xh8",
@@ -2394,19 +2394,19 @@
           "lines_removed": 15810
         },
         {
-          "repo": "pr3-codex-wave14",
+          "repo": "demo-codex-wave14",
           "commits": 365,
           "lines_added": 112891,
           "lines_removed": 7905
         },
         {
-          "repo": "pr3-codex-wave13",
+          "repo": "demo-codex-wave13",
           "commits": 364,
           "lines_added": 112891,
           "lines_removed": 7905
         },
         {
-          "repo": "pr3-opencode-wave8",
+          "repo": "demo-opencode-wave8",
           "commits": 335,
           "lines_added": 112060,
           "lines_removed": 7647

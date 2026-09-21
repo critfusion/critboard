@@ -16,6 +16,12 @@ web/screenshots/
 # config/sources.example.json on first run -- see server/critdash/config.py.
 config/sources.json
 
+# personal: a user's own panel arrangement plus title/human_labels/timezone.
+# Seeded from config/layout.example.json on first run -- see
+# server/critdash/config.py. Never tracked so an upstream `git pull` can't
+# silently rearrange someone's dashboard or leak their name/title.
+config/layout.json
+
 # machine-local: scan overrides for check-public.sh -- extra patterns for this machine
 # that should never be published. See scripts/check-public.local.example for format.
 scripts/check-public.local

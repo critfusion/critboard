@@ -17,10 +17,10 @@ def _worktree(repo):
 
 def test_person_label_qualifies_route_and_worktree_labels_excluded():
     beads_items = [
-        _bead("open", ["bryan", "critdash"], repo="critdash"),
-        _bead("open", ["bryan"], repo="otherproj"),
-        _bead("in_progress", ["bryan", "owner"], repo="critdash"),
-        _bead("closed", ["bryan"], repo="critdash"),  # closed -- excluded from the count
+        _bead("open", ["maintainer", "critdash"], repo="critdash"),
+        _bead("open", ["maintainer"], repo="otherproj"),
+        _bead("in_progress", ["maintainer", "owner"], repo="critdash"),
+        _bead("closed", ["maintainer"], repo="critdash"),  # closed -- excluded from the count
     ]
     dispatch_routes = [{"label": "critdash"}]
     worktrees = [_worktree("otherproj")]
@@ -28,11 +28,11 @@ def test_person_label_qualifies_route_and_worktree_labels_excluded():
     result = suggest_human_labels(beads_items, dispatch_routes, worktrees)
 
     # "critdash" fails (b) (route label), "otherproj" fails (c) (real
-    # worktree/repo name on disk). "bryan" appears on 3 OPEN beads (the
+    # worktree/repo name on disk). "maintainer" appears on 3 OPEN beads (the
     # closed one doesn't count), matches no route, matches no worktree name,
     # and is never claimed -- qualifies. "owner" appears on 1 open bead, also
-    # qualifies, ranked below "bryan".
-    assert result["detected"] == ["bryan", "owner"]
+    # qualifies, ranked below "maintainer".
+    assert result["detected"] == ["maintainer", "owner"]
     assert "3 open beads" in result["reason"]
 
 
@@ -45,12 +45,12 @@ def test_person_label_that_is_circularly_a_bead_repo_value_still_detected():
     # The fix drops that check in favor of the filesystem-derived worktree
     # scan, so this must still qualify.
     beads_items = [
-        _bead("open", ["bryan"], repo="bryan"),
-        _bead("open", ["bryan"], repo="bryan"),
-        _bead("open", ["bryan"], repo="bryan"),
+        _bead("open", ["maintainer"], repo="maintainer"),
+        _bead("open", ["maintainer"], repo="maintainer"),
+        _bead("open", ["maintainer"], repo="maintainer"),
     ]
     result = suggest_human_labels(beads_items, dispatch_routes=[], worktrees=[])
-    assert result["detected"] == ["bryan"]
+    assert result["detected"] == ["maintainer"]
 
 
 def test_project_label_matching_a_real_worktree_name_excluded():
@@ -93,16 +93,16 @@ def test_label_ever_claimed_by_an_assignee_never_qualifies():
 
 def test_rare_workflow_label_does_not_outrank_high_count_person_label():
     beads_items = (
-        [_bead("open", ["bryan"], assignee=None) for _ in range(44)]
+        [_bead("open", ["maintainer"], assignee=None) for _ in range(44)]
         + [_bead("open", ["waiting-review"], assignee="agent-someproject") for _ in range(15)]
-        + [_bead("open", ["multi-tenant"], assignee=None) for _ in range(2)]
+        + [_bead("open", ["demo-tenant"], assignee=None) for _ in range(2)]
         + [_bead("open", ["handoff"], assignee="worker-claude") for _ in range(1)]
     )
     result = suggest_human_labels(beads_items, dispatch_routes=[], worktrees=[])
     # "waiting-review" and "handoff" are claimed by an assignee -- excluded
-    # despite outranking "multi-tenant" by count. "bryan" wins on count among
+    # despite outranking "demo-tenant" by count. "maintainer" wins on count among
     # what remains.
-    assert result["detected"] == ["bryan", "multi-tenant"]
+    assert result["detected"] == ["maintainer", "demo-tenant"]
 
 
 def test_no_qualifying_label_returns_empty_list_not_a_guess():
@@ -123,9 +123,9 @@ def test_ranked_by_open_bead_count_capped_at_three():
 
 
 def test_worktrees_defaults_to_empty_when_omitted():
-    beads_items = [_bead("open", ["bryan"]) for _ in range(2)]
+    beads_items = [_bead("open", ["maintainer"]) for _ in range(2)]
     result = suggest_human_labels(beads_items, dispatch_routes=[])
-    assert result["detected"] == ["bryan"]
+    assert result["detected"] == ["maintainer"]
 
 
 def test_detect_timezone_never_raises_and_returns_a_known_source():

@@ -697,7 +697,7 @@ def test_by_host_rollup_includes_host_with_zero_today_usage(tmp_store):
     zero-ever."""
     old_hour = "2026-06-01T09"
     tmp_store.upsert_remote_usage_buckets([dict(
-        host="host-c", hour=old_hour, model="claude-sonnet-4-6", project="appstore",
+        host="host-c", hour=old_hour, model="claude-sonnet-4-6", project="sample-project",
         input=5, output=100, cache_read=0, cache_write_5m=0, cache_write_1h=0, messages=3,
     )])
 

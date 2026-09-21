@@ -44,6 +44,58 @@ def test_ensure_sources_file_noop_when_example_missing(isolated_config_dir):
     assert not (isolated_config_dir / "sources.json").exists()
 
 
+def test_ensure_layout_file_seeds_from_example(isolated_config_dir):
+    # Same never-overwrite bootstrap as sources.json, applied to layout.json
+    # (see config.py's _ensure_config_file_from_example, shared by both).
+    example = {"version": 1, "title": "CritBoard", "human_labels": [], "panels": []}
+    (isolated_config_dir / "layout.example.json").write_text(json.dumps(example))
+
+    config_mod._ensure_layout_file(isolated_config_dir)
+
+    target = isolated_config_dir / "layout.json"
+    assert target.exists()
+    assert json.loads(target.read_text()) == example
+
+
+def test_ensure_layout_file_never_overwrites_existing(isolated_config_dir):
+    # A user's real panel arrangement/title/human_labels must survive an
+    # upstream git pull that changes config/layout.example.json.
+    (isolated_config_dir / "layout.example.json").write_text(
+        json.dumps({"version": 1, "title": "CritBoard", "human_labels": [], "panels": []})
+    )
+    real_layout = {
+        "version": 1,
+        "title": "Real Person's Dashboard",
+        "human_labels": ["realperson"],
+        "panels": [{"id": "fleet"}],
+    }
+    (isolated_config_dir / "layout.json").write_text(json.dumps(real_layout))
+
+    config_mod._ensure_layout_file(isolated_config_dir)
+
+    assert json.loads((isolated_config_dir / "layout.json").read_text()) == real_layout
+
+
+def test_ensure_layout_file_noop_when_example_missing(isolated_config_dir):
+    config_mod._ensure_layout_file(isolated_config_dir)
+    assert not (isolated_config_dir / "layout.json").exists()
+
+
+def test_load_config_also_bootstraps_layout_from_example(isolated_config_dir):
+    # load_config() bootstraps both sources.json and layout.json on first
+    # run -- the layout dashboard's start path (see config.py's load_config)
+    # not just install.sh.
+    (isolated_config_dir / "sources.example.json").write_text(json.dumps(config_mod.DEFAULT_SOURCES))
+    example_layout = {"version": 1, "title": "CritBoard", "human_labels": [], "panels": []}
+    (isolated_config_dir / "layout.example.json").write_text(json.dumps(example_layout))
+
+    config_mod.load_config()
+
+    target = isolated_config_dir / "layout.json"
+    assert target.exists()
+    assert json.loads(target.read_text()) == example_layout
+
+
 def test_load_config_bootstraps_from_example(isolated_config_dir):
     example = dict(config_mod.DEFAULT_SOURCES, repo_roots=["~/repos"])
     (isolated_config_dir / "sources.example.json").write_text(json.dumps(example))

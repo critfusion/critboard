@@ -69,7 +69,7 @@ export function summarizeRouting(beads, dispatch, humanLabels = DEFAULT_HUMAN_LA
 }
 
 // Route/label names are operator-chosen and unbounded ("needs-opencode",
-// "freedom-fellowship-weekly", ...); pills are laid out in tight, fixed-width
+// "sample-client-weekly", ...); pills are laid out in tight, fixed-width
 // contexts (a table column, a ~210px kanban card). Truncate defensively so a
 // long name degrades to "…" instead of spilling into the next cell -- the
 // full name is always still available in the tooltip.

@@ -1,9 +1,9 @@
 {
+  "_readme": "Copy of the defaults used to seed config/layout.json on first run. This file IS tracked in git; config/layout.json is NOT (see .gitignore) -- it holds a user's own panel arrangement plus personal settings (title, human_labels, timezone) and is generated from this file automatically the first time the dashboard starts. Edit config/layout.json directly for your own install (or use the settings panel), or edit this file only if you want to change what a fresh install starts with. human_labels lists the bead labels that mean \"a person owns this, not the fleet\" -- empty here on purpose (a fresh install classifies nothing as human-owned until you set it, e.g. via the settings panel's detected-label suggestion).",
   "version": 1,
-  "title": "CritBoard Mission Control",
-  "human_labels": [
-    "bryan"
-  ],
+  "title": "CritBoard",
+  "human_labels": [],
+  "timezone": "UTC",
   "grid": {
     "columns": 12,
     "row_height": 80,
