@@ -1,0 +1,17 @@
+{
+  "id": "session_test-uuid-1",
+  "version": 2,
+  "cwd": "/srv/demo/repos/testrepo",
+  "createdAt": 1789600857315,
+  "updatedAt": UPDATED_AT_MS_1,
+  "archived": false,
+  "agents": {
+    "main": {
+      "homedir": "SESSIONS_ROOT/sessions/wd_testrepo_abc123/session_test-uuid-1/agents/main",
+      "type": "main"
+    }
+  },
+  "custom": {},
+  "lastTurnReason": "failed",
+  "isCustomTitle": false
+}

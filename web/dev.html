@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CritBoard Mission Control (fixture)</title>
+<link rel="stylesheet" href="vendor/uplot.css" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!--
+    Dev harness: runs the exact same app against web/fixtures/snapshot.json
+    instead of the live API. No backend required.
+    Append ?fixture=degraded to load web/fixtures/snapshot-degraded.json
+    (every source down, all lists empty) to check the degraded-render path.
+  -->
+  <script>window.__DASHBOARD_FIXTURE__ = true;</script>
+
+  <header id="app-header">
+    <span id="app-title">CritBoard Mission Control</span>
+    <div class="spacer"></div>
+    <div id="window-selector" class="window-selector"></div>
+    <div id="conn-indicator" class="offline">
+      <span id="conn-dot"></span>
+      <span id="conn-label">OFFLINE</span>
+      <span id="conn-age" class="faint"></span>
+    </div>
+    <span id="clock" class="mono"></span>
+  </header>
+
+  <div id="reload-banner">
+    <span class="dot"></span>
+    <span id="reload-banner-text">A new version is available &mdash; reload to update</span>
+    <button id="reload-banner-go">Reload</button>
+    <button id="reload-banner-dismiss" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <div id="grid-wrap">
+    <div id="grid"></div>
+  </div>
+
+  <div id="help-overlay">
+    <div class="help-box">
+      <h2>Shortcuts</h2>
+      <div class="row"><span>Open/close this help</span><kbd>?</kbd></div>
+      <div class="row"><span>Force resnapshot</span><kbd>r</kbd></div>
+      <div class="row"><span>Toggle fullscreen</span><kbd>f</kbd></div>
+      <div class="row"><span>Focus panel 1-9</span><kbd>1</kbd>&ndash;<kbd>9</kbd></div>
+      <div class="row"><span>Close</span><kbd>Esc</kbd></div>
+      <div style="text-align:right; margin-top:14px;">
+        <button id="help-close" style="font-family:var(--font-mono); background:var(--color-bg-elevated); color:var(--color-text-dim); border:1px solid var(--color-border-bright); border-radius:4px; padding:4px 10px; cursor:pointer;">close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/uplot.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

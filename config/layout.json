@@ -1,0 +1,352 @@
+{
+  "version": 1,
+  "title": "CritBoard Mission Control",
+  "human_labels": ["bryan"],
+  "grid": {
+    "columns": 12,
+    "row_height": 80,
+    "gap": 14,
+    "breakpoints": {
+      "mobile_max": 640,
+      "tablet_max": 1024
+    }
+  },
+  "panels": [
+    {
+      "id": "fleet",
+      "type": "agent_grid",
+      "title": "FLEET",
+      "x": 0,
+      "y": 0,
+      "w": 8,
+      "h": 3,
+      "options": {
+        "show_idle": true,
+        "sort": "status"
+      },
+      "mobile": {
+        "order": 1
+      }
+    },
+    {
+      "id": "source_health",
+      "type": "source_health",
+      "title": "SOURCES",
+      "x": 8,
+      "y": 0,
+      "w": 4,
+      "h": 1,
+      "options": {},
+      "mobile": {
+        "order": 7
+      }
+    },
+    {
+      "id": "burn",
+      "type": "burn_gauge",
+      "title": "BURN RATE",
+      "x": 8,
+      "y": 1,
+      "w": 4,
+      "h": 2,
+      "options": {},
+      "mobile": {
+        "order": 3
+      }
+    },
+    {
+      "id": "beads_kanban",
+      "type": "bead_board",
+      "title": "BEADS",
+      "x": 0,
+      "y": 3,
+      "w": 8,
+      "h": 5,
+      "options": {
+        "lanes": [
+          "ready",
+          "in_progress",
+          "blocked",
+          "review"
+        ]
+      },
+      "mobile": {
+        "order": 4,
+        "limit": 12
+      }
+    },
+    {
+      "id": "spend_summary",
+      "type": "spend_summary",
+      "title": "SPEND",
+      "x": 8,
+      "y": 3,
+      "w": 4,
+      "h": 2,
+      "options": {},
+      "mobile": {
+        "order": 2
+      }
+    },
+    {
+      "id": "model_split",
+      "type": "model_split",
+      "title": "MODEL SPLIT",
+      "x": 8,
+      "y": 5,
+      "w": 4,
+      "h": 3,
+      "options": {},
+      "mobile": {
+        "order": 8
+      }
+    },
+    {
+      "id": "spend_timeline",
+      "type": "spend_timeline",
+      "title": "SPEND -- 48H",
+      "x": 0,
+      "y": 8,
+      "w": 8,
+      "h": 4,
+      "options": {},
+      "mobile": {
+        "order": 10,
+        "h": 3
+      }
+    },
+    {
+      "id": "quick_stats",
+      "type": "stat_row",
+      "title": "AT A GLANCE",
+      "x": 8,
+      "y": 8,
+      "w": 4,
+      "h": 2,
+      "options": {
+        "stats": [
+          {
+            "label": "OPEN",
+            "path": "beads.stats.open"
+          },
+          {
+            "label": "IN PROG",
+            "path": "beads.stats.in_progress"
+          },
+          {
+            "label": "BLOCKED",
+            "path": "beads.stats.blocked"
+          },
+          {
+            "label": "CLOSED TODAY",
+            "path": "beads.stats.closed_today"
+          }
+        ]
+      },
+      "mobile": {
+        "order": 6
+      }
+    },
+    {
+      "id": "dispatch",
+      "type": "dispatch_routes",
+      "title": "DISPATCH ROUTES",
+      "x": 8,
+      "y": 10,
+      "w": 4,
+      "h": 2,
+      "options": {},
+      "mobile": {
+        "order": 11
+      }
+    },
+    {
+      "id": "beads_table",
+      "type": "bead_table",
+      "title": "BEAD QUEUE",
+      "x": 0,
+      "y": 12,
+      "w": 7,
+      "h": 5,
+      "options": {
+        "sort": "priority",
+        "show_closed": false
+      },
+      "mobile": {
+        "order": 12,
+        "limit": 15
+      }
+    },
+    {
+      "id": "activity",
+      "type": "activity_feed",
+      "title": "ACTIVITY",
+      "x": 7,
+      "y": 12,
+      "w": 5,
+      "h": 9,
+      "options": {
+        "max_items": 60
+      },
+      "mobile": {
+        "order": 14,
+        "h": 6,
+        "limit": 15
+      }
+    },
+    {
+      "id": "worktrees",
+      "type": "worktree_table",
+      "title": "WORKTREES",
+      "x": 0,
+      "y": 17,
+      "w": 7,
+      "h": 4,
+      "options": {
+        "sort": "dirty"
+      },
+      "mobile": {
+        "order": 13,
+        "limit": 15
+      }
+    },
+    {
+      "id": "system",
+      "type": "system_gauges",
+      "title": "SYSTEM",
+      "x": 0,
+      "y": 21,
+      "w": 4,
+      "h": 3,
+      "options": {},
+      "mobile": {
+        "order": 16
+      }
+    },
+    {
+      "id": "commits",
+      "type": "commit_feed",
+      "title": "COMMITS",
+      "x": 4,
+      "y": 21,
+      "w": 4,
+      "h": 3,
+      "options": {
+        "max_items": 12
+      },
+      "mobile": {
+        "order": 15,
+        "limit": 10
+      }
+    },
+    {
+      "id": "notes",
+      "type": "markdown_note",
+      "title": "NOTES",
+      "x": 8,
+      "y": 21,
+      "w": 4,
+      "h": 3,
+      "options": {
+        "text": "# Notes\n\nThis panel renders whatever Markdown you put in `options.text` for the `notes` panel in `config/layout.json`. Use it for team reminders, links, or anything else worth pinning to the dashboard."
+      },
+      "mobile": {
+        "order": 21
+      }
+    },
+    {
+      "id": "error_patterns",
+      "type": "error_patterns",
+      "title": "ERROR PATTERNS",
+      "x": 0,
+      "y": 24,
+      "w": 8,
+      "h": 6,
+      "options": {},
+      "mobile": {
+        "order": 20,
+        "h": 8
+      }
+    },
+    {
+      "id": "tool_usage",
+      "type": "tool_usage",
+      "title": "TOOL USAGE",
+      "x": 8,
+      "y": 24,
+      "w": 4,
+      "h": 6,
+      "options": {},
+      "mobile": {
+        "order": 19
+      }
+    },
+    {
+      "id": "subagent_cost",
+      "type": "subagent_cost",
+      "title": "SUBAGENT COST",
+      "x": 0,
+      "y": 30,
+      "w": 6,
+      "h": 5,
+      "options": {},
+      "mobile": {
+        "order": 17
+      }
+    },
+    {
+      "id": "productivity",
+      "type": "productivity",
+      "title": "PRODUCTIVITY",
+      "x": 6,
+      "y": 30,
+      "w": 6,
+      "h": 5,
+      "options": {},
+      "mobile": {
+        "order": 18
+      }
+    },
+    {
+      "id": "host_health",
+      "type": "host_health",
+      "title": "HOST HEALTH",
+      "x": 0,
+      "y": 35,
+      "w": 12,
+      "h": 4,
+      "options": {},
+      "mobile": {
+        "order": 5
+      }
+    },
+    {
+      "id": "usage_history",
+      "type": "usage_history",
+      "title": "USAGE HISTORY",
+      "x": 0,
+      "y": 39,
+      "w": 12,
+      "h": 5,
+      "options": {},
+      "mobile": {
+        "order": 9,
+        "h": 5
+      }
+    },
+    {
+      "id": "provider_quota",
+      "type": "provider_quota",
+      "title": "PROVIDER QUOTA",
+      "x": 0,
+      "y": 44,
+      "w": 12,
+      "h": 6,
+      "options": {},
+      "mobile": {
+        "order": 22,
+        "h": 8
+      }
+    }
+  ]
+}

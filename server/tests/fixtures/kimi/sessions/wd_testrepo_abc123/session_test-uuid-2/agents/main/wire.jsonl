@@ -1,0 +1,15 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1789773228427}
+{"type":"runtime.set_binding","workspaceId":"wd_testrepo_abc123","runtimeId":"local","agentId":"main","time":1789773228432}
+{"type":"profile.bind","agentId":"main","modelAlias":"kimi-code/kimi-for-coding","profileName":"agent","thinkingEffort":"max","time":1789773228453}
+{"type":"agent.turn.started","turnId":0,"queueItemId":"msg_2","time":1789773228516,"kind":"event"}
+{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"hello"}],"origin":{"kind":"user"},"promptId":"msg_2","turnId":0,"time":1789773228520}
+{"type":"llm.request","agentId":"main","kind":"loop","provider":"openai","model":"kimi-for-coding","modelAlias":"kimi-code/kimi-for-coding","thinkingEffort":"max","maxTokens":1048576,"messageCount":3,"turnStep":"0.1","time":1789773228540}
+{"type":"usage.record","agentId":"main","model":"kimi-code/kimi-for-coding","usage":{"inputOther":2737,"output":721,"inputCacheRead":18944,"inputCacheCreation":0},"usageScope":"turn","time":1789773246886}
+{"type":"token_counting.measured","agentId":"main","length":3,"tokens":22402,"time":1789773246889}
+{"type":"agent.turn.ended","turnId":0,"outcome":"completed","time":1789773246900,"kind":"event"}
+{"type":"turn.ended","agentId":"main","turnId":0,"reason":"completed","time":1789773246905}
+{"type":"agent.turn.started","turnId":1,"queueItemId":"msg_3","time":1789773250000,"kind":"event"}
+{"type":"llm.request","agentId":"main","kind":"loop","provider":"openai","model":"kimi-for-coding","modelAlias":"kimi-code/kimi-for-coding","thinkingEffort":"max","maxTokens":1048576,"messageCount":5,"turnStep":"1.1","time":1789773250010}
+{"type":"token_counting.measured","agentId":"main","length":5,"tokens":598,"time":1789773251000}
+{"type":"agent.turn.ended","turnId":1,"outcome":"completed","time":1789773251005,"kind":"event"}
+{"type":"turn.ended","agentId":"main","turnId":1,"reason":"completed","time":1789773251010}

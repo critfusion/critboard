@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+server/data/
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/
+.ruff_cache/
+node_modules/
+web/screenshots/
+*.log
+
+# machine-local: repo roots, hostnames, credential paths. Seeded from
+# config/sources.example.json on first run -- see server/critdash/config.py.
+config/sources.json
+
+# machine-local: scan overrides for check-public.sh -- extra patterns for this machine
+# that should never be published. See scripts/check-public.local.example for format.
+scripts/check-public.local

@@ -1,0 +1,20 @@
+[Unit]
+Description=CritBoard backend (legacy unit name critdash.service kept for compatibility with existing installs)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/work/dashboard/server
+ExecStart=%h/work/dashboard/server/.venv/bin/uvicorn critdash.main:app --host 0.0.0.0 --port 9999
+Restart=always
+RestartSec=3
+# SSE streams hold connections open indefinitely; without a bounded stop timeout
+# every restart stalls on "Waiting for connections to close" until systemd's 90s default.
+TimeoutStopSec=10
+KillMode=mixed
+Environment=PYTHONUNBUFFERED=1
+# ~/.local/bin holds bd and herdr; systemd --user does not inherit the login PATH
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+
+[Install]
+WantedBy=default.target

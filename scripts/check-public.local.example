@@ -1,0 +1,21 @@
+# Machine-local overrides for check-public.sh
+# This file is .gitignored and never published.
+# Rename or copy this to `check-public.local` and edit to add patterns specific
+# to your machine.
+#
+# Format: pattern|reason (one per line; blank lines and # comments are ignored)
+#
+# Examples:
+#   myhost|my personal hostname
+#   prod-server|production server domain
+#   myrealname|names that should not leak into the tree
+#   myproject|project name or infrastructure label
+#
+# The shipped check-public.sh provides:
+#   - Generic patterns: private IP ranges, credential shapes (sk-, ghp_, AWS keys, etc.)
+#   - Dynamic hostname check: whatever hostname -s and hostname -f return on this machine
+#   - Real-looking /home/<user> paths (not /home/user or /home/user2 placeholders)
+#
+# Add machine-specific hostnames, usernames, project names, and infrastructure
+# identifiers here to protect them from accidentally being committed to the
+# published repository.

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "workspaces": {
+    "wd_testrepo_abc123": {
+      "root": "/srv/demo/repos/testrepo",
+      "name": "testrepo",
+      "created_at": "2026-09-16T23:20:57.279Z",
+      "last_opened_at": "2026-09-18T23:05:37.527Z"
+    }
+  },
+  "deleted_workspace_ids": []
+}

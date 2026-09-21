@@ -1,0 +1,96 @@
+{
+  "name": "localhost-dark",
+  "description": "Default dark theme for CritBoard Dashboard. Edit values here to reskin the whole app -- no JS/CSS edits needed.",
+  "colors": {
+    "bg": "#07090c",
+    "bg-elevated": "#0d1117",
+    "bg-panel": "#0f141b",
+    "bg-panel-hover": "#131a22",
+    "grid-line": "#131a22",
+    "border": "#1c2733",
+    "border-bright": "#2a3a4a",
+    "text": "#dbe4ec",
+    "text-dim": "#8296a8",
+    "text-faint": "#546575",
+    "accent-cyan": "#3fe0e0",
+    "accent-cyan-dim": "#1c6b6b",
+    "accent-amber": "#f2a93b",
+    "accent-amber-dim": "#7a5a22",
+    "status-ok": "#3fe08a",
+    "status-warn": "#f2a93b",
+    "status-crit": "#f2503b",
+    "status-idle": "#546575",
+    "status-working": "#3fe0e0",
+    "status-done": "#3fe08a",
+    "severity-info": "#5aa8f2",
+    "severity-warn": "#f2a93b",
+    "severity-crit": "#f2503b",
+    "priority-0": "#f2503b",
+    "priority-1": "#f2a93b",
+    "priority-2": "#5aa8f2",
+    "priority-3": "#546575",
+    "agent-glow": "#4d9fff"
+  },
+  "fonts": {
+    "mono": "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
+    "sans": "'Inter', -apple-system, 'Segoe UI', sans-serif",
+    "size-base": "13px",
+    "size-sm": "11px",
+    "size-lg": "16px",
+    "size-xl": "22px"
+  },
+  "radius": {
+    "panel": "8px",
+    "card": "6px",
+    "pill": "999px"
+  },
+  "density": {
+    "panel-padding": "12px",
+    "card-gap": "8px",
+    "row-height": "28px"
+  },
+  "motion": {
+    "transition-fast": "120ms",
+    "transition-med": "240ms",
+    "pulse-duration": "1.8s"
+  },
+  "reload_banner": {
+    "enabled": true,
+    "auto_reload_after_s": null
+  },
+  "_presets": {
+    "_comment": "Alternate theme example. Copy this object's contents up into the top level (replacing colors/fonts/etc) to switch look. A 'light-ops' preset kept here as a worked example of reskinning via config only -- not currently active.",
+    "light-ops": {
+      "colors": {
+        "bg": "#f4f6f8",
+        "bg-elevated": "#ffffff",
+        "bg-panel": "#ffffff",
+        "bg-panel-hover": "#eef2f5",
+        "grid-line": "#e4e9ed",
+        "border": "#d6dde3",
+        "border-bright": "#b9c4cd",
+        "text": "#111826",
+        "text-dim": "#4b5866",
+        "text-faint": "#8a95a1",
+        "accent-cyan": "#0891a8",
+        "accent-cyan-dim": "#bfe6ec",
+        "accent-amber": "#b3720a",
+        "accent-amber-dim": "#f2dcb0",
+        "status-ok": "#1a9a5c",
+        "status-warn": "#b3720a",
+        "status-crit": "#c73a24",
+        "status-idle": "#8a95a1",
+        "status-working": "#0891a8",
+        "status-done": "#1a9a5c",
+        "severity-info": "#2f6fb3",
+        "severity-warn": "#b3720a",
+        "severity-crit": "#c73a24",
+        "priority-0": "#c73a24",
+        "priority-1": "#b3720a",
+        "priority-2": "#2f6fb3",
+        "priority-3": "#8a95a1",
+        "agent-glow": "#1d5fbf"
+      }
+    }
+  }
+}

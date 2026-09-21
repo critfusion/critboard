@@ -1,0 +1,16 @@
+{
+  "id": "session_test-uuid-2",
+  "version": 2,
+  "createdAt": 1789773228252,
+  "updatedAt": UPDATED_AT_MS_2,
+  "archived": false,
+  "agents": {
+    "main": {
+      "homedir": "SESSIONS_ROOT/sessions/wd_testrepo_abc123/session_test-uuid-2/agents/main",
+      "type": "main"
+    }
+  },
+  "custom": {},
+  "lastTurnReason": "completed",
+  "isCustomTitle": false
+}

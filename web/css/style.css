@@ -1,0 +1,1283 @@
+/* CritBoard Dashboard -- base styles.
+   All color/font/radius/density values are CSS custom properties on :root.
+   Defaults here mirror config/theme.json; app.js overwrites them at boot
+   from the live theme.json so editing that file changes the whole look. */
+
+:root {
+  --color-bg: #07090c;
+  --color-bg-elevated: #0d1117;
+  --color-bg-panel: #0f141b;
+  --color-bg-panel-hover: #131a22;
+  --color-grid-line: #131a22;
+  --color-border: #1c2733;
+  --color-border-bright: #2a3a4a;
+  --color-text: #dbe4ec;
+  --color-text-dim: #8296a8;
+  --color-text-faint: #546575;
+  --color-accent-cyan: #3fe0e0;
+  --color-accent-cyan-dim: #1c6b6b;
+  --color-accent-amber: #f2a93b;
+  --color-accent-amber-dim: #7a5a22;
+  --color-status-ok: #3fe08a;
+  --color-status-warn: #f2a93b;
+  --color-status-crit: #f2503b;
+  --color-status-idle: #546575;
+  --color-status-working: #3fe0e0;
+  --color-agent-glow: #4d9fff;
+  --color-status-done: #3fe08a;
+  --color-severity-info: #5aa8f2;
+  --color-severity-warn: #f2a93b;
+  --color-severity-crit: #f2503b;
+  --color-priority-0: #f2503b;
+  --color-priority-1: #f2a93b;
+  --color-priority-2: #5aa8f2;
+  --color-priority-3: #546575;
+
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  --font-sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  --font-size-base: 13px;
+  --font-size-sm: 11px;
+  --font-size-lg: 16px;
+  --font-size-xl: 22px;
+
+  --radius-panel: 8px;
+  --radius-card: 6px;
+  --radius-pill: 999px;
+
+  --density-panel-padding: 12px;
+  --density-card-gap: 8px;
+  --density-row-height: 28px;
+
+  --motion-transition-fast: 120ms;
+  --motion-transition-med: 240ms;
+  --motion-pulse-duration: 1.8s;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  overflow-x: hidden;
+  width: 100%;
+}
+
+body {
+  background-image:
+    linear-gradient(var(--color-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+.tabular-nums { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-bright); border-radius: 4px; }
+
+/* ---------- header ---------- */
+
+#app-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 16px;
+  background: rgba(7, 9, 12, 0.92);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--color-border);
+}
+
+#app-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-accent-cyan);
+  text-shadow: 0 0 12px var(--color-accent-cyan-dim);
+  white-space: nowrap;
+}
+
+#app-header .spacer { flex: 1; }
+
+.window-selector {
+  display: flex;
+  gap: 2px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 2px;
+}
+
+.window-selector button {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-dim);
+  background: transparent;
+  border: none;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background var(--motion-transition-fast), color var(--motion-transition-fast);
+}
+
+.window-selector button.active {
+  background: var(--color-accent-cyan-dim);
+  color: var(--color-accent-cyan);
+}
+
+.window-selector button:hover:not(.active) {
+  color: var(--color-text);
+  background: var(--color-bg-panel-hover);
+}
+
+#conn-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+#conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-status-idle);
+  box-shadow: 0 0 6px currentColor;
+}
+
+#conn-indicator.live #conn-dot { background: var(--color-status-ok); color: var(--color-status-ok); }
+#conn-indicator.reconnecting #conn-dot { background: var(--color-status-warn); color: var(--color-status-warn); animation: pulse-dot var(--motion-pulse-duration) ease-in-out infinite; }
+#conn-indicator.offline #conn-dot { background: var(--color-status-crit); color: var(--color-status-crit); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+#clock {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-faint);
+}
+
+/* ---------- grid ---------- */
+
+#grid-wrap {
+  padding: 16px;
+  max-width: 2560px;
+  margin: 0 auto;
+}
+
+#grid {
+  display: grid;
+  width: 100%;
+}
+
+/* ---------- panel chrome ---------- */
+
+.panel {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  transition: border-color var(--motion-transition-med), box-shadow var(--motion-transition-med);
+}
+
+.panel.panel-focused {
+  border-color: var(--color-accent-cyan);
+  box-shadow: 0 0 0 1px var(--color-accent-cyan), 0 0 20px -4px var(--color-accent-cyan-dim);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+}
+
+.panel-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel-idx {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-text-faint);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: auto;
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--density-panel-padding);
+}
+
+.panel-body.no-pad { padding: 0; }
+
+/* Chart panels (currently: spend_timeline's uPlot chart) size their canvas
+   exactly to their measured space (see sizeFor() in spend_timeline.js) and
+   have nothing to scroll to -- a 48h timeline has no overflow content by
+   design. `overflow: hidden` instead of the default `auto` means a stray
+   sub-pixel layout delta can never trip a scrollbar, which is what turned a
+   2px rounding error into a permanent resize feedback loop. Scoped to chart
+   panels only; table/feed panels keep their own scroll behavior. */
+.panel-body.chart-panel-body {
+  overflow: hidden;
+}
+
+.panel.panel-error .panel-body {
+  color: var(--color-status-crit);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+}
+
+.panel.panel-placeholder .panel-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+/* ---------- generic bits reused across widgets ---------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-bright);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.pill-ok { color: var(--color-status-ok); border-color: var(--color-status-ok); }
+.pill-warn { color: var(--color-status-warn); border-color: var(--color-status-warn); }
+.pill-crit { color: var(--color-status-crit); border-color: var(--color-status-crit); }
+.pill-idle { color: var(--color-status-idle); border-color: var(--color-border-bright); }
+/* Informational, not a problem -- used for "a human owns this on purpose"
+   (bead routability's "owner" state). Deliberately not pill-ok (that reads
+   as "healthy/moving") or pill-idle (that reads as "unknown/nothing to
+   report") -- it needs its own color so it's visually distinct from both
+   "will be worked" and "will never be worked". */
+.pill-info { color: var(--color-severity-info); border-color: var(--color-severity-info); }
+
+.status-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--color-status-idle);
+}
+.status-dot.working { background: var(--color-status-working); box-shadow: 0 0 8px var(--color-status-working); animation: working-pulse var(--motion-pulse-duration) ease-in-out infinite; }
+.status-dot.done { background: var(--color-status-done); }
+.status-dot.idle { background: var(--color-status-idle); }
+
+@keyframes working-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.working { animation: none; }
+}
+
+/* ---------- agent fleet: working glow (replaces the old focused outline) ---------- */
+
+.agent-card {
+  cursor: pointer;
+}
+.agent-card:hover {
+  border-color: var(--color-border-bright);
+  background: var(--color-bg-panel-hover);
+}
+.agent-card:focus-visible {
+  outline: 2px solid var(--color-accent-cyan);
+  outline-offset: 1px;
+}
+.agent-card.agent-glow {
+  box-shadow: 0 0 0 1px var(--color-agent-glow), 0 0 14px -4px var(--color-agent-glow);
+  animation: agent-glow-pulse 3.2s ease-in-out infinite;
+}
+
+@keyframes agent-glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--color-agent-glow), 0 0 12px -5px var(--color-agent-glow); }
+  50%      { box-shadow: 0 0 0 1px var(--color-agent-glow), 0 0 20px -3px var(--color-agent-glow); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-card.agent-glow { animation: none; box-shadow: 0 0 0 1px var(--color-agent-glow), 0 0 16px -4px var(--color-agent-glow); }
+}
+
+/* ---------- clickable rows/cards (open the detail modal) ---------- */
+
+.clickable-row, .clickable-card {
+  cursor: pointer;
+}
+.clickable-row:hover, .clickable-card:hover {
+  background: var(--color-bg-panel-hover);
+}
+.clickable-row:focus-visible, .clickable-card:focus-visible {
+  outline: 2px solid var(--color-accent-cyan);
+  outline-offset: -2px;
+}
+table.dtable tbody tr.clickable-row { cursor: pointer; }
+
+.mono { font-family: var(--font-mono); }
+.dim { color: var(--color-text-dim); }
+.faint { color: var(--color-text-faint); }
+.right { text-align: right; }
+.truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+table.dtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  table-layout: fixed;
+}
+table.dtable th {
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--color-text-faint);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 10px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-bg-panel);
+}
+table.dtable td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--color-grid-line);
+  color: var(--color-text);
+  vertical-align: middle;
+}
+table.dtable td.num, table.dtable th.num { text-align: right; font-family: var(--font-mono); }
+table.dtable tbody tr:hover { background: var(--color-bg-panel-hover); }
+
+table.dtable th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+table.dtable th.sortable:hover { color: var(--color-text-dim); }
+table.dtable th.sortable:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: -2px; }
+table.dtable th .sort-indicator {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 9px;
+  color: var(--color-accent-cyan);
+}
+
+/* ---------- sortable/filterable table panels ---------- */
+/* Structure: .panel-body.table-panel-body (flex column, no padding, hidden
+   overflow) > .table-toolbar (fixed, own padding) > .table-scroll (flex:1,
+   overflow:auto, own padding) > table.dtable, whose <th> stick to the top
+   of .table-scroll -- the only element that actually scrolls, so a header
+   can never end up with a row rendered over it. */
+
+.panel-body.table-panel-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.table-toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--density-panel-padding) 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table-search {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  border-radius: 5px;
+  color: var(--color-text);
+  padding: 4px 8px;
+  min-width: 120px;
+  flex: 1 1 140px;
+}
+.table-search:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+.table-search::placeholder { color: var(--color-text-faint); }
+
+.table-filter-toggle {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-bright);
+  background: transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.table-filter-toggle:hover { background: var(--color-bg-panel-hover); }
+.table-filter-toggle.active {
+  background: var(--color-accent-cyan-dim);
+  border-color: var(--color-accent-cyan);
+  color: var(--color-accent-cyan);
+}
+.table-filter-toggle:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+/* SHOW CLOSED: an explicit exclusion gate, kept visually apart from the
+   inclusive lane pills above (.table-filter-toggle) -- a border-left divider,
+   square-ish corners instead of a pill, and amber instead of cyan when
+   active, so it never reads as a fifth lane filter. */
+.table-show-closed {
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  margin-left: 2px;
+  border-left: 1px solid var(--color-border);
+}
+.table-show-closed-toggle {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 1px dashed var(--color-border-bright);
+  background: transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.table-show-closed-toggle:hover { background: var(--color-bg-panel-hover); }
+.table-show-closed-toggle.active {
+  background: var(--color-accent-amber-dim);
+  border-color: var(--color-accent-amber);
+  border-style: solid;
+  color: var(--color-accent-amber);
+}
+.table-show-closed-toggle:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+/* Routability filter: same divider treatment as SHOW CLOSED above, but each
+   button takes its active color from the routing state it represents
+   (see .pill-ok/.pill-info/.pill-warn) instead of one fixed color, so the
+   toggle group previews the same palette the ROUTE column uses. */
+.table-routing-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 10px;
+  margin-left: 2px;
+  border-left: 1px solid var(--color-border);
+}
+.routing-toggle[data-routing="routable"].active { border-color: var(--color-status-ok); color: var(--color-status-ok); }
+.routing-toggle[data-routing="owner"].active { border-color: var(--color-severity-info); color: var(--color-severity-info); }
+.routing-toggle[data-routing="unroutable"].active { border-color: var(--color-status-warn); color: var(--color-status-warn); }
+
+.table-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+.table-clear-btn {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 3px 6px;
+}
+.table-clear-btn:hover { color: var(--color-text); }
+
+.table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--density-panel-padding) var(--density-panel-padding);
+}
+
+.badge-priority {
+  display: inline-block;
+  width: 8px; height: 8px; border-radius: 2px;
+  flex: none;
+}
+
+.empty-state {
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: 24px 8px;
+}
+
+/* ---------- help overlay ---------- */
+
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 8, 0.78);
+  backdrop-filter: blur(3px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+#help-overlay.open { display: flex; }
+#help-overlay .help-box {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-bright);
+  border-radius: var(--radius-panel);
+  padding: 20px 24px;
+  min-width: 320px;
+  box-shadow: 0 0 40px -8px var(--color-accent-cyan-dim);
+}
+#help-overlay h2 {
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  color: var(--color-accent-cyan);
+  font-size: var(--font-size-lg);
+}
+#help-overlay .row { display: flex; justify-content: space-between; gap: 24px; padding: 4px 0; font-size: var(--font-size-sm); }
+#help-overlay kbd {
+  font-family: var(--font-mono);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  border-radius: 4px;
+  padding: 1px 7px;
+  color: var(--color-accent-amber);
+}
+
+/* ---------- reload banner ---------- */
+
+#reload-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translate(-50%, -140%);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 12px 9px 16px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-accent-cyan);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 4px 24px -6px var(--color-accent-cyan-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#reload-banner.show {
+  animation: reload-banner-in var(--motion-transition-med) ease-out forwards;
+  pointer-events: auto;
+}
+
+@keyframes reload-banner-in {
+  from { opacity: 0; transform: translate(-50%, -140%); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+#reload-banner .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--color-accent-cyan);
+  box-shadow: 0 0 6px var(--color-accent-cyan);
+  flex: none;
+}
+
+#reload-banner button {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  border-radius: 5px;
+  padding: 4px 11px;
+  cursor: pointer;
+  border: 1px solid var(--color-border-bright);
+  background: transparent;
+  color: var(--color-text-dim);
+}
+
+#reload-banner #reload-banner-go {
+  background: var(--color-accent-cyan-dim);
+  border-color: var(--color-accent-cyan);
+  color: var(--color-accent-cyan);
+  font-weight: 700;
+}
+
+#reload-banner #reload-banner-dismiss {
+  padding: 4px 8px;
+  color: var(--color-text-faint);
+  border-color: transparent;
+}
+
+/* ---------- dispatch-paused banner (top of bead panels) ----------
+   Deliberately not a pill: a small "ALL DISPATCH PAUSED" pill is exactly
+   what let 149 idle beads read as a stale queue instead of "the dispatcher
+   is switched off". This has to read at a glance on a wall display, so it's
+   full-width, high-contrast, and gently pulses (respecting reduced-motion)
+   instead of sitting static like the rest of the chrome. */
+.bead-panel-banner:empty { display: none; }
+
+.dispatch-paused-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  background: var(--color-bg-elevated);
+  border: 2px solid var(--color-status-crit);
+  border-radius: var(--radius-card);
+  box-shadow: 0 0 0 1px var(--color-status-crit) inset, 0 0 20px -8px var(--color-status-crit);
+  animation: dispatch-paused-pulse 2.4s ease-in-out infinite;
+}
+/* bead_table's panel body is flush (padding:0, its own .table-toolbar/
+   .table-scroll carry the inset) -- the banner needs its own horizontal
+   inset there. bead_board's panel body keeps the default padded
+   .panel-body, so the banner it appends directly needs none. */
+.bead-panel-banner .dispatch-paused-banner {
+  margin: 10px var(--density-panel-padding) 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dispatch-paused-banner { animation: none; }
+}
+@keyframes dispatch-paused-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--color-status-crit) inset, 0 0 16px -8px var(--color-status-crit); }
+  50%      { box-shadow: 0 0 0 1px var(--color-status-crit) inset, 0 0 28px -4px var(--color-status-crit); }
+}
+
+.dispatch-paused-banner-icon {
+  flex: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--color-status-crit);
+}
+.dispatch-paused-banner-text { min-width: 0; }
+.dispatch-paused-banner-title {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-status-crit);
+}
+.dispatch-paused-banner-sub {
+  margin-top: 4px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-dim);
+  line-height: 1.4;
+}
+
+/* ---------- routability summary (dispatch routes panel) ---------- */
+
+.routing-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+}
+.routing-summary-total {
+  font-size: 10px;
+}
+
+/* ---------- detail modal (shared by all clickable cards/rows) ---------- */
+
+.detail-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(4, 6, 8, 0.72);
+  backdrop-filter: blur(3px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.detail-modal-overlay.open { display: flex; }
+
+.detail-modal {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-bright);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 12px 60px -12px rgba(0, 0, 0, 0.6);
+  width: min(880px, 100%);
+  max-height: min(86vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.detail-modal:focus { outline: none; }
+
+.detail-modal-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.detail-modal-title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-accent-cyan);
+  line-height: 1.3;
+}
+
+.detail-modal-close {
+  flex: none;
+  font-size: 22px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-bright);
+  background: transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+}
+.detail-modal-close:hover { background: var(--color-bg-panel-hover); color: var(--color-text); }
+.detail-modal-close:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+.detail-modal-body {
+  overflow: auto;
+  padding: 20px 24px 28px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--color-text);
+}
+
+.detail-head { margin-bottom: 16px; }
+.detail-title-full { font-size: 19px; font-weight: 700; line-height: 1.35; }
+
+.detail-pill { font-size: 11px; }
+
+.detail-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px 20px;
+  margin: 16px 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-grid-line);
+}
+.detail-field-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  margin-bottom: 3px;
+}
+.detail-field-value {
+  font-size: 14px;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.detail-link {
+  color: var(--color-accent-cyan);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-accent-cyan-dim);
+}
+.detail-link:hover { border-bottom-color: var(--color-accent-cyan); }
+.detail-link:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+.detail-section { margin-top: 20px; }
+.detail-section-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-grid-line);
+}
+
+.detail-loading, .detail-note {
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px 0;
+}
+.detail-note-warn {
+  color: var(--color-status-warn);
+  font-size: 13px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-accent-amber-dim);
+  border-radius: 6px;
+  background: rgba(242, 169, 59, 0.08);
+  margin: 10px 0;
+}
+.detail-modal-error {
+  color: var(--color-status-crit);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.detail-event-text { white-space: pre-wrap; }
+
+/* simple markdown rendering for bead description/notes/design/acceptance */
+.detail-markdown {
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 72ch;
+}
+.detail-markdown .md-p { margin: 0 0 12px; white-space: pre-wrap; }
+.detail-markdown .md-h { margin: 18px 0 8px; line-height: 1.3; color: var(--color-text); }
+.detail-markdown h1.md-h { font-size: 19px; }
+.detail-markdown h2.md-h { font-size: 17px; }
+.detail-markdown h3.md-h,
+.detail-markdown h4.md-h,
+.detail-markdown h5.md-h,
+.detail-markdown h6.md-h { font-size: 15px; }
+.detail-markdown .md-list { margin: 0 0 12px; padding-left: 22px; }
+.detail-markdown .md-list li { margin-bottom: 4px; }
+.detail-markdown .md-code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.detail-markdown .md-pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+/* ---------- generic responsive tile grid ----------
+   Used by widgets that render a row of equal-width stat/kv tiles (SPEND,
+   AT A GLANCE, subagent cost, productivity). auto-fit + minmax means the
+   column count adapts to whatever width the panel actually has at any
+   breakpoint -- no per-breakpoint JS or media query needed here, because
+   (unlike the outer page grid) these were never pinned to a fixed inline
+   pixel/column layout that a CSS rule couldn't reach. */
+.tile-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 10px;
+}
+.tile-row.tile-row-wide {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+
+/* ---------- key/value row that can drop to two lines instead of
+   wrapping its value text mid-word (MODEL SPLIT and similar) ---------- */
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.kv-row > .kv-value {
+  white-space: nowrap;
+}
+
+/* ---------- clickable legend chip (usage history chart series toggle) ---------- */
+.legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: transparent;
+}
+.legend-chip:hover { background: var(--color-bg-panel-hover); }
+.legend-chip:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+.legend-chip.dimmed { opacity: 0.4; }
+.legend-chip.excluded { opacity: 0.55; cursor: default; }
+
+/* ---------- bead kanban: tabbed lanes on mobile ---------- */
+
+.kanban-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+.kanban-tab {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  border-radius: var(--radius-pill);
+  padding: 9px 14px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+}
+.kanban-tab .kanban-tab-count {
+  font-size: 10px;
+  color: var(--color-text-faint);
+}
+.kanban-tab.active {
+  background: var(--color-accent-cyan-dim);
+  border-color: var(--color-accent-cyan);
+  color: var(--color-accent-cyan);
+}
+.kanban-tab.active .kanban-tab-count { color: var(--color-accent-cyan); }
+.kanban-tab:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+/* ---------- stacked-card table mode on mobile ---------- */
+
+.table-sort-select {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  border-radius: 5px;
+  color: var(--color-text);
+  padding: 8px 8px;
+  min-height: 44px;
+}
+.table-sort-select:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+.table-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.table-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-bg-elevated);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.table-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--color-grid-line);
+}
+.table-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.table-card-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--font-size-sm);
+}
+.table-card-field-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  flex: none;
+}
+.table-card-field-value {
+  color: var(--color-text);
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- "Show all (N)" expander for capped mobile lists (activity,
+   commits, bead/worktree tables, kanban lanes) ---------- */
+.show-all-btn {
+  display: block;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  letter-spacing: 0.03em;
+  color: var(--color-accent-cyan);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-accent-cyan-dim);
+  border-radius: var(--radius-card);
+  padding: 8px 12px;
+  margin-top: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  text-align: center;
+}
+.show-all-btn:hover { background: var(--color-bg-panel-hover); border-color: var(--color-accent-cyan); }
+.show-all-btn:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 1400px) {
+  #app-title { font-size: var(--font-size-base); }
+  :root { --density-panel-padding: 10px; }
+}
+
+@media (max-width: 1024px) {
+  /* Touch targets: filter chips, quick-filter toggles, sort headers, close
+     buttons all get room for a 44x44 tap, tablet included since it's touch
+     hardware too. */
+  .table-filter-toggle {
+    min-height: 44px;
+    padding: 6px 12px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .table-show-closed-toggle {
+    min-height: 44px;
+    padding: 6px 12px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .table-clear-btn {
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+  table.dtable th.sortable {
+    padding: 10px 8px;
+  }
+  .detail-modal-close {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 640px) {
+  #grid-wrap { padding: 10px; }
+  :root { --density-panel-padding: 10px; }
+
+  .panel-header { padding: 10px 12px; }
+  .panel-title { font-size: 10px; }
+
+  /* ---------- header: wraps to 2 lines; the connection indicator always
+     stays on line 1 next to the (truncating) title. The absolute clock
+     is dropped in favor of the relative snapshot age, which is shorter
+     and already conveys freshness. ---------- */
+  #app-header {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 8px 12px;
+  }
+  #app-title {
+    order: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  #app-header .spacer { display: none; }
+  #conn-indicator {
+    order: 2;
+    flex: none;
+  }
+  #conn-age-prefix { display: none; }
+  .window-selector {
+    order: 3;
+    flex: 1 1 100%;
+  }
+  #clock { display: none; }
+
+  /* Modal goes full-screen: large close target, body scrolls. */
+  .detail-modal-overlay { padding: 0; }
+  .detail-modal {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+  .detail-modal-header { padding: 12px 14px; }
+  .detail-modal-title { font-size: 16px; }
+  .detail-modal-body { padding: 14px 16px 24px; }
+
+  table.dtable { font-size: 10px; }
+  table.dtable td, table.dtable th { padding: 5px 6px; }
+
+  /* ---------- kanban tabs: wrap to 2 rows instead of scrolling off-canvas
+     so every lane stays reachable without a hidden horizontal scroll. ---------- */
+  .kanban-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .kanban-tab {
+    flex: 1 1 calc(50% - 3px);
+    justify-content: center;
+  }
+
+  /* ---------- stat/spend tiles: raise the minimum column width so a full
+     currency string (with headroom for a future 6-figure all-time total,
+     e.g. $123,456.78) never clips. Fewer, wider columns on narrow phones. ---------- */
+  .tile-row {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .tile-row.tile-row-wide {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  /* ---------- single scroll surface: panels size to content on mobile
+     (app.js drops the inline height it sets on desktop/tablet), so the
+     inner scroll areas below must stop clipping/scrolling their own
+     content -- the page is the only thing that scrolls. Chart panels
+     (spend_timeline) still get an explicit JS height and are unaffected:
+     their content exactly fills it, so this never causes it to overflow. ---------- */
+  .panel-body,
+  .panel-body.table-panel-body,
+  .table-scroll {
+    overflow: visible;
+  }
+}
+
+/* ---------- provider_quota widget ---------- */
+.quota-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+.quota-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+}
+.quota-refresh-btn {
+  width: auto;
+  margin: 0;
+  padding: 6px 14px;
+}
+.quota-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.quota-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.quota-row {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-bg-elevated);
+  padding: 6px 8px;
+  flex: none;
+}
+/* Local-derived entries (Claude's 5h block) get a visually distinct dashed
+   cyan border + a LOCAL ESTIMATE pill so nobody reads a locally-inferred
+   number as a provider-reported balance. */
+.quota-row-local {
+  border-style: dashed;
+  border-color: var(--color-accent-cyan-dim);
+}
+.quota-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.quota-row-label {
+  font-size: 11px;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+}
+.quota-local-pill {
+  color: var(--color-accent-cyan);
+  border-color: var(--color-accent-cyan-dim);
+  font-size: 8px;
+}
+.quota-row-info {
+  font-size: 11px;
+  margin-top: 3px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.quota-progress-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.quota-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width var(--motion-transition-med);
+}

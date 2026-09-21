@@ -1,0 +1,11 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1789600857341}
+{"type":"runtime.set_binding","workspaceId":"wd_testrepo_abc123","runtimeId":"local","agentId":"main","time":1789600857345}
+{"type":"profile.bind","agentId":"main","modelAlias":"kimi-code/kimi-for-coding","profileName":"agent","thinkingEffort":"max","time":1789600857350}
+{"type":"agent.turn.started","turnId":0,"queueItemId":"msg_1","time":1789600857421,"kind":"event"}
+{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"Reply with exactly: ok"}],"origin":{"kind":"user"},"promptId":"msg_1","turnId":0,"time":1789600857428}
+{"type":"llm.request","agentId":"main","kind":"loop","provider":"openai","model":"kimi-for-coding","modelAlias":"kimi-code/kimi-for-coding","thinkingEffort":"max","maxTokens":1048576,"messageCount":3,"turnStep":"0.1","time":1789600857454}
+{"type":"turn.step.interrupted","agentId":"main","turnId":0,"step":1,"reason":"error","message":"[provider.auth_error] 403 You've reached your monthly usage limit for this billing cycle. Your quota will be refreshed in the next cycle. To continue now, purchase extra usage or upgrade your plan: https://www.kimi.com/membership/subscription?tab=quota","time":1789600859290}
+{"type":"agent.turn.ended","turnId":0,"outcome":"failed","errorMessage":"[object Object]","time":1789600859283,"kind":"event"}
+{"type":"turn.ended","agentId":"main","turnId":0,"reason":"failed","error":{"code":"provider.auth_error","message":"403 You've reached your monthly usage limit for this billing cycle. Your quota will be refreshed in the next cycle. To continue now, purchase extra usage or upgrade your plan: https://www.kimi.com/membership/subscription?tab=quota","name":"APIStatusError","details":{"statusCode":403,"requestId":null}},"time":1789600859290}
+{"type":"token_counting.turn_recorded","agentId":"main","turnId":0,"length":4,"tokens":208,"time":1789600859291}
+{"type":"prompt.completed","agentId":"main","promptId":"msg_1","finishedAt":"2026-09-16T23:20:59.292Z","reason":"failed","time":1789600859292}

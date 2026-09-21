@@ -1,0 +1,157 @@
+{
+  "generated_at": "2026-09-18T13:00:00Z",
+  "host": "localhost",
+  "uptime_s": 512340,
+  "version": {
+    "build": "7f3a9c1",
+    "started_at": "2026-09-12T14:41:00Z"
+  },
+  "sources": {
+    "beads": {
+      "ok": false,
+      "last_ok": "2026-09-18T07:00:00Z",
+      "last_run": "2026-09-18T12:55:00Z",
+      "duration_ms": 0,
+      "error": "beads: connection refused / parse error",
+      "stale": true
+    },
+    "agents": {
+      "ok": false,
+      "last_ok": "2026-09-18T07:00:00Z",
+      "last_run": "2026-09-18T12:55:00Z",
+      "duration_ms": 0,
+      "error": "agents: connection refused / parse error",
+      "stale": true
+    },
+    "worktrees": {
+      "ok": false,
+      "last_ok": "2026-09-18T07:00:00Z",
+      "last_run": "2026-09-18T12:55:00Z",
+      "duration_ms": 0,
+      "error": "worktrees: connection refused / parse error",
+      "stale": true
+    },
+    "usage": {
+      "ok": false,
+      "last_ok": "2026-09-18T07:00:00Z",
+      "last_run": "2026-09-18T12:55:00Z",
+      "duration_ms": 0,
+      "error": "usage: connection refused / parse error",
+      "stale": true
+    },
+    "dispatch": {
+      "ok": false,
+      "last_ok": "2026-09-18T07:00:00Z",
+      "last_run": "2026-09-18T12:55:00Z",
+      "duration_ms": 0,
+      "error": "dispatch: connection refused / parse error",
+      "stale": true
+    },
+    "system": {
+      "ok": false,
+      "last_ok": "2026-09-18T07:00:00Z",
+      "last_run": "2026-09-18T12:55:00Z",
+      "duration_ms": 0,
+      "error": "system: connection refused / parse error",
+      "stale": true
+    }
+  },
+  "beads": {
+    "stats": {
+      "open": 0,
+      "in_progress": 0,
+      "blocked": 0,
+      "closed_today": 0,
+      "ready": 0
+    },
+    "items": [],
+    "lanes": {
+      "ready": [],
+      "in_progress": [],
+      "blocked": [],
+      "review": []
+    }
+  },
+  "agents": [],
+  "worktrees": [],
+  "usage": {
+    "totals": {
+      "today": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "total": 0,
+        "cost_usd": 0.0,
+        "messages": 0
+      },
+      "7d": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "total": 0,
+        "cost_usd": 0.0,
+        "messages": 0
+      },
+      "30d": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "total": 0,
+        "cost_usd": 0.0,
+        "messages": 0
+      },
+      "all": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "total": 0,
+        "cost_usd": 0.0,
+        "messages": 0
+      }
+    },
+    "by_model": [],
+    "by_project": [],
+    "by_agent": [],
+    "timeline": [],
+    "burn": {
+      "usd_per_hour_1h": 0.0,
+      "usd_per_hour_24h": 0.0,
+      "projected_month_usd": 0.0,
+      "tokens_per_min_5m": 0.0
+    },
+    "cache_hit_ratio_today": 0.0,
+    "block": {
+      "started_at": "2026-09-18T13:00:00Z",
+      "ends_at": "2026-09-18T13:00:00Z",
+      "tokens": 0,
+      "cost_usd": 0.0,
+      "pct_elapsed": 0.0
+    },
+    "budget": {
+      "monthly_usd": 2000,
+      "spent_mtd_usd": 0.0,
+      "pct": 0.0,
+      "projected_month_usd": 0.0
+    }
+  },
+  "dispatch": {
+    "routes": [],
+    "paused_all": true,
+    "recent": []
+  },
+  "system": {
+    "load1": 0,
+    "load5": 0,
+    "load15": 0,
+    "cpu_count": 0,
+    "mem_used_gb": 0,
+    "mem_total_gb": 0,
+    "disks": []
+  },
+  "events": [],
+  "hosts": []
+}
