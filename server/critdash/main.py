@@ -483,7 +483,8 @@ def build_app() -> FastAPI:
     async def get_settings_suggest():
         beads_items = (snap.snapshot.get("beads") or {}).get("items") or []
         dispatch_routes = (snap.snapshot.get("dispatch") or {}).get("routes") or []
-        human_labels = settings_mod.suggest_human_labels(beads_items, dispatch_routes)
+        worktrees = snap.snapshot.get("worktrees") or []
+        human_labels = settings_mod.suggest_human_labels(beads_items, dispatch_routes, worktrees)
         tz_detected, tz_source = settings_mod.detect_timezone()
         return {
             "human_labels": human_labels,
