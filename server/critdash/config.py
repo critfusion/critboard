@@ -6,6 +6,12 @@ ships instead, with generic, documented defaults. On startup, if
 config/sources.json is missing, it is created from the example (see
 _ensure_sources_file below) and the file already on disk is never touched or
 overwritten.
+
+config/layout.json is personal (title, human_labels, and a user's own panel
+arrangement) and is gitignored the same way. config/layout.example.json
+ships instead, with those personal values neutralised (see
+_ensure_layout_file below); an existing layout.json is likewise never
+touched or overwritten.
 """
 
 from __future__ import annotations
@@ -150,6 +156,34 @@ def _load_json(path: Path, default: dict) -> dict:
         return dict(default)
 
 
+def _ensure_config_file_from_example(config_dir: Path, name: str) -> None:
+    """Generic first-run bootstrap: config/<name>.json is gitignored (it
+    holds machine-local or personal values) and is never shipped. If it's
+    missing, seed it from config/<name>.example.json (which IS shipped,
+    with generic/neutral defaults) so a fresh install has a working config
+    with zero manual steps. An existing config/<name>.json is NEVER
+    overwritten -- this only ever runs the copy once, the first time.
+    Shared by both config/sources.json (machine-local repo roots,
+    hostnames, credential paths -- see _ensure_sources_file) and
+    config/layout.json (a user's panel arrangement and personal settings
+    like human_labels/title -- see _ensure_layout_file); an upstream
+    `git pull` must not silently overwrite either."""
+    target = config_dir / f"{name}.json"
+    if target.exists():
+        return
+    example = config_dir / f"{name}.example.json"
+    if not example.exists():
+        return
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(example.read_text())
+        logger.info(
+            "config/%s.json not found -- created from config/%s.example.json", name, name
+        )
+    except OSError as exc:
+        logger.warning("could not create config/%s.json from the example: %s", name, exc)
+
+
 def _ensure_sources_file(config_dir: Path) -> None:
     """First-run bootstrap: config/sources.json is gitignored (it holds
     machine-local repo roots, hostnames, and credential paths) and is never
@@ -157,18 +191,22 @@ def _ensure_sources_file(config_dir: Path) -> None:
     IS shipped, with generic defaults) so a fresh install has a working
     config with zero manual steps. An existing sources.json is NEVER
     overwritten -- this only ever runs the copy once, the first time."""
-    target = config_dir / "sources.json"
-    if target.exists():
-        return
-    example = config_dir / "sources.example.json"
-    if not example.exists():
-        return
-    try:
-        config_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(example.read_text())
-        logger.info("config/sources.json not found -- created from config/sources.example.json")
-    except OSError as exc:
-        logger.warning("could not create config/sources.json from the example: %s", exc)
+    _ensure_config_file_from_example(config_dir, "sources")
+
+
+def _ensure_layout_file(config_dir: Path) -> None:
+    """First-run bootstrap for config/layout.json, same never-overwrite
+    logic as _ensure_sources_file (see _ensure_config_file_from_example).
+    config/layout.json now holds personal settings (title, human_labels,
+    timezone) alongside panel geometry, so it is gitignored like
+    sources.json; config/layout.example.json ships instead, with those
+    personal values neutralised (title "CritBoard", human_labels [],
+    timezone "UTC") and the product-default panel layout otherwise
+    unchanged. An existing layout.json -- including one with a real
+    title/human_labels already in it -- is NEVER touched: a user's panel
+    arrangement is theirs, and an upstream `git pull` must not silently
+    rearrange it."""
+    _ensure_config_file_from_example(config_dir, "layout")
 
 
 def _env_override(key: str):
@@ -210,6 +248,12 @@ class Config:
 
     def expand(self, key: str) -> str:
         val = self.sources.get(key, "")
+        if val is None:
+            # A key present with an explicit JSON `null` (e.g. install.sh
+            # recording "genuinely not found anywhere") must behave the
+            # same as the key being absent -- str(None) == "None" would
+            # otherwise silently become a truthy, nonsense path.
+            return ""
         return os.path.expanduser(os.path.expandvars(str(val)))
 
     def interval(self, name: str) -> float:
@@ -241,6 +285,7 @@ class Config:
 
 def load_config() -> Config:
     _ensure_sources_file(CONFIG_DIR)
+    _ensure_layout_file(CONFIG_DIR)
     sources = _load_json(CONFIG_DIR / "sources.json", DEFAULT_SOURCES)
     pricing = _load_json(CONFIG_DIR / "pricing.json", DEFAULT_PRICING)
 

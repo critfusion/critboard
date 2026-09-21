@@ -16,11 +16,11 @@ import { el, fmtDuration } from "./utils.js";
 //   "owner"      -- a label marks this as human-owned (a route with
 //                    kind:"human" in dispatch.routes, e.g. the fixture's
 //                    "owner" route, OR a label listed in the deployment's
-//                    configured `human_labels`, e.g. this project's "bryan"
+//                    configured `human_labels`, e.g. a fleet lead's personal
 //                    label -- see config/layout.json's top-level
-//                    `human_labels` and AGENTS.md/CLAUDE.md's fleet-flow
-//                    rule "bryan-labeled beads are his. Never claim one;
-//                    never wake anyone for one."). Waiting on a person is
+//                    `human_labels` and fleet-flow rules: human-labeled beads
+//                    belong to that person. Never claim one; never wake
+//                    anyone for one."). Waiting on a person is
 //                    correct, not stale.
 //   "routable"   -- a label matches a live (unpaused, non-human) route.
 //                    Names the route.
@@ -33,7 +33,7 @@ import { el, fmtDuration } from "./utils.js";
 // the dispatch-paused banner). A bead stays "routable" during a global
 // pause -- it's a structural property, not a snapshot of this instant.
 
-export const DEFAULT_HUMAN_LABELS = ["bryan"];
+export const DEFAULT_HUMAN_LABELS = [];
 
 export function humanRouteLabels(dispatch) {
   const routes = dispatch?.routes || [];

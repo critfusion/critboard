@@ -3,6 +3,7 @@
 #
 # Usage:
 #   ./install.sh [--port N] [--bind ADDR] [--service] [--start] [--help]
+#   ./install.sh --doctor
 #
 #   --port N      Port to listen on. Default: 9999. Ignored if
 #                 config/sources.json already exists (see below).
@@ -18,6 +19,13 @@
 #                 process, and wait for /api/healthz to answer. Useful for a
 #                 one-shot smoke test or a non-systemd environment. PID file:
 #                 server/data/critdash.pid.
+#   --doctor      Print configured vs. detected tool/data paths (bd_bin,
+#                 herdr_bin, beads_env, claude_projects_dir, kimi_dir,
+#                 overlord_dir, the quota auth paths, plus ssh/git/uv) and
+#                 exit. Non-zero exit means a configured path is missing
+#                 while critdash.detect found a working one elsewhere --
+#                 the "I have bd installed but the dashboard disagrees" bug.
+#                 Runs nothing else; does not touch config/sources.json.
 #
 # Idempotent: safe to re-run. A second run never overwrites an existing
 # config/sources.json, never clobbers an already-installed systemd unit
@@ -39,9 +47,10 @@ PORT=9999
 BIND=127.0.0.1
 DO_SERVICE=0
 DO_START=0
+DO_DOCTOR=0
 
 usage() {
-    sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -52,6 +61,7 @@ while [ $# -gt 0 ]; do
         --bind=*) BIND="${1#*=}"; shift ;;
         --service) DO_SERVICE=1; shift ;;
         --start) DO_START=1; shift ;;
+        --doctor) DO_DOCTOR=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "install.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -59,6 +69,27 @@ done
 
 log()  { printf 'install.sh: %s\n' "$*"; }
 fail() { printf 'install.sh: ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Runs `python -m critdash.doctor` (see server/critdash/doctor.py) with
+# whatever Python this install actually has -- the venv if it exists yet
+# (normal case: step 2 below always runs before this is ever called),
+# `uv run` if not, else a bare python3 (doctor.py is stdlib-only, so this
+# always works even before `make install`/./install.sh has run at all).
+# Propagates doctor's own exit code (0 = no mismatch, 1 = mismatch found).
+run_doctor() {
+    if [ -x "$SERVER_DIR/.venv/bin/python" ]; then
+        (cd "$SERVER_DIR" && "$SERVER_DIR/.venv/bin/python" -m critdash.doctor)
+    elif command -v uv >/dev/null 2>&1; then
+        (cd "$SERVER_DIR" && uv run python -m critdash.doctor)
+    else
+        (cd "$SERVER_DIR" && python3 -m critdash.doctor)
+    fi
+}
+
+if [ "$DO_DOCTOR" -eq 1 ]; then
+    run_doctor
+    exit $?
+fi
 
 # -- 1. prerequisites ---------------------------------------------------------
 
@@ -112,22 +143,59 @@ SOURCES_EXAMPLE="$CONFIG_DIR/sources.example.json"
 
 if [ -f "$SOURCES_JSON" ]; then
     log "config/sources.json already exists -- leaving it untouched (--port/--bind ignored; edit that file directly to change them)."
+    log "checking its tool/data paths against what's actually on this machine (full table: 'make doctor' or './install.sh --doctor')..."
+    if run_doctor; then
+        log "doctor: no mismatches -- every configured path either exists or has no working alternative anyway."
+    else
+        log "doctor: WARNING -- see the MISMATCH row(s) printed above. A path in config/sources.json is missing, but critdash.detect found a working one at a different location (its DETECTED column) -- that tool IS installed, just not where sources.json says. Update the matching key in config/sources.json to the DETECTED value, or that panel stays inactive even though the tool works."
+    fi
 else
     [ -f "$SOURCES_EXAMPLE" ] || fail "config/sources.example.json is missing -- cannot bootstrap a config."
     mkdir -p "$CONFIG_DIR"
-    PORT="$PORT" BIND="$BIND" SRC="$SOURCES_EXAMPLE" DST="$SOURCES_JSON" python3 - <<'PYEOF'
+    PORT="$PORT" BIND="$BIND" SRC="$SOURCES_EXAMPLE" DST="$SOURCES_JSON" PYTHONPATH="$SERVER_DIR" python3 - <<'PYEOF'
 import json
 import os
+import sys
+
+sys.path.insert(0, os.environ["PYTHONPATH"])
+from critdash import detect  # noqa: E402
 
 with open(os.environ["SRC"]) as f:
     doc = json.load(f)
 doc["bind_port"] = int(os.environ["PORT"])
 doc["bind_host"] = os.environ["BIND"]
+
+# Resolve absolute paths for the machine running this install instead of
+# shipping whatever machine config/sources.example.json was last edited
+# on -- see critdash/detect.py's module docstring for the bug this fixes
+# (a Mac install where beads WAS installed, just not at the Debian path
+# baked into the example file). Left unchanged (the example's original
+# value) when nothing is found anywhere -- that's a normal "not installed,
+# panel stays inactive" state, not a reason to write a broken value.
+found, not_found = [], []
+for key, name in (("bd_bin", "bd"), ("herdr_bin", "herdr")):
+    resolved = detect.resolve_binary(doc.get(key), name)
+    if resolved:
+        doc[key] = resolved
+        found.append(f"{key}={resolved}")
+    else:
+        not_found.append(key)
+
 with open(os.environ["DST"], "w") as f:
     json.dump(doc, f, indent=2)
     f.write("\n")
+
+if found:
+    print("install.sh: resolved for this machine: " + ", ".join(found))
+if not_found:
+    print(
+        "install.sh: not found on this machine (their panels stay inactive -- fine "
+        "if you don't use them): " + ", ".join(not_found)
+    )
 PYEOF
     log "wrote config/sources.json (bind_host=$BIND, bind_port=$PORT)."
+    log "full tool/data path table:"
+    run_doctor || true
 fi
 
 # -- 4. optional systemd --user unit --------------------------------------------

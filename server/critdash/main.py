@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import quota
+from . import detect, quota
 from . import settings as settings_mod
 from . import update as update_mod
 from .collectors import CollectorIssue, Scheduler, SourceHealth
@@ -242,24 +242,48 @@ def build_app() -> FastAPI:
     repo_roots = config.sources.get("repo_roots", [])
 
     beads_env = config.expand("beads_env")
-    bd_bin = config.expand("bd_bin") or "bd"
+    bd_bin_configured = config.expand("bd_bin") or "bd"
     beads_actor = config.sources.get("beads_actor", "critdash")
 
+    def _resolve_bd_bin() -> str:
+        """Configured value first, exactly as before; if that doesn't
+        resolve, fall back to the full candidate scan (PATH, then every
+        known install-manager location -- see detect.py). This is what
+        finds `bd` on a Mac where sources.json still has the Debian path
+        baked in, both here (startup) and in collector_redetect_loop below
+        (re-called fresh on every tick, so installing bd later -- or fixing
+        a wrong-machine config without restarting -- brings the panel alive
+        with no restart)."""
+        return detect.resolve_binary(bd_bin_configured, "bd") or bd_bin_configured
+
     def _build_beads_collector() -> BeadsCollector:
-        c = BeadsCollector(ctx=app_ctx, beads_env=beads_env, bd_bin=bd_bin, actor=beads_actor, store=store)
+        c = BeadsCollector(
+            ctx=app_ctx, beads_env=beads_env, bd_bin=_resolve_bd_bin(), actor=beads_actor, store=store
+        )
         c.interval_s = config.interval("beads")
         return c
 
     _apply_enablement(
-        "beads", lambda: beads_availability_issue(bd_bin, beads_env), _build_beads_collector
+        "beads", lambda: beads_availability_issue(_resolve_bd_bin(), beads_env), _build_beads_collector
     )
 
     local_host = config.sources.get("host", "localhost")
 
+    # herdr_bin: kept as the raw configured value for RemoteCollector below
+    # (an explicit "" -- or JSON null, normalized to "" here -- means "this
+    # host has no herdr, don't PATH-search" -- see collectors/remote.py's
+    # find_herdr -- and a value resolved against THIS host's filesystem
+    # would be actively wrong for a remote ssh host). AgentsCollector only
+    # ever runs locally, so it alone gets the same detect.py-backed
+    # fallback as bd_bin above -- but only when herdr_bin isn't the
+    # explicit "no herdr" sentinel, which must never trigger a PATH search.
     herdr_bin = config.sources.get("herdr_bin", "herdr")
+    if herdr_bin is None:
+        herdr_bin = ""
+    herdr_bin_local = (detect.resolve_binary(herdr_bin, "herdr") or herdr_bin) if herdr_bin else ""
     session_active_window_s = config.sources.get("session_active_window_s", 900)
     agents_collector = AgentsCollector(
-        ctx=app_ctx, herdr_bin=herdr_bin, store=store, host=local_host,
+        ctx=app_ctx, herdr_bin=herdr_bin_local, store=store, host=local_host,
         session_projects_glob=config.expand("claude_projects_dir") + "/*/*.jsonl",
         session_active_window_s=session_active_window_s,
     )
@@ -642,7 +666,7 @@ def build_app() -> FastAPI:
         try:
             detail = await fetch_bead_detail(
                 config.expand("beads_env"),
-                config.expand("bd_bin") or "bd",
+                _resolve_bd_bin(),
                 config.sources.get("beads_actor", "critdash"),
                 bead_id,
             )

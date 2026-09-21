@@ -23,8 +23,15 @@ curl -fs http://127.0.0.1:9999/api/healthz    # -> {"ok":true,...}
 ```
 
 Only `git` and either `uv` or `python3 >=3.11` are required. `install.sh`
-checks both and fails with a message naming what is missing. Full options,
-systemd setup and uninstall: [INSTALL.md](INSTALL.md).
+checks both and fails with a message naming what is missing.
+
+Then run `make doctor` (or `./install.sh --doctor`) and fix any `MISMATCH`
+it reports -- it resolves `bd`/`herdr`/etc. against where they actually are
+on this machine (Homebrew, MacPorts, `~/.local/bin`, ...) instead of
+trusting one machine's baked-in path, and tells you exactly what to change
+in `config/sources.json` if a tool you have installed still shows up as
+"not configured". Full options, systemd setup and uninstall:
+[INSTALL.md](INSTALL.md).
 
 ## What it tracks
 
@@ -62,6 +69,12 @@ Cost reporting is the easiest thing to get quietly wrong, so:
 in `web/js/widgets/`. Move, resize, reorder or hide a panel — including
 per-breakpoint on mobile — by editing JSON and refreshing.
 
+`config/layout.json` also holds personal settings (`title`, `human_labels`,
+`timezone`) and your own panel arrangement, so like `config/sources.json` it
+is gitignored and never shipped: it is generated from
+`config/layout.example.json` on first run and, once it exists, is never
+overwritten by an upstream `git pull` — see "Privacy" below.
+
 No build step, no bundler, no framework. Plain ES modules and CSS, with
 uPlot vendored locally so the page works offline.
 
@@ -78,8 +91,10 @@ against) -- if you forked this repo, set `update_repo` to your own
 
 ## Privacy
 
-`config/sources.json` holds machine-local paths and hosts and is
-gitignored; it is generated from `config/sources.example.json` on first
-run. `scripts/check-public.sh` scans the tree for personal data,private IPs and
-key material before you push. Add your own machine's literals to
-`scripts/check-public.local` (see the `.example`).
+`config/sources.json` holds machine-local paths and hosts, and
+`config/layout.json` holds your title, `human_labels` and panel arrangement
+— both are gitignored; each is generated from its own `*.example.json` on
+first run. `scripts/check-public.sh` scans the tree for personal data,
+private IPs and key material before you push — including checking any
+tracked layout config's `human_labels`/`title` directly. Add your own
+machine's literals to `scripts/check-public.local` (see the `.example`).

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from critdash import config as config_mod
+from critdash import detect as detect_mod
 from critdash import main as main_mod
 from critdash.main import (
     _REQUIRED_COLOR_TOKENS,
@@ -656,7 +657,21 @@ _NO_DEPS_SOURCES = {
 }
 
 
+def _no_binaries_anywhere(monkeypatch):
+    """Neutralize critdash.detect's fallback candidate scan (Task: "detect
+    where tools actually live" -- see detect.py/main.py's _resolve_bd_bin).
+    Without this, a dev/CI host that genuinely HAS `bd`/`herdr` installed
+    (e.g. at ~/.local/bin, this repo's own dev host) would have the
+    fallback find them regardless of what nonsense path a test configures,
+    since that fallback is deliberately host-filesystem-aware. Tests that
+    want to simulate "this tool is not installed anywhere on this machine"
+    call this first."""
+    monkeypatch.setattr(detect_mod, "BINARY_CANDIDATE_DIRS", [])
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: None)
+
+
 def test_healthz_beads_auto_disabled_when_bd_and_env_absent(tmp_path, monkeypatch):
+    _no_binaries_anywhere(monkeypatch)
     client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=_NO_DEPS_SOURCES)
     collectors = client.get("/api/healthz").json()["collectors"]
     beads = collectors["beads"]
@@ -664,6 +679,35 @@ def test_healthz_beads_auto_disabled_when_bd_and_env_absent(tmp_path, monkeypatc
     assert beads["optional"] is True
     assert beads["reason_code"] == "dependency_missing"
     assert "no-such-bd-binary" in beads["detail"]
+
+
+def test_healthz_beads_finds_bd_via_fallback_when_configured_path_is_wrong(tmp_path, monkeypatch):
+    """The actual reported bug, end to end: sources.json has a Debian-style
+    bd_bin that doesn't exist on this machine, but a real `bd` sits at a
+    candidate directory (simulating e.g. Apple Silicon Homebrew's
+    /opt/homebrew/bin). The dashboard must find it and mark beads active --
+    NOT report "not configured" the way it did for the Mac owner."""
+    fake_bin_dir = tmp_path / "opt-homebrew-bin"
+    fake_bin_dir.mkdir()
+    real_bd = fake_bin_dir / "bd"
+    real_bd.write_text("#!/bin/sh\necho '{}'\n")
+    real_bd.chmod(0o755)
+    monkeypatch.setattr(detect_mod, "BINARY_CANDIDATE_DIRS", [str(fake_bin_dir)])
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: None)
+
+    env_path = tmp_path / "beads-env"
+    env_path.write_text("")
+    extra = {
+        "bd_bin": "/nonexistent/debian-style/bin/bd",
+        "beads_env": str(env_path),
+        "hosts": [{"name": "localhost", "mode": "local", "enabled": True}],
+    }
+    client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=extra)
+    beads = client.get("/api/healthz").json()["collectors"]["beads"]
+    # A real (if not-yet-run) scheduler entry, not the synthetic inactive
+    # one -- see the module note above _NO_DEPS_SOURCES.
+    assert beads["optional"] is False
+    assert beads["reason_code"] is None
 
 
 def test_healthz_dispatch_auto_disabled_when_overlord_dir_absent(tmp_path, monkeypatch):
@@ -686,6 +730,7 @@ def test_healthz_remote_auto_disabled_when_no_ssh_host_configured(tmp_path, monk
 def test_healthz_inactive_collectors_are_not_scheduled_but_visible_in_sources(tmp_path, monkeypatch):
     """Still appears in `sources` with optional: true, per Bug 2 -- it must
     not vanish from the API just because it isn't scheduled."""
+    _no_binaries_anywhere(monkeypatch)
     client = _build_isolated_client(tmp_path, monkeypatch, extra_sources=_NO_DEPS_SOURCES)
     sources = client.get("/api/snapshot").json()["sources"]
     for name in ("beads", "dispatch", "remote"):
