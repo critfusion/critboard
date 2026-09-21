@@ -18,9 +18,13 @@ returns `{"ok":true,...}`. If `--start` was omitted, run `make run` first
 (foreground) or `./install.sh --service` (systemd --user, survives logout).
 
 Nothing else is required before the check above passes. `git` and either
-`uv` or `python3 >=3.11` must already be on `PATH` -- `install.sh` verifies
-this itself and fails with a clear message naming what's missing, it does
-not silently continue with an unusable interpreter.
+`uv` or `python3 >=3.11` must be installed -- on `PATH`, or in one of the
+install locations `install.sh` also checks (see "Tool & data path
+detection" below; this matters on macOS, where a non-interactive shell
+often lacks Homebrew's directories on `PATH` even though the tools are
+right there). `install.sh` verifies this itself, says when it had to fall
+back off `PATH` to find one, and fails with a clear message naming what's
+missing -- it does not silently continue with an unusable interpreter.
 
 **Required next step -- run the doctor and fix any mismatch it reports:**
 
@@ -60,7 +64,18 @@ running dashboard both resolve `bd_bin`/`herdr_bin` against a list of real
 install locations (PATH, then `~/.local/bin`, `/opt/homebrew/bin`,
 `/usr/local/bin`, `/opt/local/bin`, `/usr/bin`) instead of trusting
 whichever single machine's absolute path `config/sources.example.json`
-ships with -- see "Tool & data path detection" below.
+ships with -- see "Tool & data path detection" below. `install.sh` searches
+its own required/optional prerequisites (`git`, `python3`, `uv`, `ssh`,
+`bd`, `herdr`) the same way, for the same reason: a perfectly-installed
+tool that isn't on a non-interactive shell's `PATH` must not make the
+install fail or silently disable a panel.
+
+**bash:** `install.sh` and `scripts/check-public.sh` are written to run
+under bash 3.2, the version macOS ships (Apple does not ship a newer,
+GPLv3-licensed bash) -- no bash 4+ syntax (`mapfile`, associative arrays,
+`${var^^}` case conversion, etc.) is used. If you see a syntax error
+running either script, `bash --version` first; something other than the
+system bash may be shadowing it on `PATH`.
 
 ---
 
@@ -253,7 +268,7 @@ installed on a Mac, but `config/sources.json` still had the Debian path
 |---|---|---|---|
 | `bd_bin` | The `bd` (beads) CLI | `beads` panel | PATH, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`, `/usr/bin` (in that order) -- re-checked live, not just at install |
 | `herdr_bin` | The `herdr` CLI (pane-level agent detection) | `agents` panel's pane/workspace fields (local host); `remote` panel per remote host | Same search order as `bd_bin`, resolved once at startup for the local host. A remote (`ssh`-mode) host resolves its own `herdr_bin` on ITS OWN filesystem, never against the local host's resolved path |
-| `beads_env` | Env file `bd` needs sourced before every call (actor/DB config) | `beads` panel | `~/.config/beads/env` -- a dotfile this specific tool documents; no macOS-specific location is confirmed, so none is guessed at |
+| `beads_env` | **Optional.** Env file some `bd` setups source before every call (actor/DB config) -- a site-specific convention, not something `bd` itself requires. Empty by default; a `bd` with its own local workspace (`bd init`, or `BEADS_DIR` set) needs none. Sourced only when it exists | `beads` panel | Not searched for -- set it yourself only if your `bd` setup actually uses one; no default path is guessed |
 | `claude_projects_dir` | Claude Code's session logs | `agents`, `usage`, `analytics` panels | `~/.claude/projects` on every platform (Claude Code does not use a macOS Application Support directory) |
 | `kimi_dir` | Kimi Code CLI's session/credentials directory | `kimi` panel, Kimi quota check | `~/.kimi-code` (dotfile, same on every platform this dashboard has verified). `~/Library/Application Support/Kimi` is probed as an unconfirmed, defensive fallback candidate on macOS only -- checked, never assumed |
 | `overlord_dir` | Optional integration with a fleet dispatch tool | `dispatch` panel | `~/.overlord` (a homegrown dotfile, not a packaged/Homebrew tool -- no macOS-specific location exists to check) |

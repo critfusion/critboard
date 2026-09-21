@@ -20,6 +20,19 @@
 
 set -uo pipefail
 
+# Every `"${ARR[@]}"` expansion below of an array that can legitimately be
+# empty (LITERALS, LOCAL_OVERRIDES, FILES, ...) is written as
+# `"${ARR[@]+"${ARR[@]}"}"` instead. This is not decoration: bash versions
+# before 4.4 -- including 3.2, the version macOS ships and will not upgrade
+# past (Apple will not ship a newer, GPLv3-licensed bash) -- treat an EMPTY
+# array's `[@]` expansion as an unset variable under `set -u`/`nounset` and
+# abort with "unbound variable", even though the array itself was declared.
+# Confirmed live under a real bash 3.2.0 build: `declare -a X=(); set -u;
+# for i in "${X[@]}"; do :; done` exits with "X[@]: unbound variable". The
+# `${ARR[@]+word}` form only substitutes `word` when ARR is set at all
+# (regardless of element count), which sidesteps the bug on every bash
+# version this script supports while still iterating zero times over a
+# genuinely empty array.
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
 if [ -z "$repo_root" ]; then
     echo "check-public.sh: not inside a git repository -- nothing to check against." >&2
@@ -31,7 +44,13 @@ cd "$repo_root"
 # be shipped to public (including untracked files about to be committed).
 # config/sources.json remains excluded: gitignored by design, machine-local,
 # holding real paths/hosts is its whole job.
-mapfile -t FILES < <(git ls-files --cached --others --exclude-standard -z | tr '\0' '\n')
+# NUL-delimited read loop instead of `mapfile` (bash 4+ only) -- macOS ships
+# bash 3.2 and will not ship a GPLv3 bash 4/5, so this script must stay
+# 3.2-compatible. `read -d ''` (empty delimiter -> NUL) works on bash 3.2.
+declare -a FILES=()
+while IFS= read -r -d '' _f; do
+    FILES+=("$_f")
+done < <(git ls-files --cached --others --exclude-standard -z)
 
 found=0
 report() { # file lineno reason
@@ -70,14 +89,14 @@ grep_pattern() { # file pattern reason [-i] [-P] [--allow <string>...]
         case "$rest" in *FAKE*) continue ;; esac
 
         # Skip lines matching allow-list strings
-        for allow_str in "${allow_strings[@]}"; do
+        for allow_str in "${allow_strings[@]+"${allow_strings[@]}"}"; do
             if [[ "$rest" == *"$allow_str"* ]]; then
                 continue 2  # Continue outer while loop
             fi
         done
 
         [ -n "$lineno" ] && report "$file" "$lineno" "$reason"
-    done < <(grep -n "${extra[@]}" "$engine" "$pattern" -- "$file" 2>/dev/null)
+    done < <(grep -n "${extra[@]+"${extra[@]}"}" "$engine" "$pattern" -- "$file" 2>/dev/null)
 }
 
 # -- literal patterns: shipped rules are generic + dynamic hostname check ---
@@ -176,7 +195,7 @@ if [ "$ground_truth_mode" -eq 1 ]; then
         trap 'rm -f "$raw_names_file"' EXIT
 
         # Source 1: directory names under the configured repo roots.
-        for root in "${repo_roots[@]}"; do
+        for root in "${repo_roots[@]+"${repo_roots[@]}"}"; do
             [ -d "$root" ] || continue
             ls -1 "$root" 2>/dev/null >> "$raw_names_file"
         done
@@ -241,7 +260,14 @@ for it in items or []:
     fi
 
     declare -a GROUND_TRUTH=()
-    [ -f "$cache_file" ] && mapfile -t GROUND_TRUTH < "$cache_file"
+    if [ -f "$cache_file" ]; then
+        # `read` loop instead of `mapfile` (bash 4+ only) -- see the FILES
+        # read loop above for why. `|| [ -n "$_gt_line" ]` picks up a final
+        # line even if the cache file has no trailing newline.
+        while IFS= read -r _gt_line || [ -n "$_gt_line" ]; do
+            [ -n "$_gt_line" ] && GROUND_TRUTH+=("$_gt_line")
+        done < "$cache_file"
+    fi
 
     if [ "${#GROUND_TRUTH[@]}" -gt 0 ]; then
         # One combined alternation per file beats one grep per derived name
@@ -294,7 +320,7 @@ if isinstance(title, str) and title != default_title:
 PYEOF
 }
 
-for f in "${FILES[@]}"; do
+for f in "${FILES[@]+"${FILES[@]}"}"; do
     [ -f "$f" ] || continue
     # This script names its own patterns in plain text -- never scan itself.
     [ "$f" = "scripts/check-public.sh" ] && continue
@@ -320,7 +346,7 @@ for f in "${FILES[@]}"; do
 
     # Process shipped generic patterns (currently empty, but slot is reserved
     # for generic rules that make sense to ship publicly)
-    for entry in "${LITERALS[@]}"; do
+    for entry in "${LITERALS[@]+"${LITERALS[@]}"}"; do
         pattern="${entry%%|*}"
         reason="${entry#*|}"
         # The public GitHub repo slug critfusion/critboard is allowed (it's a public identifier, not a leak)
@@ -332,7 +358,7 @@ for f in "${FILES[@]}"; do
     done
 
     # Process machine-local overrides (loaded from scripts/check-public.local)
-    for entry in "${LOCAL_OVERRIDES[@]}"; do
+    for entry in "${LOCAL_OVERRIDES[@]+"${LOCAL_OVERRIDES[@]}"}"; do
         pattern="${entry%%|*}"
         reason="${entry#*|}"
         # The public GitHub repo slug critfusion/critboard is allowed (it's a public identifier, not a leak)
@@ -343,7 +369,7 @@ for f in "${FILES[@]}"; do
         fi
     done
 
-    for h in "${HOST_LITERALS[@]-}"; do
+    for h in "${HOST_LITERALS[@]+"${HOST_LITERALS[@]}"}"; do
         [ -n "$h" ] || continue
         grep_pattern "$f" "$(printf '%s' "$h" | sed -E 's/[.[\*^$]/\\&/g')" \
             "this machine's real hostname ($h) -- see the dynamic HOST_LITERALS check" -i
@@ -385,7 +411,7 @@ if [ "$found" -ne 0 ]; then
 fi
 local_msg=""
 if [ "$loaded_local" -eq 1 ]; then
-    local_msg=" (+ $(printf '%s\n' "${LOCAL_OVERRIDES[@]}" | wc -l) machine-local overrides)"
+    local_msg=" (+ $(printf '%s\n' "${LOCAL_OVERRIDES[@]+"${LOCAL_OVERRIDES[@]}"}" | wc -l) machine-local overrides)"
 else
     local_msg=" (no local overrides file)"
 fi
@@ -393,5 +419,5 @@ gt_msg=" (ground-truth mode off)"
 if [ "$ground_truth_mode" -eq 1 ]; then
     gt_msg=" (ground-truth mode on, ${#GROUND_TRUTH[@]} derived names)"
 fi
-echo "check-public.sh: clean -- no personal/infrastructure data found in $(printf '%s\n' "${FILES[@]}" | wc -l) files (tracked + untracked)$local_msg$gt_msg."
+echo "check-public.sh: clean -- no personal/infrastructure data found in $(printf '%s\n' "${FILES[@]+"${FILES[@]}"}" | wc -l) files (tracked + untracked)$local_msg$gt_msg."
 exit 0

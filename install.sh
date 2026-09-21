@@ -49,6 +49,23 @@ DO_SERVICE=0
 DO_START=0
 DO_DOCTOR=0
 
+# Binary search order, tried only after PATH (command -v) has already
+# failed. MUST stay in sync with server/critdash/detect.py's
+# BINARY_CANDIDATE_DIRS -- server/tests/test_install_candidate_dirs.py
+# asserts these two lists agree (run `./install.sh --print-candidate-dirs`
+# to see what this list resolves to). A non-interactive shell (the common
+# case on macOS: cron, a systemd-less launch, an agent's shell) often does
+# not have Homebrew's directories on PATH even though the tools are right
+# there -- this is what finds them anyway instead of failing the install.
+# shellcheck disable=SC2088  # literal ~ entries, expanded manually below via $HOME -- not shell tilde-expansion
+BINARY_CANDIDATE_DIRS=(
+    "~/.local/bin"
+    "/opt/homebrew/bin"
+    "/usr/local/bin"
+    "/opt/local/bin"
+    "/usr/bin"
+)
+
 usage() {
     sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
@@ -62,6 +79,13 @@ while [ $# -gt 0 ]; do
         --service) DO_SERVICE=1; shift ;;
         --start) DO_START=1; shift ;;
         --doctor) DO_DOCTOR=1; shift ;;
+        # Internal/test-only: prints BINARY_CANDIDATE_DIRS, one per line, so
+        # a test can assert it matches detect.py's BINARY_CANDIDATE_DIRS
+        # without parsing this script's shell syntax from Python.
+        --print-candidate-dirs)
+            printf '%s\n' "${BINARY_CANDIDATE_DIRS[@]}"
+            exit 0
+            ;;
         -h|--help) usage; exit 0 ;;
         *) echo "install.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -70,20 +94,67 @@ done
 log()  { printf 'install.sh: %s\n' "$*"; }
 fail() { printf 'install.sh: ERROR: %s\n' "$*" >&2; exit 1; }
 
+# find_binary NAME -- prints the resolved absolute path to stdout and
+# returns 0 (PATH first via `command -v`, then BINARY_CANDIDATE_DIRS in
+# order); prints nothing and returns 1 if not found anywhere. Silent on
+# purpose (no log output) so it can be used internally (e.g. by
+# run_doctor(), before the prerequisites section below has run) without
+# double-reporting -- see report_binary() for the version that logs.
+find_binary() {
+    local name="$1" found d expanded
+    found="$(command -v "$name" 2>/dev/null)"
+    if [ -n "$found" ]; then
+        printf '%s\n' "$found"
+        return 0
+    fi
+    for d in "${BINARY_CANDIDATE_DIRS[@]}"; do
+        expanded="${d/#\~/$HOME}"
+        if [ -f "$expanded/$name" ] && [ -x "$expanded/$name" ]; then
+            printf '%s\n' "$expanded/$name"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# report_binary NAME -- same resolution as find_binary(), but also logs
+# (to stderr -- stdout is this function's return value, same convention as
+# find_binary(), and callers do `x="$(report_binary name)"`) when the
+# binary was found ONLY outside PATH: the user's non-interactive PATH is
+# incomplete, and they'll want to know that even though this install works
+# around it.
+report_binary() {
+    local name="$1" on_path resolved
+    on_path="$(command -v "$name" 2>/dev/null)"
+    resolved="$(find_binary "$name")" || return 1
+    if [ -z "$on_path" ]; then
+        printf 'install.sh: found '\''%s'\'' outside PATH, at %s -- PATH is incomplete in this shell (common in a non-interactive/non-login shell on macOS). Add its directory to PATH (e.g. in ~/.zprofile) to stop relying on this fallback.\n' "$name" "$resolved" >&2
+    fi
+    printf '%s\n' "$resolved"
+}
+
 # Runs `python -m critdash.doctor` (see server/critdash/doctor.py) with
 # whatever Python this install actually has -- the venv if it exists yet
-# (normal case: step 2 below always runs before this is ever called),
-# `uv run` if not, else a bare python3 (doctor.py is stdlib-only, so this
-# always works even before `make install`/./install.sh has run at all).
-# Propagates doctor's own exit code (0 = no mismatch, 1 = mismatch found).
+# (normal case: step 2 below always runs before this is ever called), `uv`
+# if not (found via find_binary, not just PATH), else a bare python3 found
+# the same way (doctor.py is stdlib-only, so this always works even before
+# `make install`/./install.sh has run at all). Self-contained: also called
+# for --doctor before the prerequisites section below has run, so it cannot
+# rely on that section's resolved variables. Propagates doctor's own exit
+# code (0 = no mismatch, 1 = mismatch found).
 run_doctor() {
     if [ -x "$SERVER_DIR/.venv/bin/python" ]; then
         (cd "$SERVER_DIR" && "$SERVER_DIR/.venv/bin/python" -m critdash.doctor)
-    elif command -v uv >/dev/null 2>&1; then
-        (cd "$SERVER_DIR" && uv run python -m critdash.doctor)
-    else
-        (cd "$SERVER_DIR" && python3 -m critdash.doctor)
+        return $?
     fi
+    local uv_bin py_bin
+    uv_bin="$(find_binary uv)"
+    if [ -n "$uv_bin" ]; then
+        (cd "$SERVER_DIR" && "$uv_bin" run python -m critdash.doctor)
+        return $?
+    fi
+    py_bin="$(find_binary python3)"
+    (cd "$SERVER_DIR" && "${py_bin:-python3}" -m critdash.doctor)
 }
 
 if [ "$DO_DOCTOR" -eq 1 ]; then
@@ -93,29 +164,36 @@ fi
 
 # -- 1. prerequisites ---------------------------------------------------------
 
-command -v git >/dev/null 2>&1 || fail "git is required and was not found on PATH."
+report_binary git >/dev/null \
+    || fail "git is required and was not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]}."
 
 HAVE_UV=0
-command -v uv >/dev/null 2>&1 && HAVE_UV=1
+UV_BIN="$(report_binary uv)" && HAVE_UV=1
 
 PY_FLOOR_OK=0
-if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' && PY_FLOOR_OK=1
+PYTHON3_BIN="$(report_binary python3)"
+if [ -n "$PYTHON3_BIN" ]; then
+    "$PYTHON3_BIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' && PY_FLOOR_OK=1
 fi
 
 if [ "$HAVE_UV" -eq 0 ] && [ "$PY_FLOOR_OK" -eq 0 ]; then
-    fail "need Python >=3.11 on PATH, or 'uv' installed (https://docs.astral.sh/uv/) -- uv can provision a matching Python itself. Neither was found."
+    fail "need Python >=3.11 on PATH or in: ${BINARY_CANDIDATE_DIRS[*]}; or 'uv' installed (https://docs.astral.sh/uv/) -- uv can provision a matching Python itself. Neither was found."
 fi
 
 for bin in ssh bd herdr; do
-    if ! command -v "$bin" >/dev/null 2>&1; then
-        log "optional: '$bin' not found on PATH -- $(
-            case "$bin" in
-                ssh) echo "multi-host fleet collection stays inactive (single-host mode still works fully)." ;;
-                bd) echo "the beads panel stays inactive." ;;
-                herdr) echo "pane-level agent detection stays inactive (session-based agent detection from ~/.claude/projects still works)." ;;
-            esac
-        )"
+    if ! report_binary "$bin" >/dev/null; then
+        # A `case` inside a `$( )` command substitution, with a `(` character
+        # inside one of its quoted branches, is a real bash 3.2 parser bug
+        # (confirmed: it is a hard syntax error, not just a warning) --
+        # macOS's shipped bash. Assign the message first instead of nesting
+        # the case inside the log call.
+        optional_msg=""
+        case "$bin" in
+            ssh) optional_msg="multi-host fleet collection stays inactive (single-host mode still works fully)." ;;
+            bd) optional_msg="the beads panel stays inactive." ;;
+            herdr) optional_msg="pane-level agent detection stays inactive (session-based agent detection from ~/.claude/projects still works)." ;;
+        esac
+        log "optional: '$bin' not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]} -- $optional_msg"
     fi
 done
 
@@ -123,11 +201,11 @@ done
 
 if [ "$HAVE_UV" -eq 1 ]; then
     log "using uv to create the venv and install dependencies (this also provisions a compatible Python if needed)..."
-    (cd "$SERVER_DIR" && uv sync) || fail "uv sync failed."
+    (cd "$SERVER_DIR" && "$UV_BIN" sync) || fail "uv sync failed."
 else
     if [ ! -x "$SERVER_DIR/.venv/bin/python" ]; then
         log "creating venv with python3 (no uv found)..."
-        python3 -m venv "$SERVER_DIR/.venv" || fail "python3 -m venv failed."
+        "$PYTHON3_BIN" -m venv "$SERVER_DIR/.venv" || fail "python3 -m venv failed."
     else
         log "venv already exists at server/.venv -- reusing it."
     fi
@@ -152,7 +230,12 @@ if [ -f "$SOURCES_JSON" ]; then
 else
     [ -f "$SOURCES_EXAMPLE" ] || fail "config/sources.example.json is missing -- cannot bootstrap a config."
     mkdir -p "$CONFIG_DIR"
-    PORT="$PORT" BIND="$BIND" SRC="$SOURCES_EXAMPLE" DST="$SOURCES_JSON" PYTHONPATH="$SERVER_DIR" python3 - <<'PYEOF'
+    # Run with whatever Python this install resolved in step 1 -- PYTHON3_BIN
+    # if found, else `uv run python3` (HAVE_UV must be 1 in that case: step 1
+    # already fails the whole install if neither is available).
+    PY_RUNNER=("$PYTHON3_BIN")
+    [ -n "$PYTHON3_BIN" ] || PY_RUNNER=("$UV_BIN" run python3)
+    PORT="$PORT" BIND="$BIND" SRC="$SOURCES_EXAMPLE" DST="$SOURCES_JSON" PYTHONPATH="$SERVER_DIR" "${PY_RUNNER[@]}" - <<'PYEOF'
 import json
 import os
 import sys

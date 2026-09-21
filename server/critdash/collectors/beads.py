@@ -5,28 +5,32 @@ Verified on this host (2026-09-18):
   bd stats --json  (alias: bd status --json) -> {"schema_version":1,"summary":{...}}
   bd ready --json  -> JSON array of ready issue objects (blocker-aware, excludes
                       in_progress/blocked/deferred/hooked)
-`bd` needs `~/.config/beads/env` sourced first and BEADS_ACTOR set, per SPEC.
 
-Beads is an OPTIONAL dependency: a host with no beads workflow at all has no
-`bd` binary and no `~/.config/beads/env`, and that is a normal, expected
-state on a fresh install -- not a failure. Three separate things have to
-work for this collector to produce data, and a caller needs to know which
-one is missing to act on it:
-  1. the `bd` binary on PATH.
-  2. `~/.config/beads/env`, sourced before every `bd` call.
-  3. network reach to whatever beads server that env file points at.
-Both (1) and (2) are checked directly in Python, BEFORE any subprocess runs
--- not by parsing shell output. This matters: the collect() command line
-sources the env file as `. <path> 2>/dev/null`, and on a POSIX shell (dash,
-this host's /bin/sh) a failed `.` (dot) is a *special builtin* whose failure
-aborts the whole `-c` script immediately, before `bd` ever runs -- with the
-2>/dev/null on that one line swallowing dash's own diagnostic. Verified live
-on this host: `dash -c '. /nonexistent/env 2>/dev/null; echo x'` exits 2 and
-prints nothing at all. That is the exact "RuntimeError: exit 2:" with an
-empty message a fresh-install smoke test produced -- the worst case
-described in the briefing. Checking the env file's existence up front turns
-that into a clean, actionable `config_missing` before the shell ever sees
-the command.
+`~/.config/beads/env` is a SITE-SPECIFIC CONVENTION (the original fleet's
+own way of sourcing credentials for a shared beads server) -- not something
+`bd` itself requires. A generic install with `bd` on PATH and a local
+workspace (`bd init`, or `BEADS_DIR` pointed at one) needs no such file.
+Verified live with an isolated HOME and no env file (2026-09-21):
+  no workspace:  `bd list --json --all --limit 0` -> exit 1, stderr
+                 "Error: no beads database found\nHint: run 'bd where' to
+                 inspect the resolved workspace, or 'bd init' to create a
+                 new database\n      or set BEADS_DIR to point to your
+                 .beads directory"
+  after `bd init`: same command -> exit 0, stdout "[]" -- works fine.
+So the env file is optional, sourced only when it exists; `bd`'s own
+no-workspace failure is a real, informative error, not a missing
+dependency, and is left to the normal command_failed classification below
+(see `_run`) rather than special-cased.
+
+Beads is still an OPTIONAL dependency overall: a host with no beads
+workflow at all has no `bd` binary, and that is a normal, expected state on
+a fresh install -- not a failure. Availability is judged on exactly one
+thing, checked directly in Python before any subprocess ever runs:
+  1. the `bd` binary resolves (PATH, or an explicit path).
+If that holds, the collector is scheduled; whatever `bd` itself then does
+(no workspace configured, network unreachable, ...) surfaces through the
+existing command_failed/unreachable classification with bd's own message,
+which is already actionable (it suggests `bd init` or `BEADS_DIR`).
 """
 
 from __future__ import annotations
@@ -57,6 +61,22 @@ def resolve_bd_bin(bd_bin: str) -> str | None:
         p = Path(bd_bin).expanduser()
         return str(p) if p.is_file() and os.access(p, os.X_OK) else None
     return shutil.which(bd_bin)
+
+
+def bd_shell_prefix(beads_env: str, actor: str) -> str:
+    """Shell prefix for a `bd` invocation: sources `beads_env` only when
+    that file actually exists -- it is an optional, site-specific
+    convention (see module docstring), never something `bd` requires -- then
+    exports BEADS_ACTOR. A generic `bd init`/BEADS_DIR workspace with no env
+    file at all runs `bd` directly, with no `.` (dot) of a nonexistent path
+    ever reaching the shell. Shared by BeadsCollector._prefix() and
+    fetch_bead_detail() so the two call sites can't drift."""
+    parts = []
+    env_path = Path(os.path.expanduser(beads_env)) if beads_env else None
+    if env_path is not None and env_path.is_file():
+        parts.append(f". {shlex.quote(str(env_path))} 2>/dev/null;")
+    parts.append(f"export BEADS_ACTOR={shlex.quote(actor)};")
+    return " ".join(parts)
 
 # Labels that describe agent routing intent, not a repo. Used to skip them
 # when guessing a bead's repo from its labels.
@@ -234,7 +254,7 @@ async def fetch_bead_detail(
     if not validate_bead_id(bead_id):
         raise ValueError(f"invalid bead id: {bead_id!r}")
 
-    prefix = f". {shlex.quote(beads_env)} 2>/dev/null; export BEADS_ACTOR={shlex.quote(actor)};"
+    prefix = bd_shell_prefix(beads_env, actor)
     cmd = (
         f"{prefix} {shlex.quote(bd_bin)} show {shlex.quote(bead_id)} "
         "--json --include-dependents"
@@ -303,26 +323,23 @@ async def _run(cmd: str, timeout: float = 20.0) -> str:
     return stdout.decode(errors="replace")
 
 
-def availability_issue(bd_bin: str, beads_env: str) -> CollectorIssue | None:
-    """None if `bd` is installed and its env file exists -- the two
-    preflight checks BeadsCollector.collect() runs before ever shelling out,
-    factored out so main.py can run the exact same check at startup (and on
-    periodic re-detection) to decide whether to schedule this collector at
-    all, without duplicating the logic or actually running collect()."""
+def availability_issue(bd_bin: str) -> CollectorIssue | None:
+    """None if `bd` is installed -- the one preflight check
+    BeadsCollector.collect() runs before ever shelling out, factored out so
+    main.py can run the exact same check at startup (and on periodic
+    re-detection) to decide whether to schedule this collector at all,
+    without duplicating the logic or actually running collect().
+
+    The beads env file is deliberately NOT checked here (see module
+    docstring): it is optional, and a `bd` with no workspace configured
+    fails with its own clear, actionable error once collect() actually runs
+    it -- that surfaces through the normal command_failed classification,
+    not through this availability gate."""
     if resolve_bd_bin(bd_bin) is None:
         return CollectorIssue(
             "dependency_missing",
             f"bd is not installed: {bd_bin!r} was not found on PATH",
             remedy=_BD_DEPENDENCY_REMEDY,
-            optional=True,
-        )
-    env_path = Path(os.path.expanduser(beads_env))
-    if not env_path.is_file():
-        return CollectorIssue(
-            "config_missing",
-            f"beads env file not found: {env_path}",
-            remedy=f"Create {env_path} (see your beads setup docs), "
-            "or ignore this panel if you do not use beads.",
             optional=True,
         )
     return None
@@ -342,11 +359,10 @@ class BeadsCollector(BaseCollector):
         self._prev: dict[str, tuple[str, str | None]] = {}
 
     def _prefix(self) -> str:
-        env_path = shlex.quote(self.beads_env)
-        return f". {env_path} 2>/dev/null; export BEADS_ACTOR={shlex.quote(self.actor)};"
+        return bd_shell_prefix(self.beads_env, self.actor)
 
     async def collect(self) -> dict:
-        issue = availability_issue(self.bd_bin, self.beads_env)
+        issue = availability_issue(self.bd_bin)
         if issue is not None:
             raise issue
 

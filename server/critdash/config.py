@@ -37,7 +37,13 @@ CONFIG_DIR = Path(os.environ.get("CRITDASH_CONFIG_DIR") or (DASHBOARD_ROOT / "co
 # missing AND config/sources.example.json is also missing/unreadable (see
 # _ensure_sources_file), or if the on-disk file fails to parse as JSON.
 DEFAULT_SOURCES = {
-    "beads_env": "~/.config/beads/env",
+    # Empty by default: ~/.config/beads/env is a site-specific convention
+    # (the original fleet's own way of sourcing credentials for a shared
+    # beads server), not something `bd` requires. It is optional -- sourced
+    # only if it exists (see collectors/beads.py's bd_shell_prefix) -- and a
+    # generic `bd init`/BEADS_DIR workspace needs no such file at all. Set
+    # this only if your `bd` setup actually uses an env file like this.
+    "beads_env": "",
     "beads_actor": "critdash",
     "bd_bin": "~/.local/bin/bd",
     "herdr_bin": "herdr",

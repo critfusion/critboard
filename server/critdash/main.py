@@ -264,7 +264,7 @@ def build_app() -> FastAPI:
         return c
 
     _apply_enablement(
-        "beads", lambda: beads_availability_issue(_resolve_bd_bin(), beads_env), _build_beads_collector
+        "beads", lambda: beads_availability_issue(_resolve_bd_bin()), _build_beads_collector
     )
 
     local_host = config.sources.get("host", "localhost")

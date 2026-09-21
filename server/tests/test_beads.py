@@ -7,6 +7,7 @@ from critdash.collectors import CollectorIssue
 from critdash.collectors import beads as beads_mod
 from critdash.collectors.beads import (
     BeadsCollector,
+    bd_shell_prefix,
     build_dependency_maps,
     guess_repo,
     is_review_lane,
@@ -225,14 +226,31 @@ async def test_collect_dependency_missing_when_bd_not_on_path(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_collect_config_missing_when_env_file_absent():
+async def test_collect_succeeds_with_no_env_file(monkeypatch, fixtures_dir):
+    """Bug 3 (corrected model): ~/.config/beads/env is a site-specific
+    convention, not something bd requires. A `bd` with its own local
+    workspace (bd init / BEADS_DIR) needs no env file at all, and the
+    collector must not refuse to run just because one is absent."""
+    list_text = (fixtures_dir / "bd_list.json").read_text()
+    stats_text = (fixtures_dir / "bd_stats.json").read_text()
+    ready_text = (fixtures_dir / "bd_ready.json").read_text()
+
+    async def fake_run(cmd, timeout=20.0):
+        # No `.` (dot) sourcing a nonexistent env file should ever reach the
+        # command line when beads_env doesn't exist -- see bd_shell_prefix.
+        assert cmd.startswith("export BEADS_ACTOR=")
+        if " list " in cmd:
+            return list_text
+        if " stats " in cmd:
+            return stats_text
+        if " ready " in cmd:
+            return ready_text
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(beads_mod, "_run", fake_run)
     collector = BeadsCollector(bd_bin=sys.executable, beads_env="/nonexistent/beads/env")
-    with pytest.raises(CollectorIssue) as exc_info:
-        await collector.collect()
-    issue = exc_info.value
-    assert issue.reason_code == "config_missing"
-    assert issue.optional is True
-    assert "/nonexistent/beads/env" in issue.detail
+    result = await collector.collect()
+    assert "beads" in result
 
 
 @pytest.mark.asyncio
@@ -320,25 +338,68 @@ async def test_run_timeout_is_unreachable(monkeypatch):
     assert issue.optional is False
 
 
-# -- availability_issue (Bug 2: shared preflight, used by collect() and by
-# main.py's startup auto-detection) -----------------------------------------
+# -- availability_issue (Bug 3 fix: shared preflight, used by collect() and
+# by main.py's startup auto-detection. Corrected model: `bd` resolving is
+# the ONLY thing that gates availability -- the beads env file is an
+# optional, site-specific convention, not a requirement. See module
+# docstring for the live `bd`-with-no-env-file behavior this is built on.)
+# -----------------------------------------------------------------------
 
 
-def test_availability_issue_none_when_bd_and_env_present(tmp_path):
-    env_path = tmp_path / "env"
-    env_path.write_text("")
-    assert beads_mod.availability_issue(sys.executable, str(env_path)) is None
+def test_availability_issue_none_when_bd_present():
+    """Available as soon as `bd` resolves -- no env file required at all."""
+    assert beads_mod.availability_issue(sys.executable) is None
 
 
 def test_availability_issue_dependency_missing_when_bd_absent(tmp_path):
-    env_path = tmp_path / "env"
-    env_path.write_text("")
-    issue = beads_mod.availability_issue(str(tmp_path / "no-such-bd"), str(env_path))
+    issue = beads_mod.availability_issue(str(tmp_path / "no-such-bd"))
     assert issue.reason_code == "dependency_missing"
     assert issue.optional is True
 
 
-def test_availability_issue_config_missing_when_env_absent():
-    issue = beads_mod.availability_issue(sys.executable, "/nonexistent/beads/env")
-    assert issue.reason_code == "config_missing"
-    assert issue.optional is True
+# -- bd_shell_prefix (Bug 3: env file optional, sourced only if present) ----
+
+
+def test_bd_shell_prefix_sources_env_file_when_present(tmp_path):
+    env_path = tmp_path / "env"
+    env_path.write_text("export BEADS_DB=foo\n")
+    prefix = bd_shell_prefix(str(env_path), "critdash")
+    assert prefix == f". {env_path} 2>/dev/null; export BEADS_ACTOR=critdash;"
+
+
+def test_bd_shell_prefix_skips_sourcing_when_env_file_absent():
+    prefix = bd_shell_prefix("/nonexistent/beads/env", "critdash")
+    assert "/nonexistent/beads/env" not in prefix
+    assert prefix.startswith("export BEADS_ACTOR=")
+
+
+def test_bd_shell_prefix_skips_sourcing_when_env_empty_string():
+    """The shipped config default for beads_env is now "" (Bug 3) -- must
+    behave exactly like "no env file", not try to source an empty path."""
+    prefix = bd_shell_prefix("", "critdash")
+    assert prefix.startswith("export BEADS_ACTOR=")
+
+
+@pytest.mark.asyncio
+async def test_bd_no_workspace_failure_classified_with_real_message(monkeypatch):
+    """Live-verified (isolated HOME, no env file, no `bd init`): `bd list
+    --json --all --limit 0` exits 1 with this exact stderr. That must
+    surface through the normal command_failed classification with bd's own
+    message intact -- not a special-cased "config_missing"."""
+    real_stderr = (
+        "Error: no beads database found\n"
+        "Hint: run 'bd where' to inspect the resolved workspace, or 'bd init' "
+        "to create a new database\n"
+        "      or set BEADS_DIR to point to your .beads directory"
+    )
+
+    async def fake_exec(cmd, **kwargs):
+        return _FakeProc(stderr=real_stderr.encode(), returncode=1)
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    with pytest.raises(CollectorIssue) as exc_info:
+        await beads_mod._run("bd list --json --all --limit 0")
+    issue = exc_info.value
+    assert issue.reason_code == "command_failed"
+    assert "no beads database found" in issue.detail
+    assert "bd init" in issue.detail
