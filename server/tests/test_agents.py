@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from critdash.collectors import CollectorIssue
 from critdash.collectors import agents as agents_mod
 from critdash.collectors.agents import (
     AgentsCollector,
@@ -513,3 +514,82 @@ async def test_collect_merges_herdr_and_kimi_for_same_session_without_duplicatin
     assert len(matching) == 1
     assert matching[0]["source"] == "both"
     assert matching[0]["pane"] == "pane-5"
+
+
+# -- herdr present-but-broken: structured failure, not a bare RuntimeError --
+# (herdr ABSENT entirely is not an error at all -- see collect()'s OSError
+# catch and test_collect_surfaces_session_only_agent_invisible_to_herdr.)
+
+
+@pytest.mark.asyncio
+async def test_herdr_timeout_raises_classified_command_failed(monkeypatch, tmp_path):
+    class HangingProc:
+        returncode = 0
+
+        async def communicate(self):
+            import asyncio as _asyncio
+
+            await _asyncio.sleep(999)
+
+        def kill(self):
+            pass
+
+        async def wait(self):
+            pass
+
+    async def fake_exec(*args, **kwargs):
+        return HangingProc()
+
+    # collect() hardcodes a 10s wait_for timeout on the herdr call -- shrink
+    # it here so the test doesn't actually wait 10s for the real timeout path.
+    orig_wait_for = agents_mod.asyncio.wait_for
+
+    async def fast_wait_for(coro, timeout):
+        return await orig_wait_for(coro, timeout=0.02)
+
+    monkeypatch.setattr(agents_mod.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(agents_mod.asyncio, "wait_for", fast_wait_for)
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    collector = AgentsCollector(ctx=ctx, herdr_bin="herdr", store=store)
+
+    with pytest.raises(CollectorIssue) as exc_info:
+        await collector.collect()
+    store.close()
+    issue = exc_info.value
+    assert issue.reason_code == "command_failed"
+    assert "timed out" in issue.detail
+    assert issue.optional is False
+
+
+@pytest.mark.asyncio
+async def test_herdr_nonzero_exit_raises_classified_command_failed_with_stderr(monkeypatch, tmp_path):
+    class FailingProc:
+        returncode = 1
+
+        async def communicate(self):
+            return b"", b"herdr: socket connection refused\n"
+
+        def kill(self):
+            pass
+
+        async def wait(self):
+            pass
+
+    async def fake_exec(*args, **kwargs):
+        return FailingProc()
+
+    monkeypatch.setattr(agents_mod.asyncio, "create_subprocess_exec", fake_exec)
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    collector = AgentsCollector(ctx=ctx, herdr_bin="herdr", store=store)
+
+    with pytest.raises(CollectorIssue) as exc_info:
+        await collector.collect()
+    store.close()
+    issue = exc_info.value
+    assert issue.reason_code == "command_failed"
+    assert "socket connection refused" in issue.detail
+    assert issue.optional is False

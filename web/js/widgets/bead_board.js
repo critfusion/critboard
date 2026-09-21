@@ -1,4 +1,4 @@
-import { el, fmtDuration, priorityColorVar, mobileLimit, renderWithShowAll } from "../utils.js";
+import { el, fmtDuration, priorityColorVar, mobileLimit, renderWithShowAll, sourceIssueNotice } from "../utils.js";
 import { openBeadModal } from "../detail.js";
 import {
   classifyBeadRouting,
@@ -215,6 +215,16 @@ export default {
     const laneOrder = options?.lanes || ["ready", "in_progress", "blocked", "review"];
     const byId = new Map(items.map((b) => [b.id, b]));
     const humanLabels = layout?.human_labels || DEFAULT_HUMAN_LABELS;
+
+    // No beads at all, and the collector says why -- show one explanation
+    // instead of four empty lanes each silently saying "empty".
+    if (items.length === 0) {
+      const issue = sourceIssueNotice(data?.sources, "beads", "Beads");
+      if (issue) {
+        container.appendChild(issue);
+        return;
+      }
+    }
 
     if (breakpoint === "mobile") {
       const limit = mobileLimit(panel, 12);

@@ -97,6 +97,9 @@ async def test_failing_host_isolated_to_ok_false_with_real_error(ctx, monkeypatc
     assert h["ok"] is False
     assert "Permission denied" in h["error"]
     assert h["reachable"] is False
+    assert h["reason_code"] == "command_failed"
+    assert h["detail"] == h["error"]
+    assert h["optional"] is False
 
 
 @pytest.mark.asyncio
@@ -139,6 +142,27 @@ async def test_ssh_timeout_marks_host_down_without_raising(ctx, monkeypatch):
     h = result["hosts"][0]
     assert h["ok"] is False
     assert "timed out" in h["error"]
+    assert h["reason_code"] == "unreachable"
+    assert h["remedy"] is not None
+
+
+@pytest.mark.asyncio
+async def test_ssh_binary_missing_marks_host_dependency_missing_and_optional(ctx, monkeypatch):
+    async def fake_exec(*args, **kwargs):
+        raise FileNotFoundError("[Errno 2] No such file or directory: 'ssh'")
+
+    monkeypatch.setattr(remote_mod.asyncio, "create_subprocess_exec", fake_exec)
+
+    collector = RemoteCollector(
+        ctx=ctx, store=ctx.store,
+        hosts=[{"name": "host-d", "mode": "ssh", "target": "host-d", "enabled": True}],
+    )
+    result = await collector.collect()
+    h = result["hosts"][0]
+    assert h["ok"] is False
+    assert h["reason_code"] == "dependency_missing"
+    assert h["optional"] is True
+    assert h["remedy"] is not None
 
 
 @pytest.mark.asyncio

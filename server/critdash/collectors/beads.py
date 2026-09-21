@@ -6,17 +6,57 @@ Verified on this host (2026-09-18):
   bd ready --json  -> JSON array of ready issue objects (blocker-aware, excludes
                       in_progress/blocked/deferred/hooked)
 `bd` needs `~/.config/beads/env` sourced first and BEADS_ACTOR set, per SPEC.
+
+Beads is an OPTIONAL dependency: a host with no beads workflow at all has no
+`bd` binary and no `~/.config/beads/env`, and that is a normal, expected
+state on a fresh install -- not a failure. Three separate things have to
+work for this collector to produce data, and a caller needs to know which
+one is missing to act on it:
+  1. the `bd` binary on PATH.
+  2. `~/.config/beads/env`, sourced before every `bd` call.
+  3. network reach to whatever beads server that env file points at.
+Both (1) and (2) are checked directly in Python, BEFORE any subprocess runs
+-- not by parsing shell output. This matters: the collect() command line
+sources the env file as `. <path> 2>/dev/null`, and on a POSIX shell (dash,
+this host's /bin/sh) a failed `.` (dot) is a *special builtin* whose failure
+aborts the whole `-c` script immediately, before `bd` ever runs -- with the
+2>/dev/null on that one line swallowing dash's own diagnostic. Verified live
+on this host: `dash -c '. /nonexistent/env 2>/dev/null; echo x'` exits 2 and
+prints nothing at all. That is the exact "RuntimeError: exit 2:" with an
+empty message a fresh-install smoke test produced -- the worst case
+described in the briefing. Checking the env file's existence up front turns
+that into a clean, actionable `config_missing` before the shell ever sees
+the command.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shlex
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
-from . import BaseCollector, now_iso
+from . import BaseCollector, CollectorIssue, now_iso
+
+_BD_DEPENDENCY_REMEDY = "Install the bd CLI, or ignore this panel if you do not use beads."
+
+
+def resolve_bd_bin(bd_bin: str) -> str | None:
+    """Resolve bd_bin to an existing, executable path, or None if it can't
+    be found. A bare name (no path separator, e.g. "bd") is looked up on
+    PATH via shutil.which; anything containing a "/" (bd_bin's own default
+    is the full path "~/.local/bin/bd") is checked directly after expanding
+    "~" -- deliberately NOT dependent on the beads env file having been
+    sourced yet (see module docstring), since that file's job is DB/actor
+    config, not extending PATH for this specific binary."""
+    if "/" in bd_bin:
+        p = Path(bd_bin).expanduser()
+        return str(p) if p.is_file() and os.access(p, os.X_OK) else None
+    return shutil.which(bd_bin)
 
 # Labels that describe agent routing intent, not a repo. Used to skip them
 # when guessing a bead's repo from its labels.
@@ -226,6 +266,16 @@ def _parse_json_loose(text: str):
 
 
 async def _run(cmd: str, timeout: float = 20.0) -> str:
+    """Run cmd via BeadsCollector.collect() and return stdout, or raise a
+    CollectorIssue -- never a bare RuntimeError -- describing what actually
+    went wrong. By the time this runs, the caller has already confirmed the
+    `bd` binary and the env file both exist (see collect()), so a failure
+    here means the command ran and genuinely failed: a real command_failed
+    or, for a timeout, a network-shaped unreachable (the beads env file
+    points `bd` at a server; a hang is the closest signal available that
+    it isn't responding). `optional=False` on both -- the user HAS bd
+    configured, so this is a real problem worth a warning, not an
+    unconfigured-dependency notice."""
     proc = await asyncio.create_subprocess_shell(
         cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -234,9 +284,22 @@ async def _run(cmd: str, timeout: float = 20.0) -> str:
     except TimeoutError:
         proc.kill()
         await proc.wait()
-        raise RuntimeError(f"command timed out after {timeout}s: {cmd}") from None
+        raise CollectorIssue(
+            "unreachable",
+            f"bd command timed out after {timeout}s",
+            remedy="Check network connectivity to the beads server named in your beads env file.",
+        ) from None
     if proc.returncode != 0:
-        raise RuntimeError(f"exit {proc.returncode}: {stderr.decode(errors='replace')[:500]}")
+        out_text = stdout.decode(errors="replace").strip()
+        err_text = stderr.decode(errors="replace").strip()
+        # A tool that prints its error to stdout instead of stderr must not
+        # produce a blank reason -- fall back to stdout when stderr is empty.
+        detail = err_text[:500] or out_text[:500] or f"(no output on exit {proc.returncode})"
+        raise CollectorIssue(
+            "command_failed",
+            f"bd exited {proc.returncode}: {detail}",
+            remedy="Run the bd command by hand (see beads env file) to see the full error.",
+        )
     return stdout.decode(errors="replace")
 
 
@@ -258,6 +321,23 @@ class BeadsCollector(BaseCollector):
         return f". {env_path} 2>/dev/null; export BEADS_ACTOR={shlex.quote(self.actor)};"
 
     async def collect(self) -> dict:
+        if resolve_bd_bin(self.bd_bin) is None:
+            raise CollectorIssue(
+                "dependency_missing",
+                f"bd is not installed: {self.bd_bin!r} was not found on PATH",
+                remedy=_BD_DEPENDENCY_REMEDY,
+                optional=True,
+            )
+        env_path = Path(os.path.expanduser(self.beads_env))
+        if not env_path.is_file():
+            raise CollectorIssue(
+                "config_missing",
+                f"beads env file not found: {env_path}",
+                remedy=f"Create {env_path} (see your beads setup docs), "
+                "or ignore this panel if you do not use beads.",
+                optional=True,
+            )
+
         bd = shlex.quote(self.bd_bin)
         list_out, stats_out, ready_out = await asyncio.gather(
             _run(f"{self._prefix()} {bd} list --json --all --limit 0"),

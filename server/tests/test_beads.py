@@ -1,13 +1,16 @@
 import json
+import sys
 
 import pytest
 
+from critdash.collectors import CollectorIssue
 from critdash.collectors import beads as beads_mod
 from critdash.collectors.beads import (
     BeadsCollector,
     build_dependency_maps,
     guess_repo,
     is_review_lane,
+    resolve_bd_bin,
     transform_item,
 )
 
@@ -72,7 +75,7 @@ def test_transform_item_shape(fixtures_dir):
 
 
 @pytest.mark.asyncio
-async def test_collect_end_to_end(fixtures_dir, monkeypatch):
+async def test_collect_end_to_end(fixtures_dir, tmp_path, monkeypatch):
     list_text = (fixtures_dir / "bd_list.json").read_text()
     stats_text = (fixtures_dir / "bd_stats.json").read_text()
     ready_text = (fixtures_dir / "bd_ready.json").read_text()
@@ -88,7 +91,14 @@ async def test_collect_end_to_end(fixtures_dir, monkeypatch):
 
     monkeypatch.setattr(beads_mod, "_run", fake_run)
 
-    collector = BeadsCollector(bd_bin="bd")
+    # Preflight checks (dependency_missing/config_missing) run before _run is
+    # ever called -- bd_bin must resolve to something real (sys.executable is
+    # a guaranteed-present stand-in; _run is mocked, so it's never actually
+    # invoked) and beads_env must exist, independent of whatever this host
+    # happens to have installed.
+    env_path = tmp_path / "env"
+    env_path.write_text("")
+    collector = BeadsCollector(bd_bin=sys.executable, beads_env=str(env_path))
     result = await collector.collect()
 
     assert "beads" in result
@@ -99,7 +109,7 @@ async def test_collect_end_to_end(fixtures_dir, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pagination_notice_after_json_is_stripped(fixtures_dir, monkeypatch):
+async def test_pagination_notice_after_json_is_stripped(fixtures_dir, tmp_path, monkeypatch):
     """bd ready --json can print a trailing plain-text pagination notice on
     stdout after the JSON array when truncated; the collector must not choke
     on it (regression test for a real bug hit while building this)."""
@@ -120,7 +130,9 @@ async def test_pagination_notice_after_json_is_stripped(fixtures_dir, monkeypatc
         raise AssertionError(cmd)
 
     monkeypatch.setattr(beads_mod, "_run", fake_run)
-    collector = BeadsCollector(bd_bin="bd")
+    env_path = tmp_path / "env"
+    env_path.write_text("")
+    collector = BeadsCollector(bd_bin=sys.executable, beads_env=str(env_path))
     result = await collector.collect()
     assert result["beads"]["lanes"]["ready"] == ["x1"]
 
@@ -157,3 +169,152 @@ def test_status_transition_events(tmp_store):
     collector._detect_transitions([item_v3])
     events = tmp_store.recent_events(10)
     assert any(e["kind"] == "bead_closed" for e in events)
+
+
+# -- reason_code classification (briefing: "explain why a collector has no
+# data") -------------------------------------------------------------------
+
+
+class _FakeProc:
+    def __init__(self, stdout=b"", stderr=b"", returncode=0, hang=False):
+        self._stdout = stdout
+        self._stderr = stderr
+        self.returncode = returncode
+        self._hang = hang
+
+    async def communicate(self):
+        if self._hang:
+            import asyncio as _asyncio
+
+            await _asyncio.sleep(999)
+        return self._stdout, self._stderr
+
+    def kill(self):
+        pass
+
+    async def wait(self):
+        return None
+
+
+def test_resolve_bd_bin_absolute_path_exists(tmp_path):
+    binp = tmp_path / "bd"
+    binp.write_text("#!/bin/sh\n")
+    binp.chmod(0o755)
+    assert resolve_bd_bin(str(binp)) == str(binp)
+
+
+def test_resolve_bd_bin_absolute_path_missing(tmp_path):
+    assert resolve_bd_bin(str(tmp_path / "no-such-binary")) is None
+
+
+def test_resolve_bd_bin_bare_name_missing():
+    assert resolve_bd_bin("definitely-not-a-real-binary-xyz123") is None
+
+
+@pytest.mark.asyncio
+async def test_collect_dependency_missing_when_bd_not_on_path(tmp_path):
+    env_path = tmp_path / "env"
+    env_path.write_text("")
+    collector = BeadsCollector(bd_bin=str(tmp_path / "no-such-bd-binary"), beads_env=str(env_path))
+    with pytest.raises(CollectorIssue) as exc_info:
+        await collector.collect()
+    issue = exc_info.value
+    assert issue.reason_code == "dependency_missing"
+    assert issue.optional is True
+    assert "no-such-bd-binary" in issue.detail
+
+
+@pytest.mark.asyncio
+async def test_collect_config_missing_when_env_file_absent():
+    collector = BeadsCollector(bd_bin=sys.executable, beads_env="/nonexistent/beads/env")
+    with pytest.raises(CollectorIssue) as exc_info:
+        await collector.collect()
+    issue = exc_info.value
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is True
+    assert "/nonexistent/beads/env" in issue.detail
+
+
+@pytest.mark.asyncio
+async def test_collect_zero_beads_is_success_not_failure(tmp_path, monkeypatch):
+    """bd ran fine and genuinely has zero beads -- this is success with no
+    data, not a failure, and must not raise."""
+    env_path = tmp_path / "env"
+    env_path.write_text("")
+
+    async def fake_run(cmd, timeout=20.0):
+        if " list " in cmd:
+            return "[]"
+        if " stats " in cmd:
+            return json.dumps({"summary": {}})
+        if " ready " in cmd:
+            return "[]"
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(beads_mod, "_run", fake_run)
+    collector = BeadsCollector(bd_bin=sys.executable, beads_env=str(env_path))
+    result = await collector.collect()
+    assert result["beads"]["items"] == []
+    assert result["beads"]["stats"]["open"] == 0
+    assert result["beads"]["lanes"] == {"ready": [], "in_progress": [], "blocked": [], "review": []}
+
+
+@pytest.mark.asyncio
+async def test_run_command_failed_uses_stderr(monkeypatch):
+    async def fake_exec(cmd, **kwargs):
+        return _FakeProc(stderr=b"Error: no beads database found\n", returncode=1)
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    with pytest.raises(CollectorIssue) as exc_info:
+        await beads_mod._run("bd stats --json")
+    issue = exc_info.value
+    assert issue.reason_code == "command_failed"
+    assert "no beads database found" in issue.detail
+    assert issue.optional is False
+
+
+@pytest.mark.asyncio
+async def test_run_command_failed_falls_back_to_stdout_when_stderr_empty(monkeypatch):
+    """Reproduces the fresh-install bug: a failure whose stderr is empty
+    (the dash dot-builtin-abort case, or any tool that writes its error to
+    stdout instead) must not produce a blank reason."""
+
+    async def fake_exec(cmd, **kwargs):
+        return _FakeProc(stdout=b"fatal: something went wrong\n", stderr=b"", returncode=2)
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    with pytest.raises(CollectorIssue) as exc_info:
+        await beads_mod._run("bd stats --json")
+    issue = exc_info.value
+    assert issue.reason_code == "command_failed"
+    assert "fatal: something went wrong" in issue.detail
+
+
+@pytest.mark.asyncio
+async def test_run_empty_output_both_streams_still_has_a_reason(monkeypatch):
+    """Both streams empty (the literal fresh-install "exit 2:" bug) must
+    still produce a non-blank, real reason."""
+
+    async def fake_exec(cmd, **kwargs):
+        return _FakeProc(stdout=b"", stderr=b"", returncode=2)
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    with pytest.raises(CollectorIssue) as exc_info:
+        await beads_mod._run("bd stats --json")
+    issue = exc_info.value
+    assert issue.reason_code == "command_failed"
+    assert issue.detail.strip() != "bd exited 2:"
+    assert "no output" in issue.detail
+
+
+@pytest.mark.asyncio
+async def test_run_timeout_is_unreachable(monkeypatch):
+    async def fake_exec(cmd, **kwargs):
+        return _FakeProc(hang=True)
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    with pytest.raises(CollectorIssue) as exc_info:
+        await beads_mod._run("bd stats --json", timeout=0.02)
+    issue = exc_info.value
+    assert issue.reason_code == "unreachable"
+    assert issue.optional is False

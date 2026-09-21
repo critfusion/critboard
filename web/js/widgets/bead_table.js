@@ -1,4 +1,13 @@
-import { el, fmtDuration, priorityColorVar, loadJSON, saveJSON, mobileLimit, renderWithShowAll } from "../utils.js";
+import {
+  el,
+  fmtDuration,
+  priorityColorVar,
+  loadJSON,
+  saveJSON,
+  mobileLimit,
+  renderWithShowAll,
+  sourceIssueNotice,
+} from "../utils.js";
 import { openBeadModal } from "../detail.js";
 import {
   classifyBeadRouting,
@@ -467,7 +476,8 @@ function fullBuild(container, ctx) {
 
   const items = Array.isArray(ctx.data?.beads?.items) ? ctx.data.beads.items : [];
   if (items.length === 0) {
-    container.appendChild(el("div", { class: "empty-state" }, "No beads."));
+    const issue = sourceIssueNotice(ctx.data?.sources, "beads", "Beads");
+    container.appendChild(issue || el("div", { class: "empty-state" }, "No beads."));
     container.__beadTableUI = null;
     return;
   }

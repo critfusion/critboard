@@ -171,6 +171,32 @@ export function saveJSON(key, value) {
   }
 }
 
+// A collector's structured `sources[key]` health entry (see server
+// collectors/__init__.py's CollectorIssue / SourceHealth) explaining why a
+// panel has no data: reason_code/detail/remedy/optional. Returns null when
+// there is nothing to explain (no entry yet, or the source is healthy) --
+// callers fall through to their normal empty/zero-result rendering in that
+// case. `optional` picks the tone: an unconfigured optional dependency
+// (bd/herdr/ssh never installed or set up) reads as informational, a
+// genuine failure of something that IS configured reads as a warning.
+// Shared by every panel whose collector can fail this way, so the pattern
+// stays one implementation, not one bespoke empty-state per widget.
+export function sourceIssueNotice(sources, key, label) {
+  const s = sources && sources[key];
+  if (!s || s.ok !== false) return null;
+  const optional = !!s.optional;
+  const tone = optional ? "info" : "warn";
+  const headline = optional ? `${label} not configured — panel inactive` : `${label} unavailable`;
+  const detail = s.detail || s.error || "No further detail is available for this failure.";
+  const kids = [
+    el("div", { class: "source-issue-icon", "aria-hidden": "true" }, optional ? "ⓘ" : "⚠"),
+    el("div", { class: "source-issue-title" }, headline),
+    el("div", { class: "source-issue-detail" }, detail),
+  ];
+  if (s.remedy) kids.push(el("div", { class: "source-issue-remedy" }, s.remedy));
+  return el("div", { class: `source-issue source-issue-${tone}` }, kids);
+}
+
 // Mobile row-cap for genuinely unbounded lists (activity feed, commit feed,
 // bead/worktree tables, kanban lanes). `panel.mobile.limit` in
 // config/layout.json overrides `fallback`; both must be a positive number

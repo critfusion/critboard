@@ -19,7 +19,7 @@ import json
 import os
 from datetime import UTC, datetime
 
-from . import BaseCollector, now_iso
+from . import BaseCollector, CollectorIssue, now_iso
 
 _STATUS_MAP = {
     "idle": "idle",
@@ -374,14 +374,29 @@ class AgentsCollector(BaseCollector):
         except OSError:
             proc = None
         if proc is not None:
+            # herdr IS present here (the exec above succeeded), so a failure
+            # from this point on is a real problem with a configured tool,
+            # not an absent optional dependency -- optional=False, unlike
+            # the collector-wide "no herdr at all" case above (which isn't
+            # even an error: it falls through to session-derived agents).
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
-                raise RuntimeError("herdr agent list timed out") from None
+                raise CollectorIssue(
+                    "command_failed", "herdr agent list timed out after 10s",
+                    remedy="Check that herdr is installed correctly and responding "
+                    "(run `herdr agent list` by hand).",
+                ) from None
             if proc.returncode != 0:
-                raise RuntimeError(f"herdr exit {proc.returncode}: {stderr.decode(errors='replace')[:300]}")
+                out_text = stdout.decode(errors="replace").strip()
+                err_text = stderr.decode(errors="replace").strip()
+                detail = err_text[:300] or out_text[:300] or f"(no output on exit {proc.returncode})"
+                raise CollectorIssue(
+                    "command_failed", f"herdr exited {proc.returncode}: {detail}",
+                    remedy="Run `herdr agent list` by hand to see the full error.",
+                )
             raw_agents = parse_herdr_output(stdout.decode(errors="replace"))
         worktrees = self.ctx.latest_worktrees if self.ctx is not None else []
         usage_by_session = self.ctx.usage_by_session if self.ctx is not None else {}

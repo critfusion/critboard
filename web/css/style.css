@@ -318,6 +318,29 @@ body {
    "will be worked" and "will never be worked". */
 .pill-info { color: var(--color-severity-info); border-color: var(--color-severity-info); }
 
+.source-health-pill { cursor: pointer; }
+.source-health-pill:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 2px; }
+
+/* Appended to document.body, positioned with fixed coordinates next to the
+   clicked pill (see source_health.js openPopover) -- NOT inline inside the
+   panel, whose body height is a fixed layout value too short to show
+   wrapped detail text without clipping it. */
+.source-health-popover {
+  position: fixed;
+  z-index: 300;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-bright);
+  border-radius: var(--radius-card);
+  background: var(--color-bg-panel);
+  box-shadow: 0 8px 28px -8px rgba(0, 0, 0, 0.6);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.source-health-detail-key { font-weight: 700; margin-bottom: 4px; }
+.source-health-detail-line { color: var(--color-text-dim); word-break: break-word; }
+.source-health-detail-remedy { color: var(--color-text-faint); margin-top: 4px; }
+
 .status-dot {
   width: 9px; height: 9px; border-radius: 50%; flex: none;
   background: var(--color-status-idle);
@@ -570,6 +593,42 @@ table.dtable th .sort-indicator {
   text-align: center;
   padding: 24px 8px;
 }
+
+/* A collector's structured failure reason, shown in place of an empty panel
+   (see utils.js sourceIssueNotice). Two tones, not one: `-info` for an
+   unconfigured OPTIONAL dependency (a normal state on a fresh install --
+   reads calm, no alarm color) vs `-warn` for a genuine failure of something
+   that IS configured (reads as an actual problem). Never red/crit -- a
+   single collector being down is not the same severity as dispatch being
+   paused (see .dispatch-paused-banner) or a host being unreachable. */
+.source-issue {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 24px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  max-width: 480px;
+  margin: 0 auto;
+}
+.source-issue-icon { font-size: 18px; line-height: 1; }
+.source-issue-title { font-weight: 700; }
+.source-issue-detail {
+  color: var(--color-text-dim);
+  font-size: 11px;
+  word-break: break-word;
+}
+.source-issue-remedy {
+  color: var(--color-text-faint);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.source-issue-info .source-issue-icon,
+.source-issue-info .source-issue-title { color: var(--color-severity-info); }
+.source-issue-warn .source-issue-icon,
+.source-issue-warn .source-issue-title { color: var(--color-status-warn); }
 
 /* ---------- help overlay ---------- */
 

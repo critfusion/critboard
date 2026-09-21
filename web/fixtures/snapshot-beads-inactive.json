@@ -1,0 +1,2095 @@
+{
+  "generated_at": "2026-09-21T13:00:02Z",
+  "host": "localhost",
+  "uptime_s": 512340,
+  "version": {
+    "build": "7f3a9c1",
+    "started_at": "2026-09-12T14:41:00Z"
+  },
+  "sources": {
+    "beads": {
+      "ok": false,
+      "last_ok": null,
+      "last_run": "2026-09-21T12:59:57Z",
+      "duration_ms": 0.8,
+      "error": "dependency_missing: bd is not installed: 'bd' was not found on PATH",
+      "stale": true,
+      "reason_code": "dependency_missing",
+      "detail": "bd is not installed: 'bd' was not found on PATH",
+      "remedy": "Install the bd CLI, or ignore this panel if you do not use beads.",
+      "optional": true
+    },
+    "agents": {
+      "ok": true,
+      "last_ok": "2026-09-18T12:59:55Z",
+      "last_run": "2026-09-18T12:59:57Z",
+      "duration_ms": 12,
+      "error": null,
+      "stale": false
+    },
+    "worktrees": {
+      "ok": true,
+      "last_ok": "2026-09-18T12:59:55Z",
+      "last_run": "2026-09-18T12:59:57Z",
+      "duration_ms": 880,
+      "error": null,
+      "stale": false
+    },
+    "usage": {
+      "ok": true,
+      "last_ok": "2026-09-18T12:59:55Z",
+      "last_run": "2026-09-18T12:59:57Z",
+      "duration_ms": 210,
+      "error": null,
+      "stale": false
+    },
+    "dispatch": {
+      "ok": true,
+      "last_ok": "2026-09-18T12:59:55Z",
+      "last_run": "2026-09-18T12:59:57Z",
+      "duration_ms": 18,
+      "error": null,
+      "stale": false
+    },
+    "system": {
+      "ok": true,
+      "last_ok": "2026-09-18T12:59:55Z",
+      "last_run": "2026-09-18T12:59:57Z",
+      "duration_ms": 6,
+      "error": null,
+      "stale": false
+    }
+  },
+  "beads": {
+    "stats": {},
+    "items": [],
+    "lanes": {
+      "ready": [],
+      "in_progress": [],
+      "blocked": [],
+      "review": []
+    }
+  },
+  "agents": [
+    {
+      "id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+      "kind": "claude",
+      "status": "working",
+      "cwd": "/home/user/repos/dashboard",
+      "repo": "dashboard",
+      "branch": "main",
+      "pane": "w1:p1",
+      "workspace": "w1",
+      "title": "CritBoard Dashboard",
+      "focused": true,
+      "session_id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+      "bead": "demo-fleet-9k2m",
+      "last_activity": "2026-09-18T13:00:00Z",
+      "status_since": "2026-09-18T12:54:00Z",
+      "tokens_today": {
+        "input": 365243,
+        "output": 12296,
+        "cache_read": 4017673,
+        "cache_write": 827572,
+        "total": 5222784
+      },
+      "cost_today_usd": 5.5889,
+      "msg_count_today": 160,
+      "subagents_active": 1,
+      "model": "claude-sonnet-5",
+      "host": "localhost"
+    },
+    {
+      "id": "b71f2a10-3c4d-4e5f-8a9b-1c2d3e4f5061",
+      "kind": "claude",
+      "status": "working",
+      "cwd": "/home/user/repos/demo-game.example",
+      "repo": "demo-game.example",
+      "branch": "feat/economy-tuning",
+      "pane": "w2:p1",
+      "workspace": "w2",
+      "title": "DemoGame Economy",
+      "focused": false,
+      "session_id": "b71f2a10-3c4d-4e5f-8a9b-1c2d3e4f5061",
+      "bead": "demo-fleet-78jr.10",
+      "last_activity": "2026-09-18T12:59:00Z",
+      "status_since": "2026-09-18T12:19:00Z",
+      "tokens_today": {
+        "input": 158393,
+        "output": 19628,
+        "cache_read": 2851074,
+        "cache_write": 822246,
+        "total": 3851341
+      },
+      "cost_today_usd": 23.5417,
+      "msg_count_today": 72,
+      "subagents_active": 2,
+      "model": "claude-opus-5",
+      "host": "localhost"
+    },
+    {
+      "id": "c82e3b21-4d5e-5f6a-9b0c-2d3e4f506172",
+      "kind": "codex",
+      "status": "working",
+      "cwd": "/home/user/repos/demo-lms-content",
+      "repo": "demo-lms-content",
+      "branch": "content/unit-7",
+      "pane": "w3:p1",
+      "workspace": "w3",
+      "title": "CM Academy Content",
+      "focused": false,
+      "session_id": "c82e3b21-4d5e-5f6a-9b0c-2d3e4f506172",
+      "bead": "demo-fleet-3xh8",
+      "last_activity": "2026-09-18T12:58:00Z",
+      "status_since": "2026-09-18T12:42:00Z",
+      "tokens_today": {
+        "input": 384785,
+        "output": 53540,
+        "cache_read": 16930540,
+        "cache_write": 141161,
+        "total": 17510026
+      },
+      "cost_today_usd": 7.566,
+      "msg_count_today": 322,
+      "subagents_active": 0,
+      "model": "gpt-5-codex",
+      "host": "localhost"
+    },
+    {
+      "id": "d93f4c32-5e6f-6a7b-0c1d-3e4f50617283",
+      "kind": "claude",
+      "status": "idle",
+      "cwd": "/home/user/repos/demo-crm",
+      "repo": "demo-crm",
+      "branch": "main",
+      "pane": "w4:p1",
+      "workspace": "w4",
+      "title": "Demo CRM",
+      "focused": false,
+      "session_id": "d93f4c32-5e6f-6a7b-0c1d-3e4f50617283",
+      "bead": null,
+      "last_activity": "2026-09-18T11:26:00Z",
+      "status_since": "2026-09-18T11:26:00Z",
+      "tokens_today": {
+        "input": 251208,
+        "output": 7082,
+        "cache_read": 2763288,
+        "cache_write": 148246,
+        "total": 3169824
+      },
+      "cost_today_usd": 2.6189,
+      "msg_count_today": 131,
+      "subagents_active": 0,
+      "model": "claude-sonnet-4-6",
+      "host": "localhost"
+    },
+    {
+      "id": "ea04d543-6f70-7b8c-1d2e-4f5061728394",
+      "kind": "grok",
+      "status": "working",
+      "cwd": "/home/user/repos/demo-2048",
+      "repo": "demo-2048",
+      "branch": "feat/mail-migration",
+      "pane": "w5:p1",
+      "workspace": "w5",
+      "title": "Ultimate 2048 mail wt",
+      "focused": false,
+      "session_id": "ea04d543-6f70-7b8c-1d2e-4f5061728394",
+      "bead": "demo-fleet-5t2q",
+      "last_activity": "2026-09-18T13:00:00Z",
+      "status_since": "2026-09-18T12:57:00Z",
+      "tokens_today": {
+        "input": 151981,
+        "output": 38118,
+        "cache_read": 1671791,
+        "cache_write": 638508,
+        "total": 2500398
+      },
+      "cost_today_usd": 3.9237,
+      "msg_count_today": 121,
+      "subagents_active": 1,
+      "model": "grok-4-fast",
+      "host": "localhost"
+    },
+    {
+      "id": "fb15e654-7081-8c9d-2e3f-50617283945a",
+      "kind": "claude",
+      "status": "done",
+      "cwd": "/home/user/repos/demo-cue",
+      "repo": "demo-cue",
+      "branch": "main",
+      "pane": "w6:p1",
+      "workspace": "w6",
+      "title": "Demo Cue",
+      "focused": false,
+      "session_id": "fb15e654-7081-8c9d-2e3f-50617283945a",
+      "bead": null,
+      "last_activity": "2026-09-18T12:48:00Z",
+      "status_since": "2026-09-18T12:48:00Z",
+      "tokens_today": {
+        "input": 370726,
+        "output": 50962,
+        "cache_read": 16311944,
+        "cache_write": 489898,
+        "total": 17223530
+      },
+      "cost_today_usd": 2.8691,
+      "msg_count_today": 132,
+      "subagents_active": 0,
+      "model": "claude-haiku-4-5",
+      "host": "host-b"
+    },
+    {
+      "id": "0c26f765-8192-9dae-3f40-6172839455ab",
+      "kind": "claude",
+      "status": "idle",
+      "cwd": "/home/user/repos/demo-garden-app",
+      "repo": "demo-garden-app",
+      "branch": "main",
+      "pane": "w7:p1",
+      "workspace": "w7",
+      "title": "DemoGarden App",
+      "focused": false,
+      "session_id": "0c26f765-8192-9dae-3f40-6172839455ab",
+      "bead": null,
+      "last_activity": "2026-09-18T09:30:00Z",
+      "status_since": "2026-09-18T09:30:00Z",
+      "tokens_today": {
+        "input": 265514,
+        "output": 43618,
+        "cache_read": 7168878,
+        "cache_write": 898749,
+        "total": 8376759
+      },
+      "cost_today_usd": 23.2393,
+      "msg_count_today": 23,
+      "subagents_active": 0,
+      "model": "claude-fable-5-1",
+      "host": "host-b"
+    }
+  ],
+  "worktrees": [
+    {
+      "path": "/home/user/repos/demo-fleet-wt0",
+      "repo": "demo-fleet",
+      "root": "/home/user/repos",
+      "branch": "chore/deps",
+      "head": "977017c",
+      "dirty": 3,
+      "untracked": 0,
+      "staged": 1,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/chore/deps",
+      "last_commit_at": "2026-09-12T08:00:00Z",
+      "last_commit_msg": "chore: bump deps",
+      "last_commit_author": "localhost-claude",
+      "agents": [],
+      "stale_days": 14,
+      "host": "host-b"
+    },
+    {
+      "path": "/srv/demo/repos/demo-game.example",
+      "repo": "demo-game.example",
+      "root": "/srv/demo/repos",
+      "branch": "feat/economy-tuning",
+      "head": "942476d",
+      "dirty": 2,
+      "untracked": 0,
+      "staged": 1,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/feat/economy-tuning",
+      "last_commit_at": "2026-09-12T18:00:00Z",
+      "last_commit_msg": "fix: handle empty response from collector",
+      "last_commit_author": "localhost-codex",
+      "agents": [],
+      "stale_days": 0,
+      "host": "localhost"
+    },
+    {
+      "path": "/home/user/work/demo-game-mobile",
+      "repo": "demo-game-mobile",
+      "root": "/home/user/work",
+      "branch": "fix/flaky-cleanup",
+      "head": "84cc525",
+      "dirty": 2,
+      "untracked": 0,
+      "staged": 0,
+      "ahead": 4,
+      "behind": 0,
+      "upstream": "origin/fix/flaky-cleanup",
+      "last_commit_at": "2026-09-10T02:00:00Z",
+      "last_commit_msg": "wip: economy tuning pass 3",
+      "last_commit_author": "localhost-grok",
+      "agents": [
+        "c82e3b21-4d5e-5f6a-9b0c-2d3e4f506172"
+      ],
+      "stale_days": 0,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/demo-lms",
+      "repo": "demo-lms",
+      "root": "/srv/demo",
+      "branch": "feat/mail-migration",
+      "head": "cc43031",
+      "dirty": 1,
+      "untracked": 0,
+      "staged": 1,
+      "ahead": 2,
+      "behind": 0,
+      "upstream": "origin/feat/mail-migration",
+      "last_commit_at": "2026-09-16T04:00:00Z",
+      "last_commit_msg": "chore: bump deps",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 30,
+      "host": "localhost"
+    },
+    {
+      "path": "/home/user/repos/demo-lms-content",
+      "repo": "demo-lms-content",
+      "root": "/home/user/repos",
+      "branch": "feat/economy-tuning",
+      "head": "a55962b",
+      "dirty": 0,
+      "untracked": 1,
+      "staged": 1,
+      "ahead": 1,
+      "behind": 0,
+      "upstream": "origin/feat/economy-tuning",
+      "last_commit_at": "2026-09-08T20:00:00Z",
+      "last_commit_msg": "docs: update README run instructions",
+      "last_commit_author": "localhost-codex",
+      "agents": [],
+      "stale_days": 1,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/repos/demo-cli-wt5",
+      "repo": "demo-cli",
+      "root": "/srv/demo/repos",
+      "branch": "chore/deps",
+      "head": "bf96dd3",
+      "dirty": 1,
+      "untracked": 0,
+      "staged": 0,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/chore/deps",
+      "last_commit_at": "2026-09-18T03:00:00Z",
+      "last_commit_msg": "fix: handle empty response from collector",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 7,
+      "host": "host-b"
+    },
+    {
+      "path": "/home/user/work/demo-2048",
+      "repo": "demo-2048",
+      "root": "/home/user/work",
+      "branch": "feat/economy-tuning",
+      "head": "c239865",
+      "dirty": 8,
+      "untracked": 0,
+      "staged": 1,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/feat/economy-tuning",
+      "last_commit_at": "2026-09-06T19:00:00Z",
+      "last_commit_msg": "docs: update README run instructions",
+      "last_commit_author": "localhost-codex",
+      "agents": [],
+      "stale_days": 14,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/demo-org.example",
+      "repo": "demo-org.example",
+      "root": "/srv/demo",
+      "branch": "fix/flaky-cleanup",
+      "head": "ba23a5a",
+      "dirty": 3,
+      "untracked": 2,
+      "staged": 1,
+      "ahead": 2,
+      "behind": 0,
+      "upstream": "origin/fix/flaky-cleanup",
+      "last_commit_at": "2026-09-13T17:00:00Z",
+      "last_commit_msg": "fix: handle empty response from collector",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 0,
+      "host": "localhost"
+    },
+    {
+      "path": "/home/user/repos/demo-crm",
+      "repo": "demo-crm",
+      "root": "/home/user/repos",
+      "branch": "chore/deps",
+      "head": "dc83166",
+      "dirty": 3,
+      "untracked": 0,
+      "staged": 1,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/chore/deps",
+      "last_commit_at": "2026-09-08T04:00:00Z",
+      "last_commit_msg": "feat: add spend timeline widget",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 14,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/repos/demo-portal-server",
+      "repo": "demo-portal-server",
+      "root": "/srv/demo/repos",
+      "branch": "main",
+      "head": "a44a56b",
+      "dirty": 5,
+      "untracked": 1,
+      "staged": 0,
+      "ahead": 2,
+      "behind": 1,
+      "upstream": "origin/main",
+      "last_commit_at": "2026-09-02T23:00:00Z",
+      "last_commit_msg": "feat: add spend timeline widget",
+      "last_commit_author": "localhost-claude",
+      "agents": [],
+      "stale_days": 30,
+      "host": "localhost"
+    },
+    {
+      "path": "/home/user/work/demo-mailer-wt10",
+      "repo": "demo-mailer",
+      "root": "/home/user/work",
+      "branch": "content/unit-7",
+      "head": "7b67b42",
+      "dirty": 8,
+      "untracked": 0,
+      "staged": 0,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/content/unit-7",
+      "last_commit_at": "2026-09-13T05:00:00Z",
+      "last_commit_msg": "fix: handle empty response from collector",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 3,
+      "host": "host-b"
+    },
+    {
+      "path": "/srv/demo/demo-mail",
+      "repo": "demo-mail",
+      "root": "/srv/demo",
+      "branch": "chore/deps",
+      "head": "8ca086e",
+      "dirty": 1,
+      "untracked": 0,
+      "staged": 0,
+      "ahead": 2,
+      "behind": 1,
+      "upstream": "origin/chore/deps",
+      "last_commit_at": "2026-09-09T23:00:00Z",
+      "last_commit_msg": "docs: update README run instructions",
+      "last_commit_author": "localhost-grok",
+      "agents": [],
+      "stale_days": 0,
+      "host": "localhost"
+    },
+    {
+      "path": "/home/user/repos/demo-web",
+      "repo": "demo-web",
+      "root": "/home/user/repos",
+      "branch": "feat/x",
+      "head": "a327c9b",
+      "dirty": 1,
+      "untracked": 1,
+      "staged": 0,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/feat/x",
+      "last_commit_at": "2026-09-11T20:00:00Z",
+      "last_commit_msg": "feat: add spend timeline widget",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 14,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/repos/demo-cue",
+      "repo": "demo-cue",
+      "root": "/srv/demo/repos",
+      "branch": "content/unit-7",
+      "head": "ab43fe4",
+      "dirty": 0,
+      "untracked": 0,
+      "staged": 0,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/content/unit-7",
+      "last_commit_at": "2026-09-05T20:00:00Z",
+      "last_commit_msg": "chore: bump deps",
+      "last_commit_author": "localhost-claude",
+      "agents": [],
+      "stale_days": 7,
+      "host": "localhost"
+    },
+    {
+      "path": "/home/user/work/demo-live",
+      "repo": "demo-live",
+      "root": "/home/user/work",
+      "branch": "feat/mail-migration",
+      "head": "8a33b22",
+      "dirty": 5,
+      "untracked": 0,
+      "staged": 1,
+      "ahead": 1,
+      "behind": 1,
+      "upstream": "origin/feat/mail-migration",
+      "last_commit_at": "2026-09-02T12:00:00Z",
+      "last_commit_msg": "feat: add spend timeline widget",
+      "last_commit_author": "localhost-codex",
+      "agents": [],
+      "stale_days": 1,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/demo-garden-app-wt15",
+      "repo": "demo-garden-app",
+      "root": "/srv/demo",
+      "branch": "main",
+      "head": "5394a7e",
+      "dirty": 1,
+      "untracked": 1,
+      "staged": 0,
+      "ahead": 0,
+      "behind": 1,
+      "upstream": "origin/main",
+      "last_commit_at": "2026-09-06T22:00:00Z",
+      "last_commit_msg": "docs: update README run instructions",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 30,
+      "host": "host-b"
+    },
+    {
+      "path": "/home/user/repos/demo-order-viewer",
+      "repo": "demo-order-viewer",
+      "root": "/home/user/repos",
+      "branch": "feat/x",
+      "head": "35d4e18",
+      "dirty": 2,
+      "untracked": 0,
+      "staged": 0,
+      "ahead": 4,
+      "behind": 0,
+      "upstream": "origin/feat/x",
+      "last_commit_at": "2026-09-12T12:00:00Z",
+      "last_commit_msg": "refactor: split registry lookup",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 1,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/repos/sunrise-day",
+      "repo": "sunrise-day",
+      "root": "/srv/demo/repos",
+      "branch": "main",
+      "head": "4e520ab",
+      "dirty": 5,
+      "untracked": 1,
+      "staged": 0,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/main",
+      "last_commit_at": "2026-09-15T18:00:00Z",
+      "last_commit_msg": "docs: update README run instructions",
+      "last_commit_author": "localhost-claude",
+      "agents": [],
+      "stale_days": 30,
+      "host": "localhost"
+    },
+    {
+      "path": "/home/user/work/demo-lms-trig",
+      "repo": "demo-lms-trig",
+      "root": "/home/user/work",
+      "branch": "content/unit-7",
+      "head": "af89af4",
+      "dirty": 0,
+      "untracked": 1,
+      "staged": 1,
+      "ahead": 4,
+      "behind": 0,
+      "upstream": "origin/content/unit-7",
+      "last_commit_at": "2026-09-15T19:00:00Z",
+      "last_commit_msg": "docs: update README run instructions",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 3,
+      "host": "localhost"
+    },
+    {
+      "path": "/srv/demo/dashboard",
+      "repo": "dashboard",
+      "root": "/srv/demo",
+      "branch": "feat/mail-migration",
+      "head": "c86045d",
+      "dirty": 5,
+      "untracked": 0,
+      "staged": 0,
+      "ahead": 0,
+      "behind": 0,
+      "upstream": "origin/feat/mail-migration",
+      "last_commit_at": "2026-09-18T00:00:00Z",
+      "last_commit_msg": "feat: add spend timeline widget",
+      "last_commit_author": "dev",
+      "agents": [],
+      "stale_days": 3,
+      "host": "localhost"
+    }
+  ],
+  "usage": {
+    "totals": {
+      "today": {
+        "input": 1495000,
+        "output": 175000,
+        "cache_read": 72700000,
+        "cache_write": 1158000,
+        "total": 75528000,
+        "cost_usd": 36.97,
+        "messages": 718
+      },
+      "7d": {
+        "input": 9568000,
+        "output": 1120000,
+        "cache_read": 465280000,
+        "cache_write": 7411200,
+        "total": 483379200,
+        "cost_usd": 236.69,
+        "messages": 4595
+      },
+      "30d": {
+        "input": 36627500,
+        "output": 4287500,
+        "cache_read": 1781150000,
+        "cache_write": 28371000,
+        "total": 1850436000,
+        "cost_usd": 906.07,
+        "messages": 17591
+      },
+      "all": {
+        "input": 84243250,
+        "output": 9861250,
+        "cache_read": 4096644999,
+        "cache_write": 65253299,
+        "total": 4256002799,
+        "cost_usd": 2083.96,
+        "messages": 40459
+      }
+    },
+    "by_model": [
+      {
+        "model": "claude-opus-5",
+        "window": "today",
+        "input": 180000,
+        "output": 22000,
+        "cache_read": 6200000,
+        "cache_write": 140000,
+        "cost_usd": 16.27,
+        "messages": 110
+      },
+      {
+        "model": "claude-sonnet-5",
+        "window": "today",
+        "input": 420000,
+        "output": 48000,
+        "cache_read": 14800000,
+        "cache_write": 310000,
+        "cost_usd": 7.58,
+        "messages": 260
+      },
+      {
+        "model": "claude-haiku-4-5",
+        "window": "today",
+        "input": 650000,
+        "output": 70000,
+        "cache_read": 41500000,
+        "cache_write": 520000,
+        "cost_usd": 5.8,
+        "messages": 190
+      },
+      {
+        "model": "claude-sonnet-4-6",
+        "window": "today",
+        "input": 210000,
+        "output": 26000,
+        "cache_read": 9100000,
+        "cache_write": 160000,
+        "cost_usd": 5.07,
+        "messages": 140
+      },
+      {
+        "model": "claude-fable-5-1",
+        "window": "today",
+        "input": 35000,
+        "output": 9000,
+        "cache_read": 1100000,
+        "cache_write": 28000,
+        "cost_usd": 2.25,
+        "messages": 18
+      },
+      {
+        "model": "claude-opus-5",
+        "window": "7d",
+        "input": 1152000,
+        "output": 140800,
+        "cache_read": 39680000,
+        "cache_write": 896000,
+        "cost_usd": 104.16,
+        "messages": 704
+      },
+      {
+        "model": "claude-sonnet-5",
+        "window": "7d",
+        "input": 2688000,
+        "output": 307200,
+        "cache_read": 94720000,
+        "cache_write": 1984000,
+        "cost_usd": 48.53,
+        "messages": 1664
+      },
+      {
+        "model": "claude-haiku-4-5",
+        "window": "7d",
+        "input": 4160000,
+        "output": 448000,
+        "cache_read": 265600000,
+        "cache_write": 3328000,
+        "cost_usd": 37.12,
+        "messages": 1216
+      },
+      {
+        "model": "claude-sonnet-4-6",
+        "window": "7d",
+        "input": 1344000,
+        "output": 166400,
+        "cache_read": 58240000,
+        "cache_write": 1024000,
+        "cost_usd": 32.48,
+        "messages": 896
+      },
+      {
+        "model": "claude-fable-5-1",
+        "window": "7d",
+        "input": 224000,
+        "output": 57600,
+        "cache_read": 7040000,
+        "cache_write": 179200,
+        "cost_usd": 14.4,
+        "messages": 115
+      },
+      {
+        "model": "claude-opus-5",
+        "window": "30d",
+        "input": 4410000,
+        "output": 539000,
+        "cache_read": 151900000,
+        "cache_write": 3430000,
+        "cost_usd": 398.74,
+        "messages": 2695
+      },
+      {
+        "model": "claude-sonnet-5",
+        "window": "30d",
+        "input": 10290000,
+        "output": 1176000,
+        "cache_read": 362600000,
+        "cache_write": 7595000,
+        "cost_usd": 185.77,
+        "messages": 6370
+      },
+      {
+        "model": "claude-haiku-4-5",
+        "window": "30d",
+        "input": 15925000,
+        "output": 1715000,
+        "cache_read": 1016750000,
+        "cache_write": 12740000,
+        "cost_usd": 142.1,
+        "messages": 4655
+      },
+      {
+        "model": "claude-sonnet-4-6",
+        "window": "30d",
+        "input": 5145000,
+        "output": 637000,
+        "cache_read": 222950000,
+        "cache_write": 3920000,
+        "cost_usd": 124.34,
+        "messages": 3430
+      },
+      {
+        "model": "claude-fable-5-1",
+        "window": "30d",
+        "input": 857500,
+        "output": 220500,
+        "cache_read": 26950000,
+        "cache_write": 686000,
+        "cost_usd": 55.12,
+        "messages": 441
+      }
+    ],
+    "by_project": [
+      {
+        "project": "demo-web",
+        "window": "today",
+        "total": 420015,
+        "cost_usd": 9.9,
+        "messages": 39
+      },
+      {
+        "project": "demo-game.example",
+        "window": "today",
+        "total": 333752,
+        "cost_usd": 0.58,
+        "messages": 34
+      },
+      {
+        "project": "demo-garden-app",
+        "window": "today",
+        "total": 517821,
+        "cost_usd": 4.14,
+        "messages": 120
+      },
+      {
+        "project": "demo-org.example",
+        "window": "today",
+        "total": 172792,
+        "cost_usd": 11.61,
+        "messages": 45
+      },
+      {
+        "project": "demo-2048",
+        "window": "today",
+        "total": 468203,
+        "cost_usd": 7.81,
+        "messages": 61
+      },
+      {
+        "project": "demo-cue",
+        "window": "today",
+        "total": 812526,
+        "cost_usd": 11.78,
+        "messages": 78
+      },
+      {
+        "project": "demo-order-viewer",
+        "window": "today",
+        "total": 447235,
+        "cost_usd": 11.29,
+        "messages": 24
+      },
+      {
+        "project": "demo-cli",
+        "window": "today",
+        "total": 373903,
+        "cost_usd": 2.39,
+        "messages": 43
+      },
+      {
+        "project": "demo-game.example",
+        "window": "7d",
+        "total": 1327578,
+        "cost_usd": 28.84,
+        "messages": 498
+      },
+      {
+        "project": "demo-lms",
+        "window": "7d",
+        "total": 1795872,
+        "cost_usd": 19.68,
+        "messages": 600
+      },
+      {
+        "project": "demo-cue",
+        "window": "7d",
+        "total": 3343434,
+        "cost_usd": 1.92,
+        "messages": 678
+      },
+      {
+        "project": "demo-mail",
+        "window": "7d",
+        "total": 3987642,
+        "cost_usd": 50.02,
+        "messages": 624
+      },
+      {
+        "project": "demo-mailer",
+        "window": "7d",
+        "total": 5237040,
+        "cost_usd": 48.88,
+        "messages": 336
+      },
+      {
+        "project": "demo-2048",
+        "window": "7d",
+        "total": 3313488,
+        "cost_usd": 6.71,
+        "messages": 570
+      },
+      {
+        "project": "demo-portal-server",
+        "window": "7d",
+        "total": 2677434,
+        "cost_usd": 45.55,
+        "messages": 564
+      },
+      {
+        "project": "demo-crm",
+        "window": "7d",
+        "total": 1384074,
+        "cost_usd": 52.33,
+        "messages": 288
+      },
+      {
+        "project": "demo-order-viewer",
+        "window": "30d",
+        "total": 5136340,
+        "cost_usd": 55.98,
+        "messages": 2090
+      },
+      {
+        "project": "demo-portal-server",
+        "window": "30d",
+        "total": 10946364,
+        "cost_usd": 180.94,
+        "messages": 704
+      },
+      {
+        "project": "demo-cue",
+        "window": "30d",
+        "total": 16399108,
+        "cost_usd": 153.09,
+        "messages": 1342
+      },
+      {
+        "project": "demo-mailer",
+        "window": "30d",
+        "total": 14840166,
+        "cost_usd": 221.2,
+        "messages": 1056
+      },
+      {
+        "project": "demo-web",
+        "window": "30d",
+        "total": 8818700,
+        "cost_usd": 60.7,
+        "messages": 2420
+      },
+      {
+        "project": "demo-mail",
+        "window": "30d",
+        "total": 15579476,
+        "cost_usd": 162.75,
+        "messages": 1122
+      },
+      {
+        "project": "demo-lms-content",
+        "window": "30d",
+        "total": 12926650,
+        "cost_usd": 120.32,
+        "messages": 2112
+      },
+      {
+        "project": "demo-crm",
+        "window": "30d",
+        "total": 7129804,
+        "cost_usd": 138.18,
+        "messages": 2442
+      }
+    ],
+    "by_agent": [
+      {
+        "agent_id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+        "window": "today",
+        "total": 5222784,
+        "cost_usd": 5.5889
+      },
+      {
+        "agent_id": "b71f2a10-3c4d-4e5f-8a9b-1c2d3e4f5061",
+        "window": "today",
+        "total": 3851341,
+        "cost_usd": 23.5417
+      },
+      {
+        "agent_id": "c82e3b21-4d5e-5f6a-9b0c-2d3e4f506172",
+        "window": "today",
+        "total": 17510026,
+        "cost_usd": 7.566
+      },
+      {
+        "agent_id": "d93f4c32-5e6f-6a7b-0c1d-3e4f50617283",
+        "window": "today",
+        "total": 3169824,
+        "cost_usd": 2.6189
+      },
+      {
+        "agent_id": "ea04d543-6f70-7b8c-1d2e-4f5061728394",
+        "window": "today",
+        "total": 2500398,
+        "cost_usd": 3.9237
+      },
+      {
+        "agent_id": "fb15e654-7081-8c9d-2e3f-50617283945a",
+        "window": "today",
+        "total": 17223530,
+        "cost_usd": 2.8691
+      },
+      {
+        "agent_id": "0c26f765-8192-9dae-3f40-6172839455ab",
+        "window": "today",
+        "total": 8376759,
+        "cost_usd": 23.2393
+      }
+    ],
+    "timeline": [
+      {
+        "t": "2026-09-16T13:00:00Z",
+        "input": 51731,
+        "output": 6629,
+        "cache_read": 936791,
+        "cache_write": 461052,
+        "cost_usd": 2.5189
+      },
+      {
+        "t": "2026-09-16T14:00:00Z",
+        "input": 35067,
+        "output": 5533,
+        "cache_read": 843949,
+        "cache_write": 181852,
+        "cost_usd": 1.2474
+      },
+      {
+        "t": "2026-09-16T15:00:00Z",
+        "input": 45249,
+        "output": 5801,
+        "cache_read": 908919,
+        "cache_write": 92674,
+        "cost_usd": 0.9301
+      },
+      {
+        "t": "2026-09-16T16:00:00Z",
+        "input": 13855,
+        "output": 2925,
+        "cache_read": 403248,
+        "cache_write": 1011811,
+        "cost_usd": 4.4762
+      },
+      {
+        "t": "2026-09-16T17:00:00Z",
+        "input": 15946,
+        "output": 4065,
+        "cache_read": 552872,
+        "cache_write": 91998,
+        "cost_usd": 0.6887
+      },
+      {
+        "t": "2026-09-16T18:00:00Z",
+        "input": 42882,
+        "output": 4602,
+        "cache_read": 891235,
+        "cache_write": 158472,
+        "cost_usd": 1.1752
+      },
+      {
+        "t": "2026-09-16T19:00:00Z",
+        "input": 13039,
+        "output": 6326,
+        "cache_read": 517930,
+        "cache_write": 476742,
+        "cost_usd": 2.3176
+      },
+      {
+        "t": "2026-09-16T20:00:00Z",
+        "input": 31166,
+        "output": 2461,
+        "cache_read": 1448806,
+        "cache_write": 138585,
+        "cost_usd": 1.2196
+      },
+      {
+        "t": "2026-09-16T21:00:00Z",
+        "input": 14969,
+        "output": 2954,
+        "cache_read": 636782,
+        "cache_write": 129730,
+        "cost_usd": 0.857
+      },
+      {
+        "t": "2026-09-16T22:00:00Z",
+        "input": 47421,
+        "output": 5766,
+        "cache_read": 2255538,
+        "cache_write": 828725,
+        "cost_usd": 4.4988
+      },
+      {
+        "t": "2026-09-16T23:00:00Z",
+        "input": 53841,
+        "output": 7270,
+        "cache_read": 1833581,
+        "cache_write": 167575,
+        "cost_usd": 1.6161
+      },
+      {
+        "t": "2026-09-17T00:00:00Z",
+        "input": 10814,
+        "output": 2144,
+        "cache_read": 343056,
+        "cache_write": 60374,
+        "cost_usd": 0.4382
+      },
+      {
+        "t": "2026-09-17T01:00:00Z",
+        "input": 14039,
+        "output": 1396,
+        "cache_read": 299464,
+        "cache_write": 180628,
+        "cost_usd": 0.9265
+      },
+      {
+        "t": "2026-09-17T02:00:00Z",
+        "input": 12608,
+        "output": 2008,
+        "cache_read": 387907,
+        "cache_write": 48203,
+        "cost_usd": 0.4062
+      },
+      {
+        "t": "2026-09-17T03:00:00Z",
+        "input": 7707,
+        "output": 562,
+        "cache_read": 171759,
+        "cache_write": 32227,
+        "cost_usd": 0.227
+      },
+      {
+        "t": "2026-09-17T04:00:00Z",
+        "input": 8316,
+        "output": 1534,
+        "cache_read": 141217,
+        "cache_write": 177033,
+        "cost_usd": 0.8409
+      },
+      {
+        "t": "2026-09-17T05:00:00Z",
+        "input": 13368,
+        "output": 1883,
+        "cache_read": 191326,
+        "cache_write": 38341,
+        "cost_usd": 0.2963
+      },
+      {
+        "t": "2026-09-17T06:00:00Z",
+        "input": 11325,
+        "output": 1273,
+        "cache_read": 220226,
+        "cache_write": 38906,
+        "cost_usd": 0.2936
+      },
+      {
+        "t": "2026-09-17T07:00:00Z",
+        "input": 16215,
+        "output": 1626,
+        "cache_read": 600584,
+        "cache_write": 317764,
+        "cost_usd": 1.6178
+      },
+      {
+        "t": "2026-09-17T08:00:00Z",
+        "input": 14335,
+        "output": 1198,
+        "cache_read": 175062,
+        "cache_write": 35829,
+        "cost_usd": 0.2727
+      },
+      {
+        "t": "2026-09-17T09:00:00Z",
+        "input": 14171,
+        "output": 2192,
+        "cache_read": 656450,
+        "cache_write": 38855,
+        "cost_usd": 0.4683
+      },
+      {
+        "t": "2026-09-17T10:00:00Z",
+        "input": 14091,
+        "output": 1546,
+        "cache_read": 475107,
+        "cache_write": 174621,
+        "cost_usd": 0.9652
+      },
+      {
+        "t": "2026-09-17T11:00:00Z",
+        "input": 6962,
+        "output": 1315,
+        "cache_read": 90818,
+        "cache_write": 35125,
+        "cost_usd": 0.2199
+      },
+      {
+        "t": "2026-09-17T12:00:00Z",
+        "input": 13168,
+        "output": 1249,
+        "cache_read": 236255,
+        "cache_write": 41032,
+        "cost_usd": 0.3133
+      },
+      {
+        "t": "2026-09-17T13:00:00Z",
+        "input": 18313,
+        "output": 5461,
+        "cache_read": 237534,
+        "cache_write": 683694,
+        "cost_usd": 3.0915
+      },
+      {
+        "t": "2026-09-17T14:00:00Z",
+        "input": 37181,
+        "output": 1462,
+        "cache_read": 1306502,
+        "cache_write": 83540,
+        "cost_usd": 0.9416
+      },
+      {
+        "t": "2026-09-17T15:00:00Z",
+        "input": 32745,
+        "output": 1617,
+        "cache_read": 839835,
+        "cache_write": 94479,
+        "cost_usd": 0.8132
+      },
+      {
+        "t": "2026-09-17T16:00:00Z",
+        "input": 26919,
+        "output": 6395,
+        "cache_read": 690433,
+        "cache_write": 941447,
+        "cost_usd": 4.3724
+      },
+      {
+        "t": "2026-09-17T17:00:00Z",
+        "input": 48739,
+        "output": 2975,
+        "cache_read": 728581,
+        "cache_write": 66791,
+        "cost_usd": 0.7264
+      },
+      {
+        "t": "2026-09-17T18:00:00Z",
+        "input": 36102,
+        "output": 7999,
+        "cache_read": 888057,
+        "cache_write": 157620,
+        "cost_usd": 1.2011
+      },
+      {
+        "t": "2026-09-17T19:00:00Z",
+        "input": 46549,
+        "output": 5659,
+        "cache_read": 1822504,
+        "cache_write": 1083720,
+        "cost_usd": 5.414
+      },
+      {
+        "t": "2026-09-17T20:00:00Z",
+        "input": 21412,
+        "output": 1416,
+        "cache_read": 374405,
+        "cache_write": 82175,
+        "cost_usd": 0.5617
+      },
+      {
+        "t": "2026-09-17T21:00:00Z",
+        "input": 41720,
+        "output": 5069,
+        "cache_read": 828005,
+        "cache_write": 164722,
+        "cost_usd": 1.1828
+      },
+      {
+        "t": "2026-09-17T22:00:00Z",
+        "input": 45929,
+        "output": 2407,
+        "cache_read": 1555197,
+        "cache_write": 938506,
+        "cost_usd": 4.6599
+      },
+      {
+        "t": "2026-09-17T23:00:00Z",
+        "input": 17747,
+        "output": 6785,
+        "cache_read": 829316,
+        "cache_write": 79566,
+        "cost_usd": 0.7795
+      },
+      {
+        "t": "2026-09-18T00:00:00Z",
+        "input": 4346,
+        "output": 1055,
+        "cache_read": 158127,
+        "cache_write": 63117,
+        "cost_usd": 0.3493
+      },
+      {
+        "t": "2026-09-18T01:00:00Z",
+        "input": 9354,
+        "output": 1901,
+        "cache_read": 137839,
+        "cache_write": 280388,
+        "cost_usd": 1.2825
+      },
+      {
+        "t": "2026-09-18T02:00:00Z",
+        "input": 12467,
+        "output": 613,
+        "cache_read": 496302,
+        "cache_write": 58263,
+        "cost_usd": 0.465
+      },
+      {
+        "t": "2026-09-18T03:00:00Z",
+        "input": 12105,
+        "output": 654,
+        "cache_read": 573999,
+        "cache_write": 55218,
+        "cost_usd": 0.4789
+      },
+      {
+        "t": "2026-09-18T04:00:00Z",
+        "input": 8687,
+        "output": 1299,
+        "cache_read": 220133,
+        "cache_write": 238841,
+        "cost_usd": 1.1257
+      },
+      {
+        "t": "2026-09-18T05:00:00Z",
+        "input": 8606,
+        "output": 2184,
+        "cache_read": 358043,
+        "cache_write": 24749,
+        "cost_usd": 0.2878
+      },
+      {
+        "t": "2026-09-18T06:00:00Z",
+        "input": 16970,
+        "output": 1734,
+        "cache_read": 709913,
+        "cache_write": 51828,
+        "cost_usd": 0.5431
+      },
+      {
+        "t": "2026-09-18T07:00:00Z",
+        "input": 9879,
+        "output": 1940,
+        "cache_read": 461912,
+        "cache_write": 185768,
+        "cost_usd": 1.0006
+      },
+      {
+        "t": "2026-09-18T08:00:00Z",
+        "input": 14910,
+        "output": 1530,
+        "cache_read": 438442,
+        "cache_write": 39600,
+        "cost_usd": 0.3875
+      },
+      {
+        "t": "2026-09-18T09:00:00Z",
+        "input": 13868,
+        "output": 963,
+        "cache_read": 591632,
+        "cache_write": 57382,
+        "cost_usd": 0.5041
+      },
+      {
+        "t": "2026-09-18T10:00:00Z",
+        "input": 5169,
+        "output": 2251,
+        "cache_read": 107407,
+        "cache_write": 229559,
+        "cost_usd": 1.051
+      },
+      {
+        "t": "2026-09-18T11:00:00Z",
+        "input": 12239,
+        "output": 1195,
+        "cache_read": 159513,
+        "cache_write": 58292,
+        "cost_usd": 0.3553
+      },
+      {
+        "t": "2026-09-18T12:00:00Z",
+        "input": 6454,
+        "output": 845,
+        "cache_read": 262819,
+        "cache_write": 35315,
+        "cost_usd": 0.2723
+      }
+    ],
+    "burn": {
+      "usd_per_hour_1h": 5.65,
+      "usd_per_hour_24h": 4.1,
+      "projected_month_usd": 1180.2,
+      "tokens_per_min_5m": 612400.0
+    },
+    "cache_hit_ratio_today": 0.87,
+    "block": {
+      "started_at": "2026-09-18T11:00:00Z",
+      "ends_at": "2026-09-18T16:00:00Z",
+      "tokens": 38412600,
+      "cost_usd": 41.27,
+      "pct_elapsed": 0.4
+    },
+    "budget": {
+      "monthly_usd": 2000,
+      "spent_mtd_usd": 412.55,
+      "pct": 0.206,
+      "projected_month_usd": 1180.2
+    },
+    "by_host": [
+      {
+        "host": "localhost",
+        "total": 110902955,
+        "cost_usd": 76.931033,
+        "messages": 526,
+        "window": "today"
+      },
+      {
+        "host": "host-b",
+        "total": 5227530,
+        "cost_usd": 1.69151,
+        "messages": 51,
+        "window": "today"
+      },
+      {
+        "host": "localhost",
+        "total": 1088386968,
+        "cost_usd": 700.278938,
+        "messages": 2727,
+        "window": "7d"
+      },
+      {
+        "host": "host-b",
+        "total": 29109152,
+        "cost_usd": 24.952559,
+        "messages": 241,
+        "window": "7d"
+      },
+      {
+        "host": "localhost",
+        "total": 8395515100,
+        "cost_usd": 5893.645694,
+        "messages": 18999,
+        "window": "30d"
+      },
+      {
+        "host": "host-b",
+        "total": 622816993,
+        "cost_usd": 634.183368,
+        "messages": 2760,
+        "window": "30d"
+      }
+    ]
+  },
+  "dispatch": {
+    "routes": [
+      {
+        "label": "needs-codex",
+        "kind": "codex",
+        "paused": false,
+        "precheck": null
+      },
+      {
+        "label": "needs-frontend",
+        "kind": "claude",
+        "paused": false,
+        "precheck": "npm test"
+      },
+      {
+        "label": "needs-review",
+        "kind": "grok",
+        "paused": true,
+        "precheck": null
+      },
+      {
+        "label": "needs-backend",
+        "kind": "claude",
+        "paused": false,
+        "precheck": null
+      },
+      {
+        "label": "owner",
+        "kind": "human",
+        "paused": false,
+        "precheck": null
+      }
+    ],
+    "paused_all": false,
+    "recent": [
+      {
+        "t": "2026-09-18T12:58:00Z",
+        "line": "woke claude for demo-fleet-9k2m (dashboard)"
+      },
+      {
+        "t": "2026-09-18T12:46:00Z",
+        "line": "woke codex for demo-fleet-3xh8 (demo-lms-content)"
+      },
+      {
+        "t": "2026-09-18T12:21:00Z",
+        "line": "woke grok for demo-fleet-5t2q (demo-2048)"
+      },
+      {
+        "t": "2026-09-18T12:05:00Z",
+        "line": "paused route needs-review (waiting on qa-bot)"
+      },
+      {
+        "t": "2026-09-18T11:59:00Z",
+        "line": "woke claude for demo-fleet-78jr.10 (demo-game.example)"
+      },
+      {
+        "t": "2026-09-18T11:30:00Z",
+        "line": "closed demo-fleet-r5t3 (demo-web)"
+      },
+      {
+        "t": "2026-09-18T11:00:00Z",
+        "line": "woke claude for demo-fleet-a91c (demo-crm)"
+      },
+      {
+        "t": "2026-09-18T10:35:00Z",
+        "line": "dispatch precheck failed: npm test (demo-crm) -- retry scheduled"
+      }
+    ]
+  },
+  "system": {
+    "load1": 3.82,
+    "load5": 3.14,
+    "load15": 2.65,
+    "cpu_count": 16,
+    "mem_used_gb": 41.6,
+    "mem_total_gb": 64.0,
+    "disks": [
+      {
+        "mount": "/",
+        "used_gb": 210.0,
+        "total_gb": 500.0,
+        "pct": 42.0
+      },
+      {
+        "mount": "/srv",
+        "used_gb": 812.0,
+        "total_gb": 2000.0,
+        "pct": 40.6
+      }
+    ]
+  },
+  "events": [
+    {
+      "t": "2026-09-18T12:59:00Z",
+      "kind": "agent_status",
+      "severity": "info",
+      "text": "agent dashboard (claude) -> working",
+      "ref": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5"
+    },
+    {
+      "t": "2026-09-18T12:58:00Z",
+      "kind": "commit",
+      "severity": "info",
+      "text": "demo-fleet-9k2m: pushed 'feat: add agent_grid widget' to dashboard",
+      "ref": "demo-fleet-9k2m"
+    },
+    {
+      "t": "2026-09-18T12:54:00Z",
+      "kind": "bead_status",
+      "severity": "info",
+      "text": "demo-fleet-9k2m -> in_progress",
+      "ref": "demo-fleet-9k2m"
+    },
+    {
+      "t": "2026-09-18T12:46:00Z",
+      "kind": "dispatch",
+      "severity": "info",
+      "text": "woke codex for demo-fleet-3xh8",
+      "ref": "demo-fleet-3xh8"
+    },
+    {
+      "t": "2026-09-18T12:42:00Z",
+      "kind": "bead_claimed",
+      "severity": "info",
+      "text": "demo-fleet-3xh8 claimed by demo-lms-codex",
+      "ref": "demo-fleet-3xh8"
+    },
+    {
+      "t": "2026-09-18T12:35:00Z",
+      "kind": "alert",
+      "severity": "warn",
+      "text": "worktree demo-crm has 8 dirty files, no commit in 3 days",
+      "ref": "demo-crm"
+    },
+    {
+      "t": "2026-09-18T12:27:00Z",
+      "kind": "bead_created",
+      "severity": "info",
+      "text": "new bead demo-fleet-k8w4: DemoGarden watering schedule bug",
+      "ref": "demo-fleet-k8w4"
+    },
+    {
+      "t": "2026-09-18T12:21:00Z",
+      "kind": "dispatch",
+      "severity": "info",
+      "text": "woke grok for demo-fleet-5t2q",
+      "ref": "demo-fleet-5t2q"
+    },
+    {
+      "t": "2026-09-18T12:19:00Z",
+      "kind": "agent_status",
+      "severity": "info",
+      "text": "agent demo-game-economy (claude) -> working",
+      "ref": "b71f2a10-3c4d-4e5f-8a9b-1c2d3e4f5061"
+    },
+    {
+      "t": "2026-09-18T12:12:00Z",
+      "kind": "alert",
+      "severity": "dev",
+      "text": "collector worktrees duration 880ms, approaching 60s interval budget",
+      "ref": null
+    },
+    {
+      "t": "2026-09-18T12:05:00Z",
+      "kind": "dispatch",
+      "severity": "warn",
+      "text": "paused route needs-review (waiting on qa-bot)",
+      "ref": null
+    },
+    {
+      "t": "2026-09-18T11:59:00Z",
+      "kind": "bead_status",
+      "severity": "info",
+      "text": "demo-fleet-78jr.10 -> in_progress",
+      "ref": "demo-fleet-78jr.10"
+    },
+    {
+      "t": "2026-09-18T11:50:00Z",
+      "kind": "commit",
+      "severity": "info",
+      "text": "demo-game.example: pushed 'wip: economy tuning pass 3'",
+      "ref": null
+    },
+    {
+      "t": "2026-09-18T11:38:00Z",
+      "kind": "bead_status",
+      "severity": "warn",
+      "text": "demo-fleet-x2l4 -> blocked",
+      "ref": "demo-fleet-x2l4"
+    },
+    {
+      "t": "2026-09-18T11:30:00Z",
+      "kind": "bead_closed",
+      "severity": "info",
+      "text": "demo-fleet-r5t3 closed (demo-web)",
+      "ref": "demo-fleet-r5t3"
+    },
+    {
+      "t": "2026-09-18T11:19:00Z",
+      "kind": "agent_status",
+      "severity": "info",
+      "text": "agent demo-cue (claude) -> done",
+      "ref": "fb15e654-7081-8c9d-2e3f-50617283945a"
+    },
+    {
+      "t": "2026-09-18T11:00:00Z",
+      "kind": "dispatch",
+      "severity": "info",
+      "text": "woke claude for demo-fleet-a91c",
+      "ref": "demo-fleet-a91c"
+    },
+    {
+      "t": "2026-09-18T10:47:00Z",
+      "kind": "bead_created",
+      "severity": "info",
+      "text": "new bead demo-fleet-h6y1: demo cue timing tests",
+      "ref": "demo-fleet-h6y1"
+    },
+    {
+      "t": "2026-09-18T10:35:00Z",
+      "kind": "alert",
+      "severity": "warn",
+      "text": "dispatch precheck failed: npm test (demo-crm)",
+      "ref": "demo-fleet-a91c"
+    },
+    {
+      "t": "2026-09-18T10:20:00Z",
+      "kind": "commit",
+      "severity": "info",
+      "text": "demo-2048: pushed 'fix: mail parser edge case' to demo-2048-wt-mail",
+      "ref": null
+    },
+    {
+      "t": "2026-09-18T10:05:00Z",
+      "kind": "bead_status",
+      "severity": "info",
+      "text": "demo-fleet-m4k7 -> review",
+      "ref": "demo-fleet-m4k7"
+    },
+    {
+      "t": "2026-09-18T09:50:00Z",
+      "kind": "agent_status",
+      "severity": "warn",
+      "text": "agent demo-garden-app (claude) -> idle for 3h",
+      "ref": "0c26f765-8192-9dae-3f40-6172839455ab"
+    },
+    {
+      "t": "2026-09-18T09:35:00Z",
+      "kind": "bead_claimed",
+      "severity": "info",
+      "text": "demo-fleet-q7v2 claimed by localhost-claude",
+      "ref": "demo-fleet-q7v2"
+    },
+    {
+      "t": "2026-09-18T09:20:00Z",
+      "kind": "commit",
+      "severity": "info",
+      "text": "demo-org.example: pushed 'feat: SEO gate tier-1 fixes'",
+      "ref": null
+    }
+  ],
+  "hosts": [
+    {
+      "name": "localhost",
+      "mode": "local",
+      "ok": true,
+      "last_ok": "2026-09-18T13:00:00Z",
+      "error": null,
+      "duration_ms": 0.0,
+      "reachable": true,
+      "agents": 5,
+      "worktrees": 16,
+      "tokens_today": 110575568,
+      "cost_today_usd": 76.715142
+    },
+    {
+      "name": "host-b",
+      "mode": "ssh",
+      "ok": true,
+      "last_ok": "2026-09-18T12:59:40Z",
+      "error": null,
+      "duration_ms": 1371.0,
+      "reachable": true,
+      "agents": 2,
+      "worktrees": 4,
+      "tokens_today": 5227530,
+      "cost_today_usd": 1.69151
+    },
+    {
+      "name": "host-c",
+      "mode": "ssh",
+      "ok": false,
+      "last_ok": "2026-09-18T08:12:03Z",
+      "error": "Permission denied (publickey)",
+      "duration_ms": 812.0,
+      "reachable": false,
+      "agents": 0,
+      "worktrees": 0,
+      "tokens_today": 0,
+      "cost_today_usd": 0.0
+    }
+  ],
+  "analytics": {
+    "errors": {
+      "window": "7d",
+      "top_errors": [
+        {
+          "kind": "other",
+          "tool": "Bash",
+          "count": 58,
+          "last_seen": "2026-09-18T15:22:29Z",
+          "pct": 0.4028,
+          "example": "<tool_use_error>Blocked: sleep 45 followed by: curl -s --max-time 20 http://10.0.0.5:9999/api/snapshot ..."
+        },
+        {
+          "kind": "command_failed",
+          "tool": "Bash",
+          "count": 39,
+          "last_seen": "2026-09-18T14:16:28Z",
+          "pct": 0.2708,
+          "example": "Exit code 144"
+        },
+        {
+          "kind": "file_not_found",
+          "tool": "Bash",
+          "count": 24,
+          "last_seen": "2026-09-18T15:16:15Z",
+          "pct": 0.1667,
+          "example": "Exit code 2 -- ls: cannot access '/tmp/POISON2.db': No such file or directory"
+        },
+        {
+          "kind": "permission_denied",
+          "tool": "Bash",
+          "count": 16,
+          "last_seen": "2026-09-18T15:25:37Z",
+          "pct": 0.1111,
+          "example": "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Credential Exploration]."
+        },
+        {
+          "kind": "invalid_json",
+          "tool": "Bash",
+          "count": 4,
+          "last_seen": "2026-09-18T15:15:46Z",
+          "pct": 0.0278,
+          "example": "Exit code 1 Traceback (most recent call last): json.load(sys.stdin) ..."
+        },
+        {
+          "kind": "permission_denied",
+          "tool": "Agent",
+          "count": 1,
+          "last_seen": "2026-09-18T13:21:04Z",
+          "pct": 0.0069,
+          "example": "Permission for this action was denied by the Claude Code auto mode classifier."
+        }
+      ],
+      "by_tool": [
+        {
+          "tool": "Bash",
+          "errors": 141,
+          "calls": 2386,
+          "error_rate": 0.0591
+        },
+        {
+          "tool": "Agent",
+          "errors": 2,
+          "calls": 164,
+          "error_rate": 0.0122
+        },
+        {
+          "tool": "TaskStop",
+          "errors": 1,
+          "calls": 4,
+          "error_rate": 0.25
+        },
+        {
+          "tool": "Read",
+          "errors": 0,
+          "calls": 67,
+          "error_rate": 0.0
+        },
+        {
+          "tool": "SendMessage",
+          "errors": 0,
+          "calls": 40,
+          "error_rate": 0.0
+        },
+        {
+          "tool": "Edit",
+          "errors": 0,
+          "calls": 25,
+          "error_rate": 0.0
+        },
+        {
+          "tool": "Grep",
+          "errors": 0,
+          "calls": 63,
+          "error_rate": 0.0
+        }
+      ],
+      "trouble_files": [
+        {
+          "path": "/home/user/work/dashboard/server/critdash/collectors/remote.py",
+          "errors": 6,
+          "tools": [
+            "Bash",
+            "Edit"
+          ]
+        },
+        {
+          "path": "/home/user/repos/demo-game.example/app/models.py",
+          "errors": 3,
+          "tools": [
+            "Bash"
+          ]
+        }
+      ],
+      "api_errors": [
+        {
+          "kind": "authentication_failed",
+          "count": 10,
+          "last_seen": "2026-09-18T12:16:39Z"
+        }
+      ],
+      "total_errors": 144,
+      "truncated": false
+    },
+    "tools": {
+      "window": "7d",
+      "usage": [
+        {
+          "tool": "Bash",
+          "calls": 2384,
+          "pct": 0.8521,
+          "avg_duration_ms": null,
+          "errors": 141
+        },
+        {
+          "tool": "Agent",
+          "calls": 162,
+          "pct": 0.0586,
+          "avg_duration_ms": null,
+          "errors": 2
+        },
+        {
+          "tool": "Read",
+          "calls": 67,
+          "pct": 0.0239,
+          "avg_duration_ms": null,
+          "errors": 0
+        },
+        {
+          "tool": "Grep",
+          "calls": 63,
+          "pct": 0.0225,
+          "avg_duration_ms": null,
+          "errors": 0
+        },
+        {
+          "tool": "SendMessage",
+          "calls": 40,
+          "pct": 0.0143,
+          "avg_duration_ms": null,
+          "errors": 0
+        },
+        {
+          "tool": "Edit",
+          "calls": 25,
+          "pct": 0.0089,
+          "avg_duration_ms": null,
+          "errors": 0
+        },
+        {
+          "tool": "Write",
+          "calls": 24,
+          "pct": 0.0086,
+          "avg_duration_ms": null,
+          "errors": 0
+        }
+      ],
+      "decisions": {
+        "accepted": 0,
+        "rejected": 0,
+        "total": 0
+      }
+    },
+    "subagents": {
+      "window": "7d",
+      "totals": {
+        "main_cost_usd": 724.07,
+        "sidechain_cost_usd": 0.0,
+        "sidechain_share": 0.0
+      },
+      "sessions": [
+        {
+          "session_id": "1dc87a84-446d-477e-9e45-fcb5dd1a4971",
+          "host": "localhost",
+          "project": "demo-web",
+          "main_cost_usd": 47.986724,
+          "sidechain_cost_usd": 0.0,
+          "sidechain_share": 0.0,
+          "sidechain_messages": 0,
+          "model_mix": [
+            "claude-opus-4-8"
+          ]
+        },
+        {
+          "session_id": "6e86009f-a72b-4bec-ac0a-071c9bc11bd2",
+          "host": "localhost",
+          "project": "demo-lms",
+          "main_cost_usd": 42.032852,
+          "sidechain_cost_usd": 0.0,
+          "sidechain_share": 0.0,
+          "sidechain_messages": 0,
+          "model_mix": [
+            "claude-opus-5"
+          ]
+        },
+        {
+          "session_id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+          "host": "localhost",
+          "project": "dashboard",
+          "main_cost_usd": 21.857753,
+          "sidechain_cost_usd": 0.0,
+          "sidechain_share": 0.0,
+          "sidechain_messages": 0,
+          "model_mix": [
+            "claude-opus-5"
+          ]
+        },
+        {
+          "session_id": "250005d0-194b-4ace-942d-1402dbac8cd1",
+          "host": "localhost",
+          "project": "ffw",
+          "main_cost_usd": 7.268408,
+          "sidechain_cost_usd": 0.0,
+          "sidechain_share": 0.0,
+          "sidechain_messages": 0,
+          "model_mix": [
+            "claude-opus-5"
+          ]
+        }
+      ]
+    },
+    "productivity": {
+      "commits_7d": 6696,
+      "commits_30d": 9742,
+      "lines_added_7d": 2295826,
+      "lines_removed_7d": 154351,
+      "files_changed_7d": 33221,
+      "by_repo": [
+        {
+          "repo": "demo-web",
+          "commits": 730,
+          "lines_added": 225782,
+          "lines_removed": 15810
+        },
+        {
+          "repo": "pr3-codex-wave14",
+          "commits": 365,
+          "lines_added": 112891,
+          "lines_removed": 7905
+        },
+        {
+          "repo": "pr3-codex-wave13",
+          "commits": 364,
+          "lines_added": 112891,
+          "lines_removed": 7905
+        },
+        {
+          "repo": "pr3-opencode-wave8",
+          "commits": 335,
+          "lines_added": 112060,
+          "lines_removed": 7647
+        },
+        {
+          "repo": "dashboard",
+          "commits": 44,
+          "lines_added": 4210,
+          "lines_removed": 980
+        }
+      ],
+      "truncated": true
+    }
+  }
+}

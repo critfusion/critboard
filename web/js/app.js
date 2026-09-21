@@ -4,16 +4,23 @@ import * as modal from "./modal.js";
 import { setupSettingsGear } from "./settings.js";
 
 // ---------------- data source resolution ----------------
-// Two ways to run against the fixture instead of the live API (documented
-// in README.md): open web/dev.html, or add ?fixture=1 (or ?fixture=degraded)
-// to index.html's URL.
+// Three ways to run against a fixture instead of the live API (documented
+// in README.md): open web/dev.html, or add ?fixture=1, ?fixture=degraded,
+// or ?fixture=beads-inactive to index.html's URL. beads-inactive is
+// otherwise-healthy data with only the beads collector reporting an
+// unconfigured optional dependency (ok:false, optional:true) -- the "no bd
+// on this laptop" case, as opposed to snapshot-degraded's "everything is
+// down".
+const FIXTURE_FILES = {
+  degraded: "fixtures/snapshot-degraded.json",
+  "beads-inactive": "fixtures/snapshot-beads-inactive.json",
+};
 
 const qs = new URLSearchParams(location.search);
 const fixtureFlag = window.__DASHBOARD_FIXTURE__ === true || qs.has("fixture");
 const fixtureName = qs.get("fixture");
 const FIXTURE_MODE = fixtureFlag;
-const FIXTURE_PATH =
-  fixtureName === "degraded" ? "fixtures/snapshot-degraded.json" : "fixtures/snapshot.json";
+const FIXTURE_PATH = FIXTURE_FILES[fixtureName] || "fixtures/snapshot.json";
 
 const SNAPSHOT_URL = "/api/snapshot";
 const STREAM_URL = "/api/stream";

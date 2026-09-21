@@ -19,9 +19,47 @@ from typing import Any
 
 logger = logging.getLogger("critdash.collectors")
 
+# The small, fixed vocabulary every collector classifies its failures into --
+# kept short and meaningful rather than growing one code per collector:
+#   dependency_missing -- an external binary this collector shells out to
+#                          is not installed / not on PATH.
+#   config_missing      -- a config file this collector needs (e.g. an env
+#                          file it sources) does not exist.
+#   command_failed       -- the external command ran and exited non-zero (or
+#                          produced output the collector couldn't use); the
+#                          real stderr/stdout is in `detail`, never guessed.
+#   unreachable           -- the command timed out or otherwise indicates the
+#                          thing it talks to over the network isn't
+#                          responding.
+REASON_CODES = ("dependency_missing", "config_missing", "command_failed", "unreachable")
+
 
 def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+class CollectorIssue(Exception):
+    """Raise from `collect()` to report a structured, actionable failure
+    instead of a bare exception string reaching the browser.
+
+    reason_code: one of REASON_CODES above.
+    detail: the real, specific reason -- a path that was checked, a binary
+        name, or actual (trimmed) command output. Never a guess.
+    remedy: what to do about it, in plain language. Leave it None rather
+        than invent one for a failure mode the code cannot classify.
+    optional: True when this is an unconfigured *optional* dependency (a
+        normal state on a fresh install -- e.g. bd/herdr/ssh not installed
+        or not set up yet). False for a genuine failure of something that IS
+        configured (the binary exists, ran, and broke) -- the frontend uses
+        this to pick an informational tone vs. a warning one.
+    """
+
+    def __init__(self, reason_code: str, detail: str, remedy: str | None = None, optional: bool = False):
+        self.reason_code = reason_code
+        self.detail = detail
+        self.remedy = remedy
+        self.optional = optional
+        super().__init__(detail)
 
 
 @dataclass
@@ -32,6 +70,10 @@ class SourceHealth:
     duration_ms: float = 0.0
     error: str | None = None
     stale: bool = True
+    reason_code: str | None = None
+    detail: str | None = None
+    remedy: str | None = None
+    optional: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -41,6 +83,10 @@ class SourceHealth:
             "duration_ms": self.duration_ms,
             "error": self.error,
             "stale": self.stale,
+            "reason_code": self.reason_code,
+            "detail": self.detail,
+            "remedy": self.remedy,
+            "optional": self.optional,
         }
 
 
@@ -104,16 +150,37 @@ class Scheduler:
             duration_ms = (time.monotonic() - start) * 1000.0
             st.health.ok = True
             st.health.error = None
+            st.health.reason_code = None
+            st.health.detail = None
+            st.health.remedy = None
+            st.health.optional = False
             st.health.duration_ms = round(duration_ms, 2)
             st.health.last_ok = run_ts
             st.last_ok_ts = time.monotonic()
             st.health.stale = False
             if self._on_result is not None:
                 self._on_result(collector.name, data)
+        except CollectorIssue as exc:
+            duration_ms = (time.monotonic() - start) * 1000.0
+            st.health.ok = False
+            st.health.error = f"{exc.reason_code}: {exc.detail}"
+            st.health.reason_code = exc.reason_code
+            st.health.detail = exc.detail
+            st.health.remedy = exc.remedy
+            st.health.optional = exc.optional
+            st.health.duration_ms = round(duration_ms, 2)
+            # An unconfigured optional dependency is a normal state on a
+            # fresh install, not a problem worth a warning-level log line.
+            log = logger.info if exc.optional else logger.warning
+            log("collector %s: %s", collector.name, st.health.error)
         except Exception as exc:  # noqa: BLE001 - collectors must never kill the scheduler
             duration_ms = (time.monotonic() - start) * 1000.0
             st.health.ok = False
             st.health.error = f"{type(exc).__name__}: {exc}"
+            st.health.reason_code = None
+            st.health.detail = None
+            st.health.remedy = None
+            st.health.optional = False
             st.health.duration_ms = round(duration_ms, 2)
             logger.warning("collector %s failed: %s", collector.name, st.health.error)
         finally:

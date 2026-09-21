@@ -19,6 +19,10 @@ EMPTY_SOURCE_HEALTH = {
     "duration_ms": 0.0,
     "error": None,
     "stale": True,
+    "reason_code": None,
+    "detail": None,
+    "remedy": None,
+    "optional": False,
 }
 
 

@@ -178,7 +178,12 @@ class RemoteCollector(BaseCollector):
         start = loop.time()
 
         if probe_source is None:
-            return self._fail_entry(name, probe_read_error or "probe script unavailable", 0.0)
+            return self._fail_entry(
+                name, probe_read_error or "probe script unavailable", 0.0,
+                reason_code="command_failed",
+                remedy="This is a local file-read problem (remote_probe.py), "
+                "not the remote host -- check the critdash install.",
+            )
 
         # ssh reassembles trailing argv into one string and hands it to the
         # remote login shell, which re-parses and glob-expands it -- so each
@@ -197,7 +202,16 @@ class RemoteCollector(BaseCollector):
                 stderr=asyncio.subprocess.PIPE,
             )
         except OSError as exc:
-            return self._fail_entry(name, f"{type(exc).__name__}: {exc}", 0.0)
+            # ssh itself is not installed / not executable -- an optional
+            # dependency absent, same "normal on a fresh install" treatment
+            # as beads/herdr (see collectors/__init__.py's CollectorIssue).
+            return self._fail_entry(
+                name, f"ssh is not available: {type(exc).__name__}: {exc}", 0.0,
+                reason_code="dependency_missing",
+                remedy="Install an ssh client on this host, or remove this host "
+                "from config/sources.json if you don't use remote hosts.",
+                optional=True,
+            )
 
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -207,22 +221,29 @@ class RemoteCollector(BaseCollector):
             proc.kill()
             await proc.wait()
             duration_ms = (loop.time() - start) * 1000.0
-            return self._fail_entry(name, f"ssh timed out after {self.ssh_timeout_s}s", duration_ms)
+            return self._fail_entry(
+                name, f"ssh timed out after {self.ssh_timeout_s}s", duration_ms,
+                reason_code="unreachable",
+                remedy=f"Check that {target} is powered on and reachable (try `ssh {target}` by hand).",
+            )
 
         duration_ms = (loop.time() - start) * 1000.0
 
         if proc.returncode != 0:
             err = stderr.decode(errors="replace").strip()[:500] or f"ssh exit {proc.returncode}"
-            return self._fail_entry(name, err, duration_ms)
+            return self._fail_entry(name, err, duration_ms, reason_code="command_failed")
 
         try:
             lines = [ln for ln in stdout.decode(errors="replace").strip().splitlines() if ln.strip()]
             payload = json.loads(lines[-1]) if lines else {}
         except (json.JSONDecodeError, IndexError) as exc:
-            return self._fail_entry(name, f"bad probe output: {type(exc).__name__}: {exc}", duration_ms)
+            return self._fail_entry(
+                name, f"bad probe output: {type(exc).__name__}: {exc}", duration_ms,
+                reason_code="command_failed",
+            )
 
         if payload.get("error"):
-            return self._fail_entry(name, str(payload["error"]), duration_ms)
+            return self._fail_entry(name, str(payload["error"]), duration_ms, reason_code="command_failed")
 
         return self._ok_entry(name, payload, duration_ms)
 
@@ -244,6 +265,7 @@ class RemoteCollector(BaseCollector):
             "error": None, "duration_ms": 0.0, "reachable": True,
             "agents": n_agents, "worktrees": n_worktrees,
             "tokens_today": tokens_today, "cost_today_usd": cost_today,
+            "reason_code": None, "detail": None, "remedy": None, "optional": False,
         }
 
     def _ok_entry(self, name: str, payload: dict, duration_ms: float) -> dict:
@@ -276,6 +298,7 @@ class RemoteCollector(BaseCollector):
             "duration_ms": round(duration_ms, 2), "reachable": True,
             "agents": len(agents), "worktrees": len(worktrees),
             "tokens_today": tokens_today, "cost_today_usd": cost_today,
+            "reason_code": None, "detail": None, "remedy": None, "optional": False,
         }
 
     def _persist_analytics_buckets(self, name: str, payload: dict) -> None:
@@ -308,7 +331,18 @@ class RemoteCollector(BaseCollector):
         if rows := payload.get("kimi_error_buckets"):
             self.store.upsert_remote_kimi_error_buckets([{**r, "host": name} for r in rows])
 
-    def _fail_entry(self, name: str, error: str, duration_ms: float) -> dict:
+    def _fail_entry(
+        self, name: str, error: str, duration_ms: float,
+        reason_code: str | None = "command_failed", remedy: str | None = None, optional: bool = False,
+    ) -> dict:
+        """Same reason_code/detail/remedy/optional vocabulary CollectorIssue
+        uses for beads/herdr (see collectors/__init__.py), applied per-host
+        here instead of per-collector -- RemoteCollector.collect() itself
+        never raises (one host's failure must never block another's probe),
+        so there is no scheduler-level exception to classify; each host
+        entry in the `hosts` snapshot key carries its own classification
+        instead. `detail` is kept equal to `error` (the existing field every
+        caller/test already reads) rather than a second free-text field."""
         ts = now_iso()
         prev = self.ctx.remote_hosts.get(name) if self.ctx is not None else None
         if self.ctx is not None:
@@ -325,6 +359,7 @@ class RemoteCollector(BaseCollector):
             "error": error, "duration_ms": round(duration_ms, 2), "reachable": False,
             "agents": agents_n, "worktrees": worktrees_n,
             "tokens_today": tokens_today, "cost_today_usd": cost_today,
+            "reason_code": reason_code, "detail": error, "remedy": remedy, "optional": optional,
         }
 
     def _host_today_totals(self, name: str) -> tuple[int, float]:
