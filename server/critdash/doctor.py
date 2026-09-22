@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import detect
-from .collectors.beads import check_beads_workspace
+from .collectors.beads import NO_WORKSPACE_REMEDY, check_beads_workspace, check_sync_remote, resolve_any_workspace
 from .config import DEFAULT_SOURCES, load_config
 
 # (key, kind, collector, canonical binary name for kind == "binary")
@@ -31,6 +31,7 @@ PATH_SPECS: list[tuple[str, str, str, str | None]] = [
     ("bd_bin", "binary", "beads", "bd"),
     ("beads_env", "file", "beads", None),
     ("beads_dir", "dir", "beads", None),
+    ("beads_workspace", "workspace", "beads", None),
     ("herdr_bin", "binary", "agents (pane detection) / remote", "herdr"),
     ("claude_projects_dir", "dir", "agents / usage / analytics", None),
     ("kimi_dir", "dir", "kimi / quota (kimi)", None),
@@ -91,12 +92,14 @@ class PathCheck:
     configured: str | None
     configured_exists: bool
     detected: str | None
-    state: str  # "ok" | "mismatch" | "missing" | "not_workspace"
+    state: str  # "ok" | "mismatch" | "missing" | "not_workspace" | "no_workspace"
     override: bool = False
     # Extra human-readable detail for a state the other fields don't fully
-    # explain -- today only set for beads_dir's "not_workspace" state (bd's
-    # own reason it rejected the directory, from check_beads_workspace).
-    # None everywhere else.
+    # explain: beads_dir's "not_workspace" state (bd's own reason it
+    # rejected the directory), beads_workspace's "not_workspace"/
+    # "no_workspace" states (same idea, see _check_beads_workspace), and
+    # beads_workspace's "ok" state when a sync.remote WARNING applies
+    # (never blocking -- state stays "ok"). None everywhere else.
     note: str | None = None
 
     @property
@@ -107,10 +110,14 @@ class PathCheck:
     def blocking(self) -> bool:
         """Whether this check's state represents a real, fixable problem
         that should make doctor/CI fail -- mismatch (configured path is
-        stale) or not_workspace (beads_dir exists but bd rejects it).
-        "missing" alone never blocks: an unconfigured optional tool is a
-        normal end state (see INSTALL.md's MISSING vs MISMATCH)."""
-        return self.state in ("mismatch", "not_workspace")
+        stale), not_workspace (beads_dir exists but bd rejects it), or
+        no_workspace (beads_dir is unset AND bd resolves no workspace
+        anywhere either -- the beads_workspace check, issue #3: the beads
+        panel flatly cannot work, which is worth more than a quiet
+        "missing"). "missing" alone never blocks: an unconfigured optional
+        tool is a normal end state (see INSTALL.md's MISSING vs
+        MISMATCH)."""
+        return self.state in ("mismatch", "not_workspace", "no_workspace")
 
 
 def _check_binary(
@@ -169,6 +176,74 @@ def _check_beads_dir(configured: str | None, bd_bin_resolved: str | None) -> Pat
     return _finish("beads_dir", "dir", "beads", configured, configured_exists, detected)
 
 
+def _check_beads_workspace(bd_bin_resolved: str | None, beads_dir_configured: str | None) -> PathCheck:
+    """Issue #3's main gap, as its own row: "bd binary installed" is not
+    "a valid workspace exists", and the plain beads_dir row (MISSING when
+    unset) doesn't say which one is true. This asks bd directly whether a
+    workspace resolves AT ALL on this host, distinct from validating one
+    specific configured beads_dir:
+
+    - No `bd` resolved anywhere -- MISSING; bd_bin's own row already
+      explains why, so this one stays terse.
+    - beads_dir IS configured -- reuses the exact same
+      check_beads_workspace() call the beads_dir row makes (deliberately
+      redundant with it -- this row's job is "does beads work at all",
+      the beads_dir row's job is "is THIS path right").
+    - beads_dir is NOT configured -- runs `bd where --json` with no
+      BEADS_DIR override (resolve_any_workspace), i.e. exactly what a real
+      collector run resolves today. If that finds a workspace, this is a
+      genuinely OK, non-blocking state (an installing agent can copy
+      `detected` straight into beads_dir) -- never "mismatch", since
+      nothing was configured wrong. If it finds nothing, that's
+      "no_workspace": a real, blocking problem (see PathCheck.blocking)
+      with the same remedy _run()'s config_missing classification uses,
+      because the beads panel flatly cannot work.
+
+    Either way a resolved workspace exists, also checks for an inherited
+    `sync.remote` (issue #3's other report -- see
+    critdash.collectors.beads.check_sync_remote) and surfaces it as a
+    WARNING via `note` on an otherwise-OK row -- never blocking."""
+    if not bd_bin_resolved:
+        return PathCheck(
+            key="beads_workspace", kind="workspace", collector="beads",
+            configured=None, configured_exists=False, detected=None,
+            state="missing", note="bd itself is not installed -- see the bd_bin row above",
+        )
+    if beads_dir_configured:
+        expanded = str(Path(beads_dir_configured).expanduser())
+        ok, detail = check_beads_workspace(bd_bin_resolved, expanded)
+        if not ok:
+            return PathCheck(
+                key="beads_workspace", kind="workspace", collector="beads",
+                configured=beads_dir_configured, configured_exists=False,
+                detected=None, state="not_workspace", note=detail,
+            )
+        resolved_dir = expanded
+    else:
+        ok, detail_or_path = resolve_any_workspace(bd_bin_resolved)
+        if not ok:
+            return PathCheck(
+                key="beads_workspace", kind="workspace", collector="beads",
+                configured=None, configured_exists=False, detected=None,
+                state="no_workspace", note=detail_or_path,
+            )
+        resolved_dir = detail_or_path
+
+    note = None
+    remote = check_sync_remote(bd_bin_resolved, resolved_dir)
+    if remote:
+        note = (
+            f"WARNING: this workspace has a sync.remote configured ({remote}) -- "
+            "likely inherited from the checkout's git remote at `bd init` time. "
+            "A local-only install should remove it: bd config unset sync.remote"
+        )
+    return PathCheck(
+        key="beads_workspace", kind="workspace", collector="beads",
+        configured=beads_dir_configured, configured_exists=bool(beads_dir_configured),
+        detected=resolved_dir, state="ok", note=note,
+    )
+
+
 def _check_file(key: str, collector: str, configured: str | None) -> PathCheck:
     configured_exists = bool(configured) and Path(configured).expanduser().is_file()
     detected = detect.detect_file(configured)
@@ -201,16 +276,32 @@ def build_checks(sources: dict, overrides: dict[str, str] | None = None) -> list
     # (workspace check skipped, existence-only) if bd itself isn't
     # resolvable anywhere on this machine.
     bd_bin_resolved: str | None = None
+    # beads_dir's own configured value from THIS SAME scan -- "beads_dir"
+    # always precedes "beads_workspace" in PATH_SPECS, so both are already
+    # known by the time _check_beads_workspace needs them.
+    beads_dir_configured: str | None = None
     for key, kind, collector, bin_name in PATH_SPECS:
         configured = sources.get(key)
         configured = configured if isinstance(configured, str) and configured else None
         if key == "beads_dir":
+            beads_dir_configured = configured
             checks.append(_check_beads_dir(configured, bd_bin_resolved))
+        elif key == "beads_workspace":
+            checks.append(_check_beads_workspace(bd_bin_resolved, beads_dir_configured))
         elif kind == "binary":
             c = _check_binary(key, collector, bin_name, configured, overrides.get(key))
             checks.append(c)
             if key == "bd_bin":
-                bd_bin_resolved = c.configured if c.configured_exists else c.detected
+                # Actually usable as argv[0] for a real subprocess -- unlike
+                # `detected` (already an absolute path from detect.py),
+                # `configured` can be the raw config string verbatim (e.g.
+                # "~/.local/bin/bd"), which subprocess.run() does NOT
+                # expand (that's a shell-only behaviour). Both
+                # check_beads_workspace and resolve_any_workspace shell out
+                # to this value directly, so it must be expanded here, not
+                # left for them to discover as ENOENT.
+                raw = c.configured if c.configured_exists else c.detected
+                bd_bin_resolved = os.path.expanduser(raw) if raw else None
         elif kind == "dir":
             checks.append(_check_dir(key, collector, configured))
         else:
@@ -401,6 +492,13 @@ def main() -> int:
         )
     else:
         print(format_python_line(detect.select_python()))
+    # sync.remote WARNING: an otherwise-OK beads_workspace row can still
+    # carry a note (see _check_beads_workspace) -- never blocking (state
+    # stays "ok"), so this prints unconditionally, not just when code != 0.
+    sync_remote_warnings = [c for c in checks if c.key == "beads_workspace" and c.state == "ok" and c.note]
+    for c in sync_remote_warnings:
+        print()
+        print(f"doctor: {c.note}")
     code = exit_code(checks)
     if code != 0:
         mismatched = [c.key for c in checks if c.mismatch]
@@ -414,13 +512,19 @@ def main() -> int:
         not_workspace = [c for c in checks if c.state == "not_workspace"]
         for c in not_workspace:
             print()
-            print(f"doctor: NOT_WORKSPACE -- beads_dir ({c.configured}) exists but bd does not "
+            print(f"doctor: NOT_WORKSPACE -- {c.key} ({c.configured}) exists but bd does not "
                   f"recognize it as a workspace: {c.note}")
             print(
                 "Run `bd where --json` from a directory where bd already works and use its "
                 "\"path\" field -- that's the .beads directory ITSELF, not its parent, and not "
                 "~/.beads unless that genuinely is a workspace."
             )
+        no_workspace = [c for c in checks if c.state == "no_workspace"]
+        for c in no_workspace:
+            print()
+            print(f"doctor: NO_WORKSPACE -- bd does not resolve a beads workspace anywhere on "
+                  f"this host: {c.note}")
+            print(NO_WORKSPACE_REMEDY)
     return code
 
 

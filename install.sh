@@ -548,7 +548,7 @@ if [ -f "$SOURCES_JSON" ]; then
     if run_doctor; then
         log "doctor: no mismatches -- every configured path either exists or has no working alternative anyway."
     else
-        log "doctor: WARNING -- see the MISMATCH/NOT_WORKSPACE row(s) and any follow-up lines printed above. MISMATCH means a path in config/sources.json is missing but critdash.detect found a working one at a different location (its DETECTED column) -- that tool IS installed, just not where sources.json says. NOT_WORKSPACE means beads_dir exists but bd itself does not recognize it as a workspace -- see the printed remedy. Either way, update the matching key in config/sources.json, or that panel stays inactive even though the tool works."
+        log "doctor: WARNING -- see the MISMATCH/NOT_WORKSPACE/NO_WORKSPACE row(s) and any follow-up lines printed above. MISMATCH means a path in config/sources.json is missing but critdash.detect found a working one at a different location (its DETECTED column) -- that tool IS installed, just not where sources.json says. NOT_WORKSPACE means beads_dir exists but bd itself does not recognize it as a workspace -- see the printed remedy. NO_WORKSPACE (beads_workspace row) means beads_dir is unset AND bd resolves no workspace anywhere either -- the beads panel cannot work at all until one is created (see the printed remedy, or INSTALL.md's 'Setting up beads'). Either way, update the matching key in config/sources.json, or that panel stays inactive even though the tool works."
     fi
 else
     [ -f "$SOURCES_EXAMPLE" ] || fail "config/sources.example.json is missing -- cannot bootstrap a config."

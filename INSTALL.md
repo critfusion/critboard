@@ -48,16 +48,16 @@ Each `checks[]` entry:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `key` | string | `bd_bin`, `herdr_bin`, `git`, `uv`, `ssh`, `curl`, `claude_projects_dir`, `kimi_dir`, `overlord_dir`, `beads_env`, `beads_dir`, `opencode_auth_path`, `grok_auth_path`, `codex_auth_path`. |
-| `kind` | string | `"binary"` \| `"dir"` \| `"file"`. |
+| `key` | string | `bd_bin`, `herdr_bin`, `git`, `uv`, `ssh`, `curl`, `claude_projects_dir`, `kimi_dir`, `overlord_dir`, `beads_env`, `beads_dir`, `beads_workspace`, `opencode_auth_path`, `grok_auth_path`, `codex_auth_path`. |
+| `kind` | string | `"binary"` \| `"dir"` \| `"file"` \| `"workspace"` (`beads_workspace` only). |
 | `collector` | string | Which panel/feature this powers, e.g. `"beads"`, `"agents (pane detection) / remote"`. |
-| `configured` | string or null | The value in `config/sources.json`, or the `--<key>` override if one was supplied, or `null` if unset. |
+| `configured` | string or null | The value in `config/sources.json`, or the `--<key>` override if one was supplied, or `null` if unset. For `beads_workspace` this mirrors `beads_dir` (not a sources.json key of its own). |
 | `configured_exists` | bool | Whether `configured` itself resolves on this machine. |
-| `detected` | string or null | What detection found instead. Always `null` when `override` is `true` -- detection is skipped entirely, not merely preferred. |
-| `state` | string | `"ok"` \| `"missing"` \| `"mismatch"` \| `"not_workspace"` (`beads_dir` only) -- see "MISSING vs MISMATCH". |
+| `detected` | string or null | What detection found instead. Always `null` when `override` is `true` -- detection is skipped entirely, not merely preferred. For `beads_workspace` in the `"ok"` state, this is the workspace path `bd` actually resolved -- copy it verbatim into `beads_dir` if you want to pin it. |
+| `state` | string | `"ok"` \| `"missing"` \| `"mismatch"` \| `"not_workspace"` (`beads_dir`/`beads_workspace`) \| `"no_workspace"` (`beads_workspace` only) -- see "MISSING vs MISMATCH". |
 | `required` | bool | `true` only for `git` (`python`, at the top level, is also always required). Every other key is optional -- its collector/panel just stays inactive without it. |
 | `override` | bool | `true` if this key's value came from an explicit `--<key>` flag. |
-| `note` | string or null | Extra human-readable detail a state above doesn't already carry. Only ever set for `beads_dir`'s `"not_workspace"` state (bd's own reason, from `bd where --json`, for rejecting the directory); `null` for every other key/state. |
+| `note` | string or null | Extra human-readable detail a state above doesn't already carry: `beads_dir`'s/`beads_workspace`'s `"not_workspace"`/`"no_workspace"` states (bd's own reason it rejected/found nothing), and `beads_workspace`'s `"ok"` state when it carries a non-blocking sync.remote WARNING (see "Setting up beads" below). `null` for every other key/state. |
 
 `python` (top level -- same idea, different shape, since it's a floor over
 several candidates rather than one configured path):
@@ -99,7 +99,7 @@ Trimmed example:
 of JSON (`--probe` alone, without `--json`, prints the same table). `make
 doctor` runs `--doctor`.
 
-### MISSING vs MISMATCH vs NOT_WORKSPACE -- read this before installing anything
+### MISSING vs MISMATCH vs NOT_WORKSPACE vs NO_WORKSPACE -- read this before installing anything
 
 This distinction has already confused both a human and an agent working
 on this project. Get it wrong and you'll install services nobody asked
@@ -129,9 +129,9 @@ for, or "fix" configuration that was never broken.
   passing the matching `--<key>` override on your next `./install.sh` run.
   **Never** treat `mismatch` as a reason to install anything -- the tool
   is already there.
-- **`NOT_WORKSPACE`** (`beads_dir` only) -- the configured directory
-  **exists**, but `bd where --json`, run with `BEADS_DIR` pointed at it,
-  does not resolve it to a workspace (see check_beads_workspace in
+- **`NOT_WORKSPACE`** (`beads_dir`/`beads_workspace`) -- the configured
+  directory **exists**, but `bd where --json`, run with `BEADS_DIR` pointed
+  at it, does not resolve it to a workspace (see check_beads_workspace in
   `server/critdash/collectors/beads.py`). This is the validation gap that
   motivated this whole section: an existing directory is **not** evidence
   it is the right one -- `~/.beads` is the textbook example (it exists on
@@ -144,6 +144,21 @@ for, or "fix" configuration that was never broken.
   doctor`/`./install.sh --doctor` exit non-zero when it's present, since
   -- unlike a merely-unconfigured optional tool -- it means something IS
   configured and IS wrong.
+- **`NO_WORKSPACE`** (`beads_workspace` only) -- `beads_dir` is **unset**
+  (a normal, valid state on its own -- see `MISSING` above), but `bd`
+  *also* resolves no workspace at all when asked plainly (`bd where
+  --json`, no `BEADS_DIR` override). Unlike a merely-unconfigured
+  `beads_dir`, this means the `bd` binary works but the `beads` panel
+  flatly **cannot**: there is nothing anywhere for it to point at. This is
+  the exact "bd binary installed" != "a valid workspace exists" gap a
+  fresh macOS install hit -- previously it surfaced only as an opaque
+  `bd exited 1: no beads database found` deep in a collector error, not as
+  a check an installing agent could see up front. Fix it by creating a
+  workspace -- see "Setting up beads" below -- then re-probe. Like
+  `not_workspace`, `no_workspace` never blocks `ready` (beads stays
+  optional), but does make `make doctor`/`./install.sh --doctor` exit
+  non-zero, since it means beads was reachable but genuinely broken, not
+  merely unused.
 
 ### Installing missing prerequisites
 
@@ -330,6 +345,15 @@ Found -- skip to step 3. Not found -- only install it if beads is
 actually wanted here (a `missing` `bd_bin` check by itself is not a
 reason to install anything -- see "MISSING vs MISMATCH" above).
 
+**A `bd` binary being present is NOT sufficient.** `command -v bd`
+finding the binary only means bd is installed -- it says nothing about
+whether a workspace exists anywhere for it to talk to. Confirming that is
+step 5 below (`bd where --json`), and `./install.sh --probe --json`'s
+`beads_workspace` check (see "MISSING vs MISMATCH vs NOT_WORKSPACE vs
+NO_WORKSPACE" above) makes the same distinction: `bd_bin: ok` and
+`beads_workspace: no_workspace` at the same time is a real, common state
+on a fresh host, not a contradiction.
+
 ### 2. Install `bd` (only if wanted and missing)
 
 Pick one, in this order of preference (user-local first, no `sudo`):
@@ -383,13 +407,46 @@ inside it to confirm the resolved path). `--skip-agents` is required
 either way if you run `bd init` from inside this repo -- never let it
 touch this repo's `AGENTS.md`.
 
-### 5. Verify
+### 5. Check for an inherited `sync.remote`
+
+**Trap:** `bd init` run inside or near a git checkout that has a git
+remote configured auto-wires that remote as a Dolt sync remote, with no
+prompt -- verified live (2026-09-22): `git remote add origin
+https://example.com/fake/repo.git` in a throwaway repo, then `bd init
+--skip-agents --non-interactive` printed `Configured Dolt remote: origin
+-> git+https://example.com/fake/repo.git` unasked. For a local-only
+install this means unintended sync got silently turned on.
+
+Check:
+
+```sh
+bd config get sync.remote --json
+# -> {"key": "sync.remote", "location": "config.yaml", "schema_version": 1,
+#     "value": ""}                              <- unset, nothing to do
+# -> {..., "value": "git+https://your/repo.git"} <- inherited, remove it:
+```
+
+Remove it if it's set and you did not ask for sync:
+
+```sh
+bd config unset sync.remote
+```
+
+To stop it being wired in the first place on a future `bd init`, run
+`bd config set dolt.local-only true` before initialising. `./install.sh
+--doctor`/`make doctor` also surface a configured `sync.remote` as a
+non-blocking WARNING on the `beads_workspace` row (see
+`check_sync_remote` in `server/critdash/collectors/beads.py`) -- it never
+fails the install on its own, but read it and remove the remote if you
+didn't mean to sync anywhere.
+
+### 6. Verify
 
 ```sh
 bd list --json --all --limit 0    # -> "[]" or a JSON array, exit 0
 ```
 
-### 6. Point CritBoard at it
+### 7. Point CritBoard at it
 
 In `config/sources.json`:
 
@@ -450,7 +507,7 @@ In `config/sources.json`:
      step 3. Do not stop at "the key has a value" -- a `beads_dir` that
      exists on disk but that `bd` itself doesn't recognize is exactly the
      failure this whole section exists to prevent (see "NOT_WORKSPACE" in
-     "MISSING vs MISMATCH vs NOT_WORKSPACE" above), and it produces a
+     "MISSING vs MISMATCH vs NOT_WORKSPACE vs NO_WORKSPACE" above), and it produces a
      *worse* outcome than leaving it unset: a panel that looks configured
      but never works.
 
@@ -469,7 +526,7 @@ fix by guessing.
 |---|---|
 | `make run` | Foreground process on `$PORT`/`$BIND` (defaults 9999 / 127.0.0.1). Ctrl-C to stop. |
 | `./install.sh --service` | systemd --user unit, survives logout/reboot. `systemctl --user status critdash.service` / `journalctl --user -u critdash.service -f`. |
-| `make test` | Backend test suite (requires `uv`). |
+| `make test` | Backend test suite (uses `server/.venv` if set up -- the common case after `make install` -- else falls back to `uv`). |
 | `make doctor` / `./install.sh --doctor` | Configured vs. detected tool/data paths, one table. Exits non-zero on a `MISMATCH`. See "Tool & data path detection" below. |
 | `./install.sh --probe --json` | Same data as `--doctor`, as one JSON object for a script/agent -- no side effects. See "Probe schema" above. |
 | `make check` | `scripts/check-public.sh` -- the sanitization regression guard (only meaningful if you're working in a clone of this repo, not a downstream deploy). |
@@ -590,7 +647,7 @@ installed on a Mac, but `config/sources.json` still had the Debian path
 exists (so it isn't `MISSING`), but `bd where --json` run against it
 doesn't resolve to a workspace -- an installing agent guessing `~/.beads`
 is the case that motivated this. A directory existing is never, by itself,
-proof it is the right one; see "MISSING vs MISMATCH vs NOT_WORKSPACE" above
+proof it is the right one; see "MISSING vs MISMATCH vs NOT_WORKSPACE vs NO_WORKSPACE" above
 and "Obtaining `beads_dir` safely" under "Setting up beads" for the fix.
 
 | Key | What it's for | Powers | Binary search order / directories checked |

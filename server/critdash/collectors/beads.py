@@ -17,10 +17,15 @@ Verified live with an isolated HOME and no env file (2026-09-21):
                  new database\n      or set BEADS_DIR to point to your
                  .beads directory"
   after `bd init`: same command -> exit 0, stdout "[]" -- works fine.
-So the env file is optional, sourced only when it exists; `bd`'s own
-no-workspace failure is a real, informative error, not a missing
-dependency, and is left to the normal command_failed classification below
-(see `_run`) rather than special-cased.
+So the env file is optional, sourced only when it exists. `bd`'s own
+no-workspace failure IS special-cased (see `_run` and
+`_looks_like_no_workspace_error`): a host with `bd` installed but NO
+workspace resolvable anywhere is a configuration gap ("bd binary
+installed" != "a valid workspace exists" -- see issue #3), not an opaque
+command failure, so it is classified `config_missing` with a remedy that
+says exactly how to create one. Any other `bd` failure (network,
+corruption, an unrelated flag error, ...) still falls through to the
+plain `command_failed` classification, unchanged.
 
 Beads is still an OPTIONAL dependency overall: a host with no beads
 workflow at all has no `bd` binary, and that is a normal, expected state on
@@ -297,6 +302,35 @@ def _parse_json_loose(text: str):
     return json.JSONDecoder().raw_decode(text)[0]
 
 
+# bd's own two observed shapes for "there is no beads workspace here at
+# all" -- plain text (bd list/stats/ready, a normal CLI error on stderr)
+# and the JSON `bd where --json` reports (see check_beads_workspace's
+# docstring). Matched case-insensitively, as a substring, against BOTH
+# stdout and stderr -- never against the whole "bd exited N: ..." detail
+# text this feeds into, so an unrelated error that happens to mention
+# "workspace" in some other sentence doesn't collide (none of these three
+# phrases show up in any other bd error observed on this host).
+_NO_WORKSPACE_SIGNATURES = (
+    "no beads database found",
+    "no_beads_directory",
+    "no active beads workspace found",
+)
+
+NO_WORKSPACE_REMEDY = (
+    "No beads workspace was found on this host at all (bd itself is installed and ran -- "
+    "there is simply nothing for it to point at yet). Fix:\n"
+    "  1. Create a workspace OUTSIDE the checkout, e.g.  cd ~ && bd init --skip-agents --non-interactive\n"
+    "  2. Run `bd where --json` and copy its \"path\" value verbatim.\n"
+    "  3. Set that value as \"beads_dir\" in config/sources.json.\n"
+    "  4. Restart CritBoard."
+)
+
+
+def _looks_like_no_workspace_error(text: str) -> bool:
+    low = text.lower()
+    return any(sig in low for sig in _NO_WORKSPACE_SIGNATURES)
+
+
 async def _run(cmd: str, timeout: float = 20.0) -> str:
     """Run cmd via BeadsCollector.collect() and return stdout, or raise a
     CollectorIssue -- never a bare RuntimeError -- describing what actually
@@ -307,7 +341,15 @@ async def _run(cmd: str, timeout: float = 20.0) -> str:
     points `bd` at a server; a hang is the closest signal available that
     it isn't responding). `optional=False` on both -- the user HAS bd
     configured, so this is a real problem worth a warning, not an
-    unconfigured-dependency notice."""
+    unconfigured-dependency notice.
+
+    One failure shape gets its own reason_code instead of the generic
+    command_failed below: bd reporting that no workspace resolves at all
+    (see _looks_like_no_workspace_error). That is a config gap ("bd binary
+    installed" != "a valid workspace exists" -- issue #3), not an opaque
+    tool failure, so it is reported as config_missing with a remedy that
+    says exactly how to create a workspace -- everything else (network,
+    corruption, an unrelated bd error) is still command_failed, unchanged."""
     proc = await asyncio.create_subprocess_shell(
         cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -327,6 +369,13 @@ async def _run(cmd: str, timeout: float = 20.0) -> str:
         # A tool that prints its error to stdout instead of stderr must not
         # produce a blank reason -- fall back to stdout when stderr is empty.
         detail = err_text[:500] or out_text[:500] or f"(no output on exit {proc.returncode})"
+        if _looks_like_no_workspace_error(err_text) or _looks_like_no_workspace_error(out_text):
+            raise CollectorIssue(
+                "config_missing",
+                f"bd exited {proc.returncode}: no beads workspace found ({detail})",
+                remedy=NO_WORKSPACE_REMEDY,
+                optional=False,
+            )
         raise CollectorIssue(
             "command_failed",
             f"bd exited {proc.returncode}: {detail}",
@@ -418,6 +467,96 @@ def check_beads_workspace(bd_bin: str, beads_dir: str, timeout: float = 10.0) ->
         or f"bd where --json exited {result.returncode}"
     )
     return False, detail
+
+
+def resolve_any_workspace(bd_bin: str, timeout: float = 10.0) -> tuple[bool, str]:
+    """Like check_beads_workspace, but asks whether `bd` resolves ANY
+    workspace on this host with NO BEADS_DIR override -- i.e. exactly what
+    a real collector run does when beads_dir is unset (bd_shell_prefix only
+    exports BEADS_DIR when beads_dir is truthy -- see its docstring). Used
+    by critdash.doctor's `beads_workspace` check (issue #3) to answer "does
+    beads work at all here" BEFORE beads_dir is even configured -- distinct
+    from check_beads_workspace/validate_beads_dir, which only ever evaluate
+    one specific configured directory.
+
+    Returns (True, resolved_path) -- the workspace's "path", suitable to
+    copy verbatim into beads_dir -- when bd names a "database_path".
+    Otherwise (False, detail), same detail semantics as
+    check_beads_workspace (bd's own message/error/hint, or a description of
+    why bd couldn't be asked at all)."""
+    try:
+        result = subprocess.run(
+            [bd_bin, "where", "--json"], capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"`bd where --json` timed out after {timeout}s"
+    except OSError as exc:
+        return False, f"could not run `bd where --json`: {exc}"
+    parsed: dict = {}
+    try:
+        loaded = json.loads(result.stdout.strip() or "{}")
+        if isinstance(loaded, dict):
+            parsed = loaded
+    except json.JSONDecodeError:
+        pass
+    database_path = parsed.get("database_path")
+    if result.returncode == 0 and database_path:
+        return True, str(parsed.get("path") or database_path)
+    detail = (
+        parsed.get("message") or parsed.get("error") or parsed.get("hint")
+        or result.stderr.strip()[:300] or result.stdout.strip()[:300]
+        or f"bd where --json exited {result.returncode}"
+    )
+    return False, detail
+
+
+def check_sync_remote(bd_bin: str, beads_dir: str | None, timeout: float = 10.0) -> str | None:
+    """After a workspace resolves, ask bd whether it has a `sync.remote`
+    configured -- the inherited-remote trap issue #3 also reports: `bd
+    init` run inside/near a git checkout that has a git remote auto-wires
+    that remote as `sync.remote` in .beads/config.yaml, silently turning on
+    unintended sync, with no prompt.
+
+    Verified live (2026-09-22), throwaway workspace: a temp dir, `git init`,
+    `git remote add origin https://example.com/fake/repo.git`, then
+    `bd init --skip-agents --non-interactive` printed
+    "Configured Dolt remote: origin -> git+https://example.com/fake/repo.git"
+    unprompted, and:
+      bd config get sync.remote --json
+        -> exit 0, {"key": "sync.remote", "location": "config.yaml",
+                     "schema_version": 1,
+                     "value": "git+https://example.com/fake/repo.git"}
+      after `bd config unset sync.remote` (the fix):
+        -> exit 0, same shape with "value": "" -- config.yaml gets the line
+           commented back out. (`bd config set dolt.local-only true` before
+           `bd init` prevents it from being wired in the first place.)
+      a workspace with no remote ever configured (the fleet's own,
+      long-lived workspace) -> exit 0, "value": "" as well -- same shape
+      either way, `get` never errors just because nothing is set.
+
+    Returns the remote string when one is configured (truthy), else None.
+    Never raises -- this is a WARNING-only check (see critdash.doctor), so
+    a failure to even ask (bd missing the `config` subcommand, a timeout,
+    bad JSON) is treated the same as "nothing to warn about", not an
+    error."""
+    env = dict(os.environ)
+    if beads_dir:
+        env["BEADS_DIR"] = os.path.expanduser(beads_dir)
+    try:
+        result = subprocess.run(
+            [bd_bin, "config", "get", "sync.remote", "--json"],
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    try:
+        parsed = json.loads(result.stdout.strip() or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = parsed.get("value")
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def validate_beads_dir(beads_dir: str, bd_bin: str | None = None) -> CollectorIssue | None:

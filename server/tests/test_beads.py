@@ -10,8 +10,10 @@ from critdash.collectors.beads import (
     bd_shell_prefix,
     build_dependency_maps,
     check_beads_workspace,
+    check_sync_remote,
     guess_repo,
     is_review_lane,
+    resolve_any_workspace,
     resolve_bd_bin,
     transform_item,
     validate_beads_dir,
@@ -70,6 +72,32 @@ def write_fake_bd_echoing(path):
         "#!/bin/sh\n"
         'echo \'{"path": "\'"$BEADS_DIR"\'", "schema_version": 1}\'\n'
         "exit 0\n"
+    )
+    path.chmod(0o755)
+
+
+def write_fake_bd_with_sync_remote(path, workspace_path, remote=""):
+    """A fake `bd` that implements just enough of two real subcommands to
+    exercise resolve_any_workspace/check_sync_remote together (see
+    beads.py's docstrings for the live-verified shapes this mirrors):
+      bd where --json                    -> resolves `workspace_path`,
+                                             ignoring $BEADS_DIR (like
+                                             write_fake_bd above)
+      bd config get sync.remote --json   -> reports `remote` (possibly "")
+    Anything else is an error, so a test using this stub notices if
+    production code starts asking bd something new."""
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "where" ]; then\n'
+        f'  echo \'{{"path": "{workspace_path}", "database_path": "{workspace_path}/dolt"}}\'\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "sync.remote" ]; then\n'
+        f'  echo \'{{"key": "sync.remote", "location": "config.yaml", "schema_version": 1, "value": "{remote}"}}\'\n'
+        "  exit 0\n"
+        "fi\n"
+        'echo "fake bd: unexpected args: $@" >&2\n'
+        "exit 1\n"
     )
     path.chmod(0o755)
 
@@ -337,15 +365,20 @@ async def test_collect_zero_beads_is_success_not_failure(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_command_failed_uses_stderr(monkeypatch):
+    """An UNRELATED bd failure (not one of the no-workspace signatures --
+    see _looks_like_no_workspace_error) must still classify as
+    command_failed with bd's own message intact -- guards against the
+    no-workspace special case over-matching."""
+
     async def fake_exec(cmd, **kwargs):
-        return _FakeProc(stderr=b"Error: no beads database found\n", returncode=1)
+        return _FakeProc(stderr=b"Error: connection refused by dolt sql-server\n", returncode=1)
 
     monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
     with pytest.raises(CollectorIssue) as exc_info:
         await beads_mod._run("bd stats --json")
     issue = exc_info.value
     assert issue.reason_code == "command_failed"
-    assert "no beads database found" in issue.detail
+    assert "connection refused by dolt sql-server" in issue.detail
     assert issue.optional is False
 
 
@@ -559,6 +592,46 @@ def test_check_beads_workspace_false_for_workspace_parent(tmp_path):
     assert ok_ws is True
 
 
+# -- resolve_any_workspace / check_sync_remote (issue #3, Tasks 3/4): the
+# doctor's beads_workspace check -- "does bd resolve ANYTHING here", with
+# no beads_dir override, plus the inherited sync.remote WARNING. ---------
+
+
+def test_resolve_any_workspace_true_when_bd_resolves(tmp_path):
+    ws = tmp_path / ".beads"
+    ws.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=str(ws))
+    ok, path = resolve_any_workspace(str(bd))
+    assert ok is True
+    assert path == str(ws)
+
+
+def test_resolve_any_workspace_false_when_bd_finds_nothing(tmp_path):
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=None)
+    ok, detail = resolve_any_workspace(str(bd))
+    assert ok is False
+    assert "No active beads workspace found." in detail
+
+
+def test_check_sync_remote_returns_value_when_configured(tmp_path):
+    ws = tmp_path / ".beads"
+    ws.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd_with_sync_remote(bd, str(ws), remote="git+https://example.com/fake/repo.git")
+    remote = check_sync_remote(str(bd), str(ws))
+    assert remote == "git+https://example.com/fake/repo.git"
+
+
+def test_check_sync_remote_none_when_unset(tmp_path):
+    ws = tmp_path / ".beads"
+    ws.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd_with_sync_remote(bd, str(ws), remote="")
+    assert check_sync_remote(str(bd), str(ws)) is None
+
+
 def test_validate_beads_dir_none_when_bd_confirms_workspace(tmp_path):
     ws = tmp_path / ".beads"
     ws.mkdir()
@@ -683,11 +756,13 @@ async def test_collect_raises_config_missing_when_beads_dir_not_a_workspace(monk
 
 
 @pytest.mark.asyncio
-async def test_bd_no_workspace_failure_classified_with_real_message(monkeypatch):
+async def test_bd_no_workspace_failure_classified_as_config_missing(monkeypatch):
     """Live-verified (isolated HOME, no env file, no `bd init`): `bd list
-    --json --all --limit 0` exits 1 with this exact stderr. That must
-    surface through the normal command_failed classification with bd's own
-    message intact -- not a special-cased "config_missing"."""
+    --json --all --limit 0` exits 1 with this exact stderr. Issue #3: this
+    must NOT surface as the generic, opaque command_failed -- "bd binary
+    installed" is not "a valid workspace exists" -- so it is classified
+    config_missing, with a remedy that says exactly how to create a
+    workspace (see NO_WORKSPACE_REMEDY)."""
     real_stderr = (
         "Error: no beads database found\n"
         "Hint: run 'bd where' to inspect the resolved workspace, or 'bd init' "
@@ -702,9 +777,34 @@ async def test_bd_no_workspace_failure_classified_with_real_message(monkeypatch)
     with pytest.raises(CollectorIssue) as exc_info:
         await beads_mod._run("bd list --json --all --limit 0")
     issue = exc_info.value
-    assert issue.reason_code == "command_failed"
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is False
+    assert "no beads workspace found" in issue.detail
     assert "no beads database found" in issue.detail
-    assert "bd init" in issue.detail
+    assert "bd init --skip-agents --non-interactive" in issue.remedy
+    assert "beads_dir" in issue.remedy
+
+
+@pytest.mark.asyncio
+async def test_bd_no_workspace_json_error_shape_classified_as_config_missing(monkeypatch):
+    """The other observed no-workspace shape (see beads.py's module
+    docstring / check_beads_workspace): `bd where --json`'s JSON error
+    body, which some bd subcommands also emit on stdout instead of a plain
+    stderr sentence. Must classify the same as the plain-text form."""
+    json_error = (
+        '{"error": "no_beads_directory", "message": "No active beads workspace found.", '
+        '"hint": "run bd init or set BEADS_DIR"}'
+    )
+
+    async def fake_exec(cmd, **kwargs):
+        return _FakeProc(stdout=json_error.encode(), returncode=1)
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    with pytest.raises(CollectorIssue) as exc_info:
+        await beads_mod._run("bd where --json")
+    issue = exc_info.value
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is False
 
 
 def test_check_beads_workspace_false_when_bd_exits_zero_without_database_path(tmp_path):

@@ -226,6 +226,180 @@ def test_main_shows_not_workspace_distinctly(isolated_config_dir, monkeypatch, c
     assert "bd where --json" in out
 
 
+# -- beads_workspace (issue #3 Task 3): "bd binary installed" != "a valid
+# workspace exists" -- its own row, independent of whether beads_dir is
+# even configured. ----------------------------------------------------
+
+
+def test_beads_workspace_missing_when_bd_not_installed(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    checks = doctor_mod.build_checks({"bd_bin": str(tmp_path / "no-such-bd")})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "missing"
+    assert ws_check.blocking is False
+    assert "bd_bin" in ws_check.note
+
+
+def test_beads_workspace_ok_when_beads_dir_configured_and_valid(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    ws = tmp_path / "project" / ".beads"
+    ws.mkdir(parents=True)
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=str(ws))
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd), "beads_dir": str(ws)})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "ok"
+    assert ws_check.blocking is False
+    assert ws_check.detected == str(ws)
+
+
+def test_beads_workspace_not_workspace_when_beads_dir_configured_but_invalid(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    not_a_workspace = tmp_path / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=None)
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd), "beads_dir": str(not_a_workspace)})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "not_workspace"
+    assert ws_check.blocking is True
+    assert "No active beads workspace found." in ws_check.note
+
+
+def test_beads_workspace_ok_when_beads_dir_unset_but_bd_resolves_one(tmp_path, monkeypatch):
+    """The DoD-relevant case on a healthy host: beads_dir is unset (a
+    normal, valid state -- see MISSING vs MISMATCH), but bd still resolves
+    a workspace on its own (e.g. cwd-relative discovery, or a global
+    default) -- OK and non-blocking, with `detected` showing the resolved
+    path so an installing agent can copy it into beads_dir."""
+    _neutralize_detection(monkeypatch)
+    ws = tmp_path / "project" / ".beads"
+    ws.mkdir(parents=True)
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=str(ws))
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd)})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "ok"
+    assert ws_check.blocking is False
+    assert ws_check.configured is None
+    assert ws_check.detected == str(ws)
+
+
+def test_beads_workspace_expands_tilde_bd_bin(tmp_path, monkeypatch):
+    """Regression: bd_bin in config/sources.json is routinely a "~/..."
+    string (the shipped default is "~/.local/bin/bd"). build_checks() must
+    expand it before handing it to resolve_any_workspace/
+    check_beads_workspace as an argv[0] -- subprocess.run() does not
+    expand "~" itself (that's shell-only), so an unexpanded value fails
+    with ENOENT and beads_workspace wrongly reports "no_workspace" even
+    though bd is right there and resolves fine. Reproduced live on this
+    host (2026-09-22) before this fix: `make doctor` failed with
+    "could not run `bd where --json`: [Errno 2] No such file or
+    directory: '~/.local/bin/bd'" despite a real, working workspace."""
+    _neutralize_detection(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    ws = tmp_path / "project" / ".beads"
+    ws.mkdir(parents=True)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    bd = bindir / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=str(ws))
+
+    checks = doctor_mod.build_checks({"bd_bin": "~/bin/bd"})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "ok"
+    assert ws_check.note is None
+
+
+def test_beads_workspace_no_workspace_when_beads_dir_unset_and_bd_resolves_nothing(tmp_path, monkeypatch):
+    """The exact issue #3 bug shape: bd is installed, beads_dir was never
+    configured, and bd itself resolves no workspace anywhere -- a real,
+    blocking problem (the beads panel cannot work), not a quiet MISSING."""
+    _neutralize_detection(monkeypatch)
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=None)
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd)})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "no_workspace"
+    assert ws_check.blocking is True
+    assert doctor_mod.exit_code(checks) == 1
+
+
+def test_main_shows_no_workspace_with_init_remedy(isolated_config_dir, monkeypatch, capsys):
+    _neutralize_detection(monkeypatch)
+    bd = isolated_config_dir / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=None)
+
+    sources = dict(config_mod.DEFAULT_SOURCES, bd_bin=str(bd))
+    (isolated_config_dir / "sources.json").write_text(json.dumps(sources))
+
+    code = doctor_mod.main()
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "NO_WORKSPACE" in out
+    assert "bd init --skip-agents --non-interactive" in out
+
+
+def test_beads_workspace_warns_on_inherited_sync_remote(tmp_path, monkeypatch):
+    """Issue #3's second report: `bd init` near a git checkout with a
+    remote silently inherits it as sync.remote. Surfaced as a non-blocking
+    WARNING on an otherwise-OK beads_workspace row (see
+    critdash.collectors.beads.check_sync_remote)."""
+    _neutralize_detection(monkeypatch)
+    ws = tmp_path / "project" / ".beads"
+    ws.mkdir(parents=True)
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd_with_sync_remote(
+        bd, str(ws), remote="git+https://example.com/fake/repo.git"
+    )
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd), "beads_dir": str(ws)})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "ok"
+    assert ws_check.blocking is False
+    assert "sync.remote" in ws_check.note
+    assert "git+https://example.com/fake/repo.git" in ws_check.note
+    assert "bd config unset sync.remote" in ws_check.note
+
+
+def test_beads_workspace_no_sync_remote_warning_when_unset(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    ws = tmp_path / "project" / ".beads"
+    ws.mkdir(parents=True)
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd_with_sync_remote(bd, str(ws), remote="")
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd), "beads_dir": str(ws)})
+    ws_check = _find(checks, "beads_workspace")
+    assert ws_check.state == "ok"
+    assert ws_check.note is None
+
+
+def test_main_prints_sync_remote_warning(isolated_config_dir, monkeypatch, capsys):
+    _neutralize_detection(monkeypatch)
+    ws = isolated_config_dir / "project" / ".beads"
+    ws.mkdir(parents=True)
+    bd = isolated_config_dir / "bd"
+    beads_test_mod.write_fake_bd_with_sync_remote(
+        bd, str(ws), remote="git+https://example.com/fake/repo.git"
+    )
+
+    sources = dict(config_mod.DEFAULT_SOURCES, bd_bin=str(bd), beads_dir=str(ws))
+    (isolated_config_dir / "sources.json").write_text(json.dumps(sources))
+
+    code = doctor_mod.main()
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "sync.remote" in out
+    assert "bd config unset sync.remote" in out
+
+
 def test_prereq_binaries_are_included(tmp_path, monkeypatch):
     _neutralize_detection(monkeypatch)
     checks = doctor_mod.build_checks({})
@@ -275,10 +449,17 @@ def isolated_config_dir(tmp_path, monkeypatch):
 
 
 def test_main_exit_code_zero_when_configured_paths_are_real(isolated_config_dir, monkeypatch, capsys):
+    """A real bd_bin isn't the whole story any more (issue #3): the new
+    beads_workspace check also needs a resolvable workspace, or it's the
+    blocking "no_workspace" state -- see test_beads_workspace_* below. Use
+    a fake bd that resolves one (write_fake_bd ignores $BEADS_DIR, so the
+    bare `bd where --json` beads_workspace runs when beads_dir is unset
+    also succeeds)."""
     _neutralize_detection(monkeypatch)
+    ws = isolated_config_dir / "workspace" / ".beads"
+    ws.mkdir(parents=True)
     binp = isolated_config_dir / "bd"
-    binp.write_text("#!/bin/sh\n")
-    binp.chmod(0o755)
+    beads_test_mod.write_fake_bd(binp, workspace_path=str(ws))
     sources = dict(config_mod.DEFAULT_SOURCES, bd_bin=str(binp))
     (isolated_config_dir / "sources.json").write_text(json.dumps(sources))
 

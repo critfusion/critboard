@@ -18,12 +18,15 @@ run: ## Run the dashboard in the foreground (Ctrl-C to stop). Needs `make instal
 	fi
 	cd server && .venv/bin/uvicorn critdash.main:app --host $(BIND) --port $(PORT)
 
-test: ## Run the backend test suite. Requires uv (dev dependency group).
-	@command -v uv >/dev/null 2>&1 || { \
-		echo "Makefile: ERROR: 'uv' not found on PATH. Install uv (https://docs.astral.sh/uv/) to run tests." >&2; \
+test: ## Run the backend test suite. Uses server/.venv if it's set up, else falls back to uv.
+	@if [ -x server/.venv/bin/pytest ]; then \
+		cd server && .venv/bin/pytest -q; \
+	elif command -v uv >/dev/null 2>&1; then \
+		cd server && uv run pytest -q; \
+	else \
+		echo "Makefile: ERROR: Neither venv (server/.venv/bin/pytest missing) nor 'uv' found. Run 'make install' first, or install uv (https://docs.astral.sh/uv/) to run tests." >&2; \
 		exit 1; \
-	}
-	cd server && uv run pytest -q
+	fi
 
 check: ## Run the public-repo sanitization guard (scripts/check-public.sh).
 	bash scripts/check-public.sh
