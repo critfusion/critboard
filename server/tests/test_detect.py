@@ -67,6 +67,130 @@ def test_binary_candidate_dirs_cover_required_locations():
     assert required.issubset(set(detect_mod.BINARY_CANDIDATE_DIRS))
 
 
+# -- Python interpreter discovery -------------------------------------------
+#
+# The reported bug: Homebrew's python formula installs the *versioned*
+# binary (python3.12) into /opt/homebrew/bin without a `python3` symlink
+# beside it, so a perfectly good interpreter meeting the floor was reported
+# missing. These fake interpreters are tiny shell scripts that print a
+# fixed version string regardless of the `-c` script they're handed --
+# _python_version() only cares what the "interpreter" prints, not what it
+# was told to run, which is enough to exercise the selection logic without
+# needing a real second Python build.
+
+
+def _fake_interpreter(path, version: str):
+    path.write_text(f"#!/bin/sh\necho '{version}'\n")
+    path.chmod(0o755)
+
+
+def test_python_version_none_for_unrunnable_path(tmp_path):
+    assert detect_mod._python_version(str(tmp_path / "does-not-exist")) is None
+
+
+def test_python_version_none_for_unparseable_output(tmp_path):
+    junk = tmp_path / "python3"
+    junk.write_text("#!/bin/sh\necho 'not a version'\n")
+    junk.chmod(0o755)
+    assert detect_mod._python_version(str(junk)) is None
+
+
+def test_find_python_candidates_finds_versioned_name_with_no_python3_present(tmp_path, monkeypatch):
+    """The exact reported bug, at the candidate-scan layer: a directory
+    with ONLY python3.12 (no python3 symlink), nothing on PATH."""
+    _neutralize_path(monkeypatch)
+    d = tmp_path / "opt-homebrew-bin"
+    d.mkdir()
+    _fake_interpreter(d / "python3.12", "3.12.4")
+
+    candidates = detect_mod.find_python_candidates(search_dirs=[str(d)])
+
+    assert candidates == [str(d / "python3.12")]
+
+
+def test_select_python_finds_versioned_only_interpreter(tmp_path, monkeypatch):
+    """End to end: select_python() resolves a version-satisfying
+    interpreter that only exists under its versioned name."""
+    _neutralize_path(monkeypatch)
+    d = tmp_path / "opt-homebrew-bin"
+    d.mkdir()
+    _fake_interpreter(d / "python3.12", "3.12.4")
+
+    result = detect_mod.select_python(search_dirs=[str(d)])
+
+    assert result.selected is not None
+    assert result.selected.path == str(d / "python3.12")
+    assert result.selected.version == (3, 12, 4)
+    assert result.best_below_floor is None
+
+
+def test_select_python_skips_below_floor_candidate(tmp_path, monkeypatch):
+    """A `python3` on PATH/candidate dir may be too old -- it must be
+    skipped in favor of a versioned interpreter that meets the floor, not
+    trusted just because it's named `python3`."""
+    _neutralize_path(monkeypatch)
+    d = tmp_path / "bin"
+    d.mkdir()
+    _fake_interpreter(d / "python3", "3.9.18")
+    _fake_interpreter(d / "python3.12", "3.12.1")
+
+    result = detect_mod.select_python(search_dirs=[str(d)])
+
+    assert result.selected is not None
+    assert result.selected.path == str(d / "python3.12")
+    assert result.selected.version == (3, 12, 1)
+    assert result.best_below_floor is not None
+    assert result.best_below_floor.path == str(d / "python3")
+    assert result.best_below_floor.version == (3, 9, 18)
+
+
+def test_select_python_prefers_newest_not_first_name_matched(tmp_path, monkeypatch):
+    """Both candidates meet the floor. PYTHON_INTERPRETER_NAMES probes
+    "python3.13" before "python3.11", but the python3.11-named file here
+    reports the newer real version -- select_python must still pick it,
+    proving selection goes by executed version, not by which name was
+    checked first."""
+    _neutralize_path(monkeypatch)
+    d = tmp_path / "bin"
+    d.mkdir()
+    _fake_interpreter(d / "python3.13", "3.11.0")
+    _fake_interpreter(d / "python3.11", "3.13.0")
+
+    result = detect_mod.select_python(search_dirs=[str(d)])
+
+    assert result.selected is not None
+    assert result.selected.path == str(d / "python3.11")
+    assert result.selected.version == (3, 13, 0)
+
+
+def test_select_python_reports_best_below_floor_when_nothing_qualifies(tmp_path, monkeypatch):
+    _neutralize_path(monkeypatch)
+    d = tmp_path / "bin"
+    d.mkdir()
+    _fake_interpreter(d / "python3", "3.9.18")
+
+    result = detect_mod.select_python(search_dirs=[str(d)])
+
+    assert result.selected is None
+    assert result.best_below_floor is not None
+    assert result.best_below_floor.path == str(d / "python3")
+    assert result.best_below_floor.version == (3, 9, 18)
+
+
+def test_select_python_none_when_nothing_found(tmp_path, monkeypatch):
+    _neutralize_path(monkeypatch)
+    result = detect_mod.select_python(search_dirs=[str(tmp_path / "empty")])
+    assert result.selected is None
+    assert result.best_below_floor is None
+
+
+def test_python_interpreter_names_cover_floor_through_314():
+    # Scope bullet: "at least" python3.14 down to python3.11, plus the
+    # bare "python3".
+    required = {"python3", "python3.14", "python3.13", "python3.12", "python3.11"}
+    assert required.issubset(set(detect_mod.PYTHON_INTERPRETER_NAMES))
+
+
 # -- resolve_binary ---------------------------------------------------------
 
 

@@ -28,3 +28,20 @@ def test_install_sh_candidate_dirs_match_detect_py():
     )
     shell_dirs = [line for line in result.stdout.splitlines() if line]
     assert shell_dirs == detect.BINARY_CANDIDATE_DIRS
+
+
+def test_install_sh_python_interpreter_names_match_detect_py():
+    """Same drift check, for the Python interpreter probe order -- see
+    install.sh's PYTHON_INTERPRETER_NAMES comment and its
+    --print-python-names debug flag, and detect.py's
+    PYTHON_INTERPRETER_NAMES docstring."""
+    assert INSTALL_SH.is_file(), f"install.sh not found at {INSTALL_SH}"
+    result = subprocess.run(
+        ["bash", str(INSTALL_SH), "--print-python-names"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+    shell_names = [line for line in result.stdout.splitlines() if line]
+    assert shell_names == detect.PYTHON_INTERPRETER_NAMES

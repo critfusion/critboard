@@ -156,10 +156,34 @@ def format_table(checks: list[PathCheck]) -> str:
     return "\n".join(lines)
 
 
+def format_python_line(selection: detect.PythonSelection) -> str:
+    """One line describing which Python interpreter install.sh/doctor
+    would pick right now, and why -- see detect.select_python()'s
+    docstring for the selection rule (newest candidate meeting
+    PYTHON_FLOOR, not merely the first name matched)."""
+    floor = ".".join(str(p) for p in detect.PYTHON_FLOOR)
+    if selection.selected is not None:
+        c = selection.selected
+        version = ".".join(str(p) for p in c.version)
+        return f"python3: selected {c.path} (version {version}, floor >= {floor})"
+    if selection.best_below_floor is not None:
+        c = selection.best_below_floor
+        version = ".".join(str(p) for p in c.version)
+        return (
+            f"python3: FOUND BUT BELOW FLOOR -- {c.path} is version {version}, "
+            f"need >= {floor}"
+        )
+    tried = ", ".join(detect.PYTHON_INTERPRETER_NAMES)
+    dirs = ", ".join(detect.BINARY_CANDIDATE_DIRS)
+    return f"python3: NOT FOUND -- tried {tried} on PATH and in: {dirs}"
+
+
 def main() -> int:
     cfg = load_config()
     checks = build_checks(cfg.sources)
     print(format_table(checks))
+    print()
+    print(format_python_line(detect.select_python()))
     code = exit_code(checks)
     if code != 0:
         mismatched = [c.key for c in checks if c.mismatch]

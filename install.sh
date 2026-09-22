@@ -66,6 +66,26 @@ BINARY_CANDIDATE_DIRS=(
     "/usr/bin"
 )
 
+# Python interpreter names to probe, in this order, at each search location
+# (PATH, then each of BINARY_CANDIDATE_DIRS): the bare `python3` first,
+# then versioned names newest to oldest, down to the floor (3.11 -- see
+# PY_FLOOR checks below). Real bug this exists to fix: Homebrew's python
+# formula installs the *versioned* binary (e.g. python3.12) into
+# /opt/homebrew/bin and does not always place a `python3` symlink beside
+# it, so a perfectly good interpreter meeting the floor was reported "not
+# found" just because it wasn't named `python3`. MUST stay in sync with
+# server/critdash/detect.py's PYTHON_INTERPRETER_NAMES --
+# server/tests/test_install_candidate_dirs.py asserts the two lists agree
+# (run `./install.sh --print-python-names` to see what this resolves to).
+# `git`/`ssh` don't get this treatment: no versioned-binary convention.
+PYTHON_INTERPRETER_NAMES=(
+    "python3"
+    "python3.14"
+    "python3.13"
+    "python3.12"
+    "python3.11"
+)
+
 usage() {
     sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
@@ -84,6 +104,12 @@ while [ $# -gt 0 ]; do
         # without parsing this script's shell syntax from Python.
         --print-candidate-dirs)
             printf '%s\n' "${BINARY_CANDIDATE_DIRS[@]}"
+            exit 0
+            ;;
+        # Internal/test-only: same idea, for PYTHON_INTERPRETER_NAMES, so a
+        # test can assert it matches detect.py's PYTHON_INTERPRETER_NAMES.
+        --print-python-names)
+            printf '%s\n' "${PYTHON_INTERPRETER_NAMES[@]}"
             exit 0
             ;;
         -h|--help) usage; exit 0 ;;
@@ -117,6 +143,98 @@ find_binary() {
     return 1
 }
 
+# find_python_candidates -- prints every python3* interpreter found, one
+# absolute path per line, by filename only (no version check yet -- see
+# select_python()): PATH first (for each name in PYTHON_INTERPRETER_NAMES,
+# in that order), then BINARY_CANDIDATE_DIRS for each name in the same
+# order. Deduplicated, order of first appearance preserved.
+find_python_candidates() {
+    local name d expanded path seen=" "
+    for name in "${PYTHON_INTERPRETER_NAMES[@]}"; do
+        path="$(command -v "$name" 2>/dev/null)"
+        if [ -n "$path" ]; then
+            case "$seen" in
+                *" $path "*) ;;
+                *) seen="$seen$path "; printf '%s\n' "$path" ;;
+            esac
+        fi
+    done
+    for name in "${PYTHON_INTERPRETER_NAMES[@]}"; do
+        for d in "${BINARY_CANDIDATE_DIRS[@]}"; do
+            expanded="${d/#\~/$HOME}"
+            path="$expanded/$name"
+            if [ -f "$path" ] && [ -x "$path" ]; then
+                case "$seen" in
+                    *" $path "*) ;;
+                    *) seen="$seen$path "; printf '%s\n' "$path" ;;
+                esac
+            fi
+        done
+    done
+}
+
+# python_interpreter_version PATH -- executes PATH (never trusts the
+# filename -- a `python3` on PATH may be 3.9, a name is not a guarantee)
+# and prints its real "X.Y.Z" version to stdout, or prints nothing and
+# returns 1 if PATH can't be run or isn't actually a Python interpreter.
+python_interpreter_version() {
+    "$1" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null
+}
+
+# python_version_num "X.Y.Z" -- prints a single comparable integer
+# (major*1000000 + minor*1000 + patch) so two versions can be compared with
+# plain arithmetic `-ge`/`-gt` instead of a lexical string compare, which
+# gets "3.9" vs "3.11" backwards (as strings, "3.11" < "3.9").
+python_version_num() {
+    local major minor patch
+    IFS='.' read -r major minor patch <<EOF
+$1
+EOF
+    major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
+    printf '%d\n' $((major * 1000000 + minor * 1000 + patch))
+}
+
+# select_python -- scans find_python_candidates(), executes each one to
+# confirm its real version, and selects the NEWEST candidate that meets
+# the floor (3.11, see PY_FLOOR_NUM below) -- not merely the first name
+# matched, since a versioned name found later in the probe order (e.g.
+# python3.12) can be newer than an earlier one (e.g. a `python3` that
+# turns out to be 3.9). Sets globals (never local -- callers read them
+# after calling this): PYTHON_BIN / PYTHON_BIN_VERSION (the selection, or
+# both empty if nothing met the floor), and PYTHON_BELOW_FLOOR_BIN /
+# PYTHON_BELOW_FLOOR_VERSION (the newest below-floor candidate found, if
+# any -- lets a caller say "found Python 3.9, need >= 3.11" instead of
+# just "not found").
+PY_FLOOR_NUM="$(python_version_num "3.11.0")"
+select_python() {
+    PYTHON_BIN=""
+    PYTHON_BIN_VERSION=""
+    PYTHON_BELOW_FLOOR_BIN=""
+    PYTHON_BELOW_FLOOR_VERSION=""
+    local candidate version vnum best_num=0 below_num=0
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        version="$(python_interpreter_version "$candidate")"
+        [ -n "$version" ] || continue
+        vnum="$(python_version_num "$version")"
+        if [ "$vnum" -ge "$PY_FLOOR_NUM" ]; then
+            if [ -z "$PYTHON_BIN" ] || [ "$vnum" -gt "$best_num" ]; then
+                PYTHON_BIN="$candidate"
+                PYTHON_BIN_VERSION="$version"
+                best_num="$vnum"
+            fi
+        else
+            if [ -z "$PYTHON_BELOW_FLOOR_BIN" ] || [ "$vnum" -gt "$below_num" ]; then
+                PYTHON_BELOW_FLOOR_BIN="$candidate"
+                PYTHON_BELOW_FLOOR_VERSION="$version"
+                below_num="$vnum"
+            fi
+        fi
+    done <<EOF
+$(find_python_candidates)
+EOF
+}
+
 # report_binary NAME -- same resolution as find_binary(), but also logs
 # (to stderr -- stdout is this function's return value, same convention as
 # find_binary(), and callers do `x="$(report_binary name)"`) when the
@@ -147,14 +265,14 @@ run_doctor() {
         (cd "$SERVER_DIR" && "$SERVER_DIR/.venv/bin/python" -m critdash.doctor)
         return $?
     fi
-    local uv_bin py_bin
+    local uv_bin
     uv_bin="$(find_binary uv)"
     if [ -n "$uv_bin" ]; then
         (cd "$SERVER_DIR" && "$uv_bin" run python -m critdash.doctor)
         return $?
     fi
-    py_bin="$(find_binary python3)"
-    (cd "$SERVER_DIR" && "${py_bin:-python3}" -m critdash.doctor)
+    select_python
+    (cd "$SERVER_DIR" && "${PYTHON_BIN:-python3}" -m critdash.doctor)
 }
 
 if [ "$DO_DOCTOR" -eq 1 ]; then
@@ -171,13 +289,23 @@ HAVE_UV=0
 UV_BIN="$(report_binary uv)" && HAVE_UV=1
 
 PY_FLOOR_OK=0
-PYTHON3_BIN="$(report_binary python3)"
-if [ -n "$PYTHON3_BIN" ]; then
-    "$PYTHON3_BIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' && PY_FLOOR_OK=1
+PYTHON3_BIN=""
+select_python
+if [ -n "$PYTHON_BIN" ]; then
+    PY_FLOOR_OK=1
+    PYTHON3_BIN="$PYTHON_BIN"
+    if [ "$(command -v "$(basename "$PYTHON_BIN")" 2>/dev/null)" != "$PYTHON_BIN" ]; then
+        log "found '$(basename "$PYTHON_BIN")' outside PATH, at $PYTHON_BIN -- PATH is incomplete in this shell (common in a non-interactive/non-login shell on macOS). Add its directory to PATH (e.g. in ~/.zprofile) to stop relying on this fallback."
+    fi
+    log "using Python interpreter: $PYTHON_BIN (version $PYTHON_BIN_VERSION, floor >= 3.11)."
 fi
 
 if [ "$HAVE_UV" -eq 0 ] && [ "$PY_FLOOR_OK" -eq 0 ]; then
-    fail "need Python >=3.11 on PATH or in: ${BINARY_CANDIDATE_DIRS[*]}; or 'uv' installed (https://docs.astral.sh/uv/) -- uv can provision a matching Python itself. Neither was found."
+    if [ -n "$PYTHON_BELOW_FLOOR_BIN" ]; then
+        fail "found Python at $PYTHON_BELOW_FLOOR_BIN but it is version $PYTHON_BELOW_FLOOR_VERSION, below the required floor of 3.11. Install a newer Python (e.g. 'brew install python@3.12') or install 'uv' (https://docs.astral.sh/uv/), which can provision a matching Python itself."
+    else
+        fail "need Python >=3.11 on PATH or in: ${BINARY_CANDIDATE_DIRS[*]} (tried: ${PYTHON_INTERPRETER_NAMES[*]}); or 'uv' installed (https://docs.astral.sh/uv/) -- uv can provision a matching Python itself. Neither was found."
+    fi
 fi
 
 for bin in ssh bd herdr; do

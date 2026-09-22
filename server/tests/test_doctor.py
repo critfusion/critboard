@@ -152,6 +152,47 @@ def test_main_exit_code_zero_when_configured_paths_are_real(isolated_config_dir,
     assert "bd_bin" in out
 
 
+# -- format_python_line: `make doctor`'s interpreter-selection line -------
+
+
+def test_format_python_line_reports_selection():
+    selection = detect_mod.PythonSelection(
+        selected=detect_mod.PythonCandidate(path="/opt/homebrew/bin/python3.12", version=(3, 12, 4)),
+        best_below_floor=None,
+    )
+    line = doctor_mod.format_python_line(selection)
+    assert "/opt/homebrew/bin/python3.12" in line
+    assert "3.12.4" in line
+
+
+def test_format_python_line_reports_below_floor():
+    selection = detect_mod.PythonSelection(
+        selected=None,
+        best_below_floor=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 9, 18)),
+    )
+    line = doctor_mod.format_python_line(selection)
+    assert "BELOW FLOOR" in line
+    assert "/usr/bin/python3" in line
+    assert "3.9.18" in line
+
+
+def test_format_python_line_reports_not_found():
+    selection = detect_mod.PythonSelection(selected=None, best_below_floor=None)
+    line = doctor_mod.format_python_line(selection)
+    assert "NOT FOUND" in line
+
+
+def test_main_prints_python_selection_line(isolated_config_dir, monkeypatch, capsys):
+    _neutralize_detection(monkeypatch)
+    sources = dict(config_mod.DEFAULT_SOURCES)
+    (isolated_config_dir / "sources.json").write_text(json.dumps(sources))
+
+    doctor_mod.main()
+
+    out = capsys.readouterr().out
+    assert "python3:" in out
+
+
 def test_main_exit_code_nonzero_on_mismatch(isolated_config_dir, monkeypatch, capsys):
     """Simulates the owner's Mac failure end to end through the real CLI
     entry point: a temp config dir with a wrong bd_bin, a real `bd`

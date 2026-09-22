@@ -32,6 +32,8 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 # Binary search order, tried only after `shutil.which(name)` (PATH) has
@@ -54,6 +56,126 @@ BINARY_CANDIDATE_DIRS: list[str] = [
     "/opt/local/bin",
     "/usr/bin",
 ]
+
+# Names to probe when looking for a Python interpreter, tried in this order
+# at each search location (PATH, then each of BINARY_CANDIDATE_DIRS): the
+# bare `python3` first, then versioned names newest to oldest. Real bug
+# this exists to fix: Homebrew's python formula installs the *versioned*
+# binary (e.g. python3.12) into /opt/homebrew/bin and does not always place
+# a `python3` symlink beside it, so a perfectly good interpreter that meets
+# PYTHON_FLOOR was reported "not found" just because it wasn't named
+# `python3`. Versioned names stop at 3.11 -- PYTHON_FLOOR -- since nothing
+# older than the floor is ever worth probing for by name.
+#
+# `git` and `ssh` do NOT get this treatment: they don't have a versioned-
+# binary install convention the way Homebrew's python formula does, so
+# generalizing this beyond python3 would be solving a problem that doesn't
+# exist for them.
+#
+# MUST stay in sync with install.sh's PYTHON_INTERPRETER_NAMES --
+# server/tests/test_install_candidate_dirs.py asserts the two lists agree,
+# the same way it already does for BINARY_CANDIDATE_DIRS above.
+PYTHON_INTERPRETER_NAMES: list[str] = [
+    "python3",
+    "python3.14",
+    "python3.13",
+    "python3.12",
+    "python3.11",
+]
+
+# Minimum (major, minor) this dashboard requires.
+PYTHON_FLOOR: tuple[int, int] = (3, 11)
+
+
+@dataclass
+class PythonCandidate:
+    path: str
+    version: tuple[int, int, int]
+
+
+@dataclass
+class PythonSelection:
+    """Result of select_python(): `selected` is the newest candidate found
+    that meets PYTHON_FLOOR (None if nothing qualified), and
+    `best_below_floor` is the newest candidate found that did NOT meet the
+    floor (None if either nothing was found at all, or something did meet
+    the floor -- callers only need this for the "found but too old"
+    message, which is only relevant when selection failed)."""
+
+    selected: PythonCandidate | None
+    best_below_floor: PythonCandidate | None
+
+
+def _python_version(path: str) -> tuple[int, int, int] | None:
+    """Execute `path` to ask its real version -- never trust the filename.
+    A `python3` on PATH may be 3.9; a name is not a guarantee. Returns None
+    if `path` can't be run or doesn't print a parseable version (e.g. it
+    isn't actually a Python interpreter)."""
+    try:
+        result = subprocess.run(
+            [path, "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.strip().split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return None
+    major, minor, patch = (int(p) for p in parts)
+    return (major, minor, patch)
+
+
+def find_python_candidates(search_dirs: list[str] | None = None) -> list[str]:
+    """Every python3* interpreter found, by filename only (no version
+    check yet -- see select_python()): PATH first (for each name in
+    PYTHON_INTERPRETER_NAMES, in that order), then search_dirs (default
+    BINARY_CANDIDATE_DIRS) for each name in the same order. Deduplicated,
+    order of first appearance preserved."""
+    dirs = BINARY_CANDIDATE_DIRS if search_dirs is None else search_dirs
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for name in PYTHON_INTERPRETER_NAMES:
+        found = shutil.which(name)
+        if found and found not in seen:
+            seen.add(found)
+            candidates.append(found)
+    for name in PYTHON_INTERPRETER_NAMES:
+        for d in dirs:
+            p = Path(d).expanduser() / name
+            sp = str(p)
+            if sp not in seen and p.is_file() and os.access(p, os.X_OK):
+                seen.add(sp)
+                candidates.append(sp)
+    return candidates
+
+
+def select_python(search_dirs: list[str] | None = None) -> PythonSelection:
+    """Pick the best Python interpreter for PYTHON_FLOOR: scan
+    find_python_candidates(), execute each one to confirm its real version,
+    and select the NEWEST candidate that meets the floor -- not merely the
+    first name matched, since a versioned name found later in the probe
+    order (e.g. python3.12) can be newer than an earlier one (e.g. a
+    `python3` that turns out to be 3.9). If nothing meets the floor, still
+    reports the newest below-floor candidate found, if any, so a caller can
+    say "found Python 3.9, need >= 3.11" instead of just "not found"."""
+    best: PythonCandidate | None = None
+    best_below: PythonCandidate | None = None
+    for path in find_python_candidates(search_dirs):
+        version = _python_version(path)
+        if version is None:
+            continue
+        candidate = PythonCandidate(path=path, version=version)
+        if version >= PYTHON_FLOOR:
+            if best is None or version > best.version:
+                best = candidate
+        else:
+            if best_below is None or version > best_below.version:
+                best_below = candidate
+    return PythonSelection(selected=best, best_below_floor=best_below)
 
 # macOS-only candidates for data directories that MIGHT follow the
 # platform's ~/Library/Application Support convention instead of the
