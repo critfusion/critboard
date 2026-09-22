@@ -15,6 +15,7 @@ error: that collector's panel just stays inactive, same as it always has.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -44,7 +45,40 @@ PREREQ_BINARIES: list[tuple[str, str]] = [
     ("ssh", "remote (multi-host fleet collection)"),
     ("git", "worktrees / productivity"),
     ("uv", "dev tooling / self-update"),
+    ("curl", "--start healthz smoke check"),
 ]
+
+# Which check keys are load-bearing for --probe's "ready" verdict (see
+# build_probe below) -- everything else degrades to "that panel stays
+# inactive" per this project's whole collector-availability design (see
+# INSTALL.md's "MISSING is a valid end state"). "python" is handled
+# separately in build_probe (it isn't a single-path PATH_SPECS/
+# PREREQ_BINARIES entry -- see PythonSelection).
+REQUIRED_CHECK_KEYS: frozenset[str] = frozenset({"git"})
+
+# install.sh's --python/--git/--uv/--ssh/--bd/--herdr/--curl overrides are
+# threaded through to this process as CRITDASH_OVERRIDE_* env vars (empty
+# when that flag wasn't passed) -- see install.sh's run_probe(). Binary
+# check key -> env var name.
+_OVERRIDE_ENV_BY_KEY = {
+    "git": "CRITDASH_OVERRIDE_GIT",
+    "uv": "CRITDASH_OVERRIDE_UV",
+    "ssh": "CRITDASH_OVERRIDE_SSH",
+    "curl": "CRITDASH_OVERRIDE_CURL",
+    "bd_bin": "CRITDASH_OVERRIDE_BD",
+    "herdr_bin": "CRITDASH_OVERRIDE_HERDR",
+}
+
+
+def overrides_from_env() -> dict[str, str]:
+    """{check_key: override_path} for every override actually supplied on
+    this run (empty/unset env vars are omitted, not returned as "")."""
+    result = {}
+    for key, env_name in _OVERRIDE_ENV_BY_KEY.items():
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            result[key] = val
+    return result
 
 
 @dataclass
@@ -56,13 +90,25 @@ class PathCheck:
     configured_exists: bool
     detected: str | None
     state: str  # "ok" | "mismatch" | "missing"
+    override: bool = False
 
     @property
     def mismatch(self) -> bool:
         return self.state == "mismatch"
 
 
-def _check_binary(key: str, collector: str, name: str, configured: str | None) -> PathCheck:
+def _check_binary(
+    key: str, collector: str, name: str, configured: str | None, override: str | None = None
+) -> PathCheck:
+    if override:
+        # --python/--git/--uv/--ssh/--bd/--herdr/--curl: used verbatim,
+        # already validated (exists + executable, see install.sh's
+        # validate_binary_override) before this process ever ran --
+        # detection is skipped entirely, not merely preferred.
+        return PathCheck(
+            key=key, kind="binary", collector=collector, configured=override,
+            configured_exists=True, detected=None, state="ok", override=True,
+        )
     configured_exists = bool(configured) and _binary_literally_present(configured)
     detected = detect.resolve_binary(configured, name)
     return _finish(key, "binary", collector, configured, configured_exists, detected)
@@ -107,19 +153,20 @@ def _finish(
     )
 
 
-def build_checks(sources: dict) -> list[PathCheck]:
+def build_checks(sources: dict, overrides: dict[str, str] | None = None) -> list[PathCheck]:
+    overrides = overrides or {}
     checks: list[PathCheck] = []
     for key, kind, collector, bin_name in PATH_SPECS:
         configured = sources.get(key)
         configured = configured if isinstance(configured, str) and configured else None
         if kind == "binary":
-            checks.append(_check_binary(key, collector, bin_name, configured))
+            checks.append(_check_binary(key, collector, bin_name, configured, overrides.get(key)))
         elif kind == "dir":
             checks.append(_check_dir(key, collector, configured))
         else:
             checks.append(_check_file(key, collector, configured))
     for name, collector in PREREQ_BINARIES:
-        checks.append(_check_binary(name, collector, name, name))
+        checks.append(_check_binary(name, collector, name, name, overrides.get(name)))
     return checks
 
 
@@ -160,7 +207,10 @@ def format_python_line(selection: detect.PythonSelection) -> str:
     """One line describing which Python interpreter install.sh/doctor
     would pick right now, and why -- see detect.select_python()'s
     docstring for the selection rule (newest candidate meeting
-    PYTHON_FLOOR, not merely the first name matched)."""
+    PYTHON_FLOOR, not merely the first name matched). Callers that want
+    the CRITDASH_OVERRIDE_PYTHON_PATH override honoured (i.e. everything
+    except the tests exercising this pure-formatting function directly)
+    should check that env var first -- see main()."""
     floor = ".".join(str(p) for p in detect.PYTHON_FLOOR)
     if selection.selected is not None:
         c = selection.selected
@@ -178,12 +228,128 @@ def format_python_line(selection: detect.PythonSelection) -> str:
     return f"python3: NOT FOUND -- tried {tried} on PATH and in: {dirs}"
 
 
+def build_python_probe(floor: str | None = None) -> dict:
+    """The "python" section of --probe's JSON: which interpreter would be
+    (or, with an override, already is) selected, its version, and whether
+    that satisfies PYTHON_FLOOR. CRITDASH_OVERRIDE_PYTHON_PATH/_VERSION
+    (set by install.sh's run_probe() only when --python was passed) are
+    used verbatim when present -- an override skips detect.select_python()
+    entirely, the same as every other override key, and is already known
+    valid (install.sh's validate_python_override ran before this process
+    was ever started)."""
+    floor = floor or ".".join(str(p) for p in detect.PYTHON_FLOOR)
+    override_path = os.environ.get("CRITDASH_OVERRIDE_PYTHON_PATH", "").strip()
+    if override_path:
+        return {
+            "configured": override_path,
+            "selected": override_path,
+            "version": os.environ.get("CRITDASH_OVERRIDE_PYTHON_VERSION", "").strip() or None,
+            "floor": floor,
+            "state": "ok",
+            "required": True,
+            "override": True,
+            "detected_below_floor": None,
+        }
+    selection = detect.select_python()
+    if selection.selected is not None:
+        c = selection.selected
+        return {
+            "configured": None,
+            "selected": c.path,
+            "version": ".".join(str(p) for p in c.version),
+            "floor": floor,
+            "state": "ok",
+            "required": True,
+            "override": False,
+            "detected_below_floor": None,
+        }
+    below = selection.best_below_floor
+    return {
+        "configured": None,
+        "selected": None,
+        "version": None,
+        "floor": floor,
+        "state": "missing",
+        "required": True,
+        "override": False,
+        "detected_below_floor": (
+            {"path": below.path, "version": ".".join(str(p) for p in below.version)}
+            if below is not None else None
+        ),
+    }
+
+
+def build_probe(sources: dict) -> dict:
+    """The full --probe --json payload: install.sh's --probe just prints
+    this. Flat and obvious on purpose (see INSTALL.md "Probe schema" for
+    the field-by-field contract an installing agent parses) -- one entry
+    per tool/data path in "checks" (PATH_SPECS + PREREQ_BINARIES, the same
+    set --doctor's table shows), the Python floor selection separately
+    under "python" (it isn't a single configured path the way the others
+    are), the platform, and one overall "ready" boolean an agent can act
+    on without inspecting every row itself."""
+    overrides = overrides_from_env()
+    checks = build_checks(sources, overrides)
+    python = build_python_probe()
+
+    checks_json = []
+    missing_required = []
+    for c in checks:
+        required = c.key in REQUIRED_CHECK_KEYS
+        checks_json.append({
+            "key": c.key,
+            "kind": c.kind,
+            "collector": c.collector,
+            "configured": c.configured,
+            "configured_exists": c.configured_exists,
+            "detected": c.detected,
+            "state": c.state,
+            "required": required,
+            "override": c.override,
+        })
+        # MISSING blocks readiness only for a required key -- see
+        # REQUIRED_CHECK_KEYS. MISMATCH never blocks readiness, required or
+        # not: it means a working copy of the tool WAS found (just not at
+        # the configured path), so the tool is usable either way -- see
+        # INSTALL.md's MISSING-vs-MISMATCH section.
+        if required and c.state == "missing":
+            missing_required.append(c.key)
+    if python["state"] == "missing":
+        missing_required.append("python")
+
+    return {
+        "ready": len(missing_required) == 0,
+        "platform": detect.current_platform(),
+        "python": python,
+        "checks": checks_json,
+        "missing_required": missing_required,
+    }
+
+
 def main() -> int:
-    cfg = load_config()
-    checks = build_checks(cfg.sources)
+    args = sys.argv[1:]
+    json_mode = "--json" in args
+    cfg = load_config(create=False)
+    overrides = overrides_from_env()
+
+    if json_mode:
+        probe = build_probe(cfg.sources)
+        print(json.dumps(probe, indent=2, sort_keys=True))
+        return 0 if probe["ready"] else 1
+
+    checks = build_checks(cfg.sources, overrides)
     print(format_table(checks))
     print()
-    print(format_python_line(detect.select_python()))
+    override_python_path = os.environ.get("CRITDASH_OVERRIDE_PYTHON_PATH", "").strip()
+    if override_python_path:
+        override_version = os.environ.get("CRITDASH_OVERRIDE_PYTHON_VERSION", "").strip()
+        floor = ".".join(str(p) for p in detect.PYTHON_FLOOR)
+        print(
+            f"python3: using {override_python_path} (version {override_version or '?'}, "
+            f"--python override -- detection skipped, floor >= {floor})"
+        )
+    else:
+        print(format_python_line(detect.select_python()))
     code = exit_code(checks)
     if code != 0:
         mismatched = [c.key for c in checks if c.mismatch]

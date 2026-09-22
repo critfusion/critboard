@@ -289,9 +289,17 @@ class Config:
         return 3.0 if preset == "relaxed" else 1.0
 
 
-def load_config() -> Config:
-    _ensure_sources_file(CONFIG_DIR)
-    _ensure_layout_file(CONFIG_DIR)
+def load_config(create: bool = True) -> Config:
+    """create=False reads config/*.json if present but never creates or
+    modifies anything on disk -- no config/sources.json or
+    config/layout.json bootstrap from the .example files. Used by
+    critdash.doctor (make doctor / install.sh --doctor / --probe), which
+    must be side-effect-free even against a fresh clone that has neither
+    file yet; every other caller (the running app) keeps the default
+    create=True first-run bootstrap."""
+    if create:
+        _ensure_sources_file(CONFIG_DIR)
+        _ensure_layout_file(CONFIG_DIR)
     sources = _load_json(CONFIG_DIR / "sources.json", DEFAULT_SOURCES)
     pricing = _load_json(CONFIG_DIR / "pricing.json", DEFAULT_PRICING)
 

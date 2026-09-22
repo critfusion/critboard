@@ -4,6 +4,7 @@
 # Usage:
 #   ./install.sh [--port N] [--bind ADDR] [--service] [--start] [--help]
 #   ./install.sh --doctor
+#   ./install.sh --probe --json
 #
 #   --port N      Port to listen on. Default: 9999. Ignored if
 #                 config/sources.json already exists (see below).
@@ -21,11 +22,40 @@
 #                 server/data/critdash.pid.
 #   --doctor      Print configured vs. detected tool/data paths (bd_bin,
 #                 herdr_bin, beads_env, claude_projects_dir, kimi_dir,
-#                 overlord_dir, the quota auth paths, plus ssh/git/uv) and
-#                 exit. Non-zero exit means a configured path is missing
+#                 overlord_dir, the quota auth paths, plus ssh/git/uv/curl)
+#                 and exit. Non-zero exit means a configured path is missing
 #                 while critdash.detect found a working one elsewhere --
 #                 the "I have bd installed but the dashboard disagrees" bug.
 #                 Runs nothing else; does not touch config/sources.json.
+#   --probe       Machine-readable version of --doctor, for an installing
+#                 agent instead of a human. Combine with --json (the only
+#                 supported/intended use: `--probe --json`) to print ONE
+#                 JSON object to stdout and nothing else, and touch nothing
+#                 on disk -- no venv, no config/sources.json, no server
+#                 start. Exits 0 if the JSON's "ready" field is true, 1
+#                 otherwise. See INSTALL.md "For coding agents" for the
+#                 schema and the discover -> override -> re-probe loop this
+#                 is built for. `--probe` without `--json` prints the same
+#                 human table as `--doctor`.
+#
+# -- Explicit overrides (skip detection for that one tool, used verbatim) --
+#
+#   An override is validated (existence, executable bit, and -- for
+#   --python -- the version floor below) even though detection is skipped;
+#   an override that fails validation is a hard error, not a silent
+#   fallback to auto-detection. Use these when detection guessed wrong, or
+#   to hand over a tool an installing agent just installed itself.
+#
+#   --python PATH   Exact Python interpreter to use. Must exist, be
+#                   executable, and report version >= 3.11 when run --
+#                   `PATH -c 'import sys; print(sys.version_info[:3])'`.
+#   --git PATH      Exact `git` binary.
+#   --uv PATH       Exact `uv` binary.
+#   --ssh PATH      Exact `ssh` binary (optional feature -- multi-host).
+#   --bd PATH       Exact `bd` (beads) binary (optional feature).
+#   --herdr PATH    Exact `herdr` binary (optional feature).
+#   --curl PATH     Exact `curl` binary (only used by --start's healthz
+#                   check).
 #
 # Idempotent: safe to re-run. A second run never overwrites an existing
 # config/sources.json, never clobbers an already-installed systemd unit
@@ -48,6 +78,20 @@ BIND=127.0.0.1
 DO_SERVICE=0
 DO_START=0
 DO_DOCTOR=0
+DO_PROBE=0
+DO_JSON=0
+
+# Explicit overrides (--python/--git/--uv/--ssh/--bd/--herdr/--curl): empty
+# means "detect it"; non-empty is used verbatim (still validated -- see
+# validate_binary_override()/validate_python_override() below), skipping
+# find_binary()/select_python() entirely for that tool.
+PYTHON_OVERRIDE=""
+GIT_OVERRIDE=""
+UV_OVERRIDE=""
+SSH_OVERRIDE=""
+BD_OVERRIDE=""
+HERDR_OVERRIDE=""
+CURL_OVERRIDE=""
 
 # Binary search order, tried only after PATH (command -v) has already
 # failed. MUST stay in sync with server/critdash/detect.py's
@@ -87,7 +131,7 @@ PYTHON_INTERPRETER_NAMES=(
 )
 
 usage() {
-    sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,67p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -99,6 +143,22 @@ while [ $# -gt 0 ]; do
         --service) DO_SERVICE=1; shift ;;
         --start) DO_START=1; shift ;;
         --doctor) DO_DOCTOR=1; shift ;;
+        --probe) DO_PROBE=1; shift ;;
+        --json) DO_JSON=1; shift ;;
+        --python) PYTHON_OVERRIDE="$2"; shift 2 ;;
+        --python=*) PYTHON_OVERRIDE="${1#*=}"; shift ;;
+        --git) GIT_OVERRIDE="$2"; shift 2 ;;
+        --git=*) GIT_OVERRIDE="${1#*=}"; shift ;;
+        --uv) UV_OVERRIDE="$2"; shift 2 ;;
+        --uv=*) UV_OVERRIDE="${1#*=}"; shift ;;
+        --ssh) SSH_OVERRIDE="$2"; shift 2 ;;
+        --ssh=*) SSH_OVERRIDE="${1#*=}"; shift ;;
+        --bd) BD_OVERRIDE="$2"; shift 2 ;;
+        --bd=*) BD_OVERRIDE="${1#*=}"; shift ;;
+        --herdr) HERDR_OVERRIDE="$2"; shift 2 ;;
+        --herdr=*) HERDR_OVERRIDE="${1#*=}"; shift ;;
+        --curl) CURL_OVERRIDE="$2"; shift 2 ;;
+        --curl=*) CURL_OVERRIDE="${1#*=}"; shift ;;
         # Internal/test-only: prints BINARY_CANDIDATE_DIRS, one per line, so
         # a test can assert it matches detect.py's BINARY_CANDIDATE_DIRS
         # without parsing this script's shell syntax from Python.
@@ -211,6 +271,15 @@ select_python() {
     PYTHON_BIN_VERSION=""
     PYTHON_BELOW_FLOOR_BIN=""
     PYTHON_BELOW_FLOOR_VERSION=""
+    # --python bypasses the scan entirely -- validate_python_override()
+    # (called right after arg parsing, before any of this runs) has already
+    # confirmed PYTHON_OVERRIDE exists, is executable, and meets the floor,
+    # so every caller of select_python() picks it up automatically.
+    if [ -n "$PYTHON_OVERRIDE" ]; then
+        PYTHON_BIN="$PYTHON_OVERRIDE"
+        PYTHON_BIN_VERSION="$(python_interpreter_version "$PYTHON_BIN")"
+        return 0
+    fi
     local candidate version vnum best_num=0 below_num=0
     while IFS= read -r candidate; do
         [ -n "$candidate" ] || continue
@@ -253,27 +322,128 @@ report_binary() {
 
 # Runs `python -m critdash.doctor` (see server/critdash/doctor.py) with
 # whatever Python this install actually has -- the venv if it exists yet
-# (normal case: step 2 below always runs before this is ever called), `uv`
-# if not (found via find_binary, not just PATH), else a bare python3 found
-# the same way (doctor.py is stdlib-only, so this always works even before
-# `make install`/./install.sh has run at all). Self-contained: also called
-# for --doctor before the prerequisites section below has run, so it cannot
-# rely on that section's resolved variables. Propagates doctor's own exit
-# code (0 = no mismatch, 1 = mismatch found).
+# (normal case: step 2 below always runs before this is ever called), else
+# whatever select_python() resolves (an explicit --python override, or the
+# newest candidate meeting the floor, or -- deliberately -- the newest
+# BELOW-floor candidate/bare `python3` if nothing meets it: doctor.py is
+# stdlib-only, so it runs fine even under an old interpreter, and --probe
+# needs to be able to *report* "nothing meets the floor" via that same
+# under-floor interpreter instead of merely failing to run at all).
+# Self-contained: also called for --doctor/--probe before the prerequisites
+# section below has run, so it cannot rely on that section's resolved
+# variables. Extra args ("$@") are passed straight through to
+# `critdash.doctor` -- --probe uses this to pass --json. Propagates
+# doctor's own exit code (0 = no mismatch / probe ready, 1 = mismatch found
+# / probe not ready).
+#
+# Deliberately never uses `uv run` here: uv auto-syncs (creates/updates
+# server/.venv, and can download a whole Python distribution) as a side
+# effect of `uv run` in a project directory with no venv yet -- exactly
+# the change --probe/--doctor must never make. `uv sync` only ever runs
+# explicitly, in step 2 of a real (non-probe, non-doctor) install below.
 run_doctor() {
     if [ -x "$SERVER_DIR/.venv/bin/python" ]; then
-        (cd "$SERVER_DIR" && "$SERVER_DIR/.venv/bin/python" -m critdash.doctor)
-        return $?
-    fi
-    local uv_bin
-    uv_bin="$(find_binary uv)"
-    if [ -n "$uv_bin" ]; then
-        (cd "$SERVER_DIR" && "$uv_bin" run python -m critdash.doctor)
+        (cd "$SERVER_DIR" && "$SERVER_DIR/.venv/bin/python" -m critdash.doctor "$@")
         return $?
     fi
     select_python
-    (cd "$SERVER_DIR" && "${PYTHON_BIN:-python3}" -m critdash.doctor)
+    if [ -z "${PYTHON_BIN:-}" ] && [ -z "${PYTHON_BELOW_FLOOR_BIN:-}" ] && ! command -v python3 >/dev/null 2>&1; then
+        fail "no Python interpreter at all was found (not even one below the 3.11 floor) to run critdash.doctor itself -- install one (e.g. 'brew install python@3.12', or 'uv', which can provision one) or supply it explicitly: ./install.sh --python /path/to/python3"
+    fi
+    (cd "$SERVER_DIR" && "${PYTHON_BIN:-${PYTHON_BELOW_FLOOR_BIN:-python3}}" -m critdash.doctor "$@")
 }
+
+# validate_binary_override NAME PATH -- an override is used verbatim
+# (detection is skipped for that tool entirely), but it is still checked:
+# it must exist and be executable, or the install fails clearly right here
+# instead of limping on with an unusable path. NAME is only used in the
+# message (e.g. "git", "bd").
+validate_binary_override() {
+    local name="$1" path="$2"
+    if [ ! -e "$path" ]; then
+        fail "--$name path does not exist: $path"
+    fi
+    if [ ! -f "$path" ] || [ ! -x "$path" ]; then
+        fail "--$name path is not an executable file: $path"
+    fi
+}
+
+# validate_python_override PATH -- same idea as validate_binary_override,
+# plus the version floor: an override below PY_FLOOR is exactly the
+# "silent wrong interpreter" failure mode this whole flag exists to avoid,
+# so it is a hard, distinct error rather than a generic "not executable".
+validate_python_override() {
+    local path="$1" version vnum
+    if [ ! -e "$path" ]; then
+        fail "--python path does not exist: $path"
+    fi
+    if [ ! -f "$path" ] || [ ! -x "$path" ]; then
+        fail "--python path is not an executable file: $path"
+    fi
+    version="$(python_interpreter_version "$path")"
+    if [ -z "$version" ]; then
+        fail "--python path does not behave like a Python interpreter (running '$path -c \"import sys\"' failed): $path"
+    fi
+    vnum="$(python_version_num "$version")"
+    if [ "$vnum" -lt "$PY_FLOOR_NUM" ]; then
+        fail "--python path $path is version $version, below the required floor of 3.11. It cannot be used. Install a newer interpreter (e.g. 'brew install python@3.12') or install 'uv' (https://docs.astral.sh/uv/), then pass its --python path, or omit --python and let this script find/provision one itself."
+    fi
+}
+
+[ -n "$PYTHON_OVERRIDE" ] && validate_python_override "$PYTHON_OVERRIDE"
+[ -n "$GIT_OVERRIDE" ] && validate_binary_override git "$GIT_OVERRIDE"
+[ -n "$UV_OVERRIDE" ] && validate_binary_override uv "$UV_OVERRIDE"
+[ -n "$SSH_OVERRIDE" ] && validate_binary_override ssh "$SSH_OVERRIDE"
+[ -n "$BD_OVERRIDE" ] && validate_binary_override bd "$BD_OVERRIDE"
+[ -n "$HERDR_OVERRIDE" ] && validate_binary_override herdr "$HERDR_OVERRIDE"
+[ -n "$CURL_OVERRIDE" ] && validate_binary_override curl "$CURL_OVERRIDE"
+
+# Every override (already validated above, or empty) is exported as a
+# CRITDASH_OVERRIDE_* env var unconditionally -- not just for --probe --
+# so any `python -m critdash.doctor` this script runs (--doctor's table,
+# --probe's JSON, or the doctor check step 3 runs mid-install) reports
+# "configured value came from an explicit override, detection was
+# skipped" consistently, regardless of which flag got it there.
+if [ -n "$PYTHON_OVERRIDE" ]; then
+    export CRITDASH_OVERRIDE_PYTHON_PATH="$PYTHON_OVERRIDE"
+    export CRITDASH_OVERRIDE_PYTHON_VERSION="$(python_interpreter_version "$PYTHON_OVERRIDE")"
+else
+    export CRITDASH_OVERRIDE_PYTHON_PATH=""
+    export CRITDASH_OVERRIDE_PYTHON_VERSION=""
+fi
+export CRITDASH_OVERRIDE_GIT="$GIT_OVERRIDE"
+export CRITDASH_OVERRIDE_UV="$UV_OVERRIDE"
+export CRITDASH_OVERRIDE_SSH="$SSH_OVERRIDE"
+export CRITDASH_OVERRIDE_BD="$BD_OVERRIDE"
+export CRITDASH_OVERRIDE_HERDR="$HERDR_OVERRIDE"
+export CRITDASH_OVERRIDE_CURL="$CURL_OVERRIDE"
+
+# run_probe -- the --probe implementation. Delegates to run_doctor (the
+# CRITDASH_OVERRIDE_* env vars above are already set for it). Makes no
+# changes: run_doctor only ever reads (see critdash.doctor's module
+# docstring and config.load_config(create=False)).
+run_probe() {
+    if [ "$DO_JSON" -eq 1 ]; then
+        run_doctor --json
+        local code=$?
+        if [ "$code" -ne 0 ]; then
+            # JSON on stdout stays pure (see the file-header comment) --
+            # this actionable hint goes to stderr. "ready": false only ever
+            # comes from a REQUIRED key ("missing_required" in the JSON) --
+            # today that's exactly {python, git} -- so naming both covers
+            # every case, and the agent can tell which one from the JSON.
+            printf 'install.sh: --probe reports NOT READY (see "missing_required" in the JSON above). If a required tool genuinely is not installed anywhere on this machine, install it (see INSTALL.md), then supply it explicitly and re-probe:\n  ./install.sh --python /path/to/python3.11-or-newer --probe --json\n  ./install.sh --git /path/to/git --probe --json\n' >&2
+        fi
+        return $code
+    else
+        run_doctor
+    fi
+}
+
+if [ "$DO_PROBE" -eq 1 ]; then
+    run_probe
+    exit $?
+fi
 
 if [ "$DO_DOCTOR" -eq 1 ]; then
     run_doctor
@@ -282,11 +452,22 @@ fi
 
 # -- 1. prerequisites ---------------------------------------------------------
 
-report_binary git >/dev/null \
-    || fail "git is required and was not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]}."
+if [ -n "$GIT_OVERRIDE" ]; then
+    log "using git (--git override, detection skipped): $GIT_OVERRIDE"
+else
+    report_binary git >/dev/null \
+        || fail "git is required and was not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]}. Install git, then either add its directory to PATH or supply it explicitly: ./install.sh --git /path/to/git"
+fi
 
 HAVE_UV=0
-UV_BIN="$(report_binary uv)" && HAVE_UV=1
+UV_BIN=""
+if [ -n "$UV_OVERRIDE" ]; then
+    UV_BIN="$UV_OVERRIDE"
+    HAVE_UV=1
+    log "using uv (--uv override, detection skipped): $UV_BIN"
+else
+    UV_BIN="$(report_binary uv)" && HAVE_UV=1
+fi
 
 PY_FLOOR_OK=0
 PYTHON3_BIN=""
@@ -294,21 +475,35 @@ select_python
 if [ -n "$PYTHON_BIN" ]; then
     PY_FLOOR_OK=1
     PYTHON3_BIN="$PYTHON_BIN"
-    if [ "$(command -v "$(basename "$PYTHON_BIN")" 2>/dev/null)" != "$PYTHON_BIN" ]; then
-        log "found '$(basename "$PYTHON_BIN")' outside PATH, at $PYTHON_BIN -- PATH is incomplete in this shell (common in a non-interactive/non-login shell on macOS). Add its directory to PATH (e.g. in ~/.zprofile) to stop relying on this fallback."
+    if [ -n "$PYTHON_OVERRIDE" ]; then
+        log "using Python interpreter (--python override, detection skipped): $PYTHON_BIN (version $PYTHON_BIN_VERSION)."
+    else
+        if [ "$(command -v "$(basename "$PYTHON_BIN")" 2>/dev/null)" != "$PYTHON_BIN" ]; then
+            log "found '$(basename "$PYTHON_BIN")' outside PATH, at $PYTHON_BIN -- PATH is incomplete in this shell (common in a non-interactive/non-login shell on macOS). Add its directory to PATH (e.g. in ~/.zprofile) to stop relying on this fallback."
+        fi
+        log "using Python interpreter: $PYTHON_BIN (version $PYTHON_BIN_VERSION, floor >= 3.11)."
     fi
-    log "using Python interpreter: $PYTHON_BIN (version $PYTHON_BIN_VERSION, floor >= 3.11)."
 fi
 
 if [ "$HAVE_UV" -eq 0 ] && [ "$PY_FLOOR_OK" -eq 0 ]; then
     if [ -n "$PYTHON_BELOW_FLOOR_BIN" ]; then
-        fail "found Python at $PYTHON_BELOW_FLOOR_BIN but it is version $PYTHON_BELOW_FLOOR_VERSION, below the required floor of 3.11. Install a newer Python (e.g. 'brew install python@3.12') or install 'uv' (https://docs.astral.sh/uv/), which can provision a matching Python itself."
+        fail "found Python at $PYTHON_BELOW_FLOOR_BIN but it is version $PYTHON_BELOW_FLOOR_VERSION, below the required floor of 3.11 -- it cannot be used as-is. Install a newer Python (e.g. 'brew install python@3.12') or install 'uv' (https://docs.astral.sh/uv/), which can provision a matching Python itself. Next command once you have one: ./install.sh --python /path/to/python3.11-or-newer (run ./install.sh --probe --json first if you're not sure what's on this machine)."
     else
-        fail "need Python >=3.11 on PATH or in: ${BINARY_CANDIDATE_DIRS[*]} (tried: ${PYTHON_INTERPRETER_NAMES[*]}); or 'uv' installed (https://docs.astral.sh/uv/) -- uv can provision a matching Python itself. Neither was found."
+        fail "need Python >=3.11 on PATH or in: ${BINARY_CANDIDATE_DIRS[*]} (tried: ${PYTHON_INTERPRETER_NAMES[*]}); or 'uv' installed (https://docs.astral.sh/uv/) -- uv can provision a matching Python itself. Neither was found. Next command once you have one: ./install.sh --python /path/to/python3.11-or-newer (run ./install.sh --probe --json first if you're not sure what's on this machine)."
     fi
 fi
 
 for bin in ssh bd herdr; do
+    bin_override=""
+    case "$bin" in
+        ssh) bin_override="$SSH_OVERRIDE" ;;
+        bd) bin_override="$BD_OVERRIDE" ;;
+        herdr) bin_override="$HERDR_OVERRIDE" ;;
+    esac
+    if [ -n "$bin_override" ]; then
+        log "using '$bin' (--$bin override, detection skipped): $bin_override"
+        continue
+    fi
     if ! report_binary "$bin" >/dev/null; then
         # A `case` inside a `$( )` command substitution, with a `(` character
         # inside one of its quoted branches, is a real bash 3.2 parser bug
@@ -321,7 +516,7 @@ for bin in ssh bd herdr; do
             bd) optional_msg="the beads panel stays inactive." ;;
             herdr) optional_msg="pane-level agent detection stays inactive (session-based agent detection from ~/.claude/projects still works)." ;;
         esac
-        log "optional: '$bin' not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]} -- $optional_msg"
+        log "optional: '$bin' not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]} -- $optional_msg If it's installed somewhere else, supply it explicitly: ./install.sh --$bin /path/to/$bin"
     fi
 done
 
@@ -363,7 +558,8 @@ else
     # already fails the whole install if neither is available).
     PY_RUNNER=("$PYTHON3_BIN")
     [ -n "$PYTHON3_BIN" ] || PY_RUNNER=("$UV_BIN" run python3)
-    if ! PORT="$PORT" BIND="$BIND" SRC="$SOURCES_EXAMPLE" DST="$SOURCES_JSON" PYTHONPATH="$SERVER_DIR" "${PY_RUNNER[@]}" - <<'PYEOF'
+    if ! PORT="$PORT" BIND="$BIND" SRC="$SOURCES_EXAMPLE" DST="$SOURCES_JSON" PYTHONPATH="$SERVER_DIR" \
+        BD_OVERRIDE="$BD_OVERRIDE" HERDR_OVERRIDE="$HERDR_OVERRIDE" "${PY_RUNNER[@]}" - <<'PYEOF'
 import json
 import os
 import sys
@@ -383,8 +579,18 @@ doc["bind_host"] = os.environ["BIND"]
 # baked into the example file). Left unchanged (the example's original
 # value) when nothing is found anywhere -- that's a normal "not installed,
 # panel stays inactive" state, not a reason to write a broken value.
+# --bd/--herdr (BD_OVERRIDE/HERDR_OVERRIDE, already validated by
+# validate_binary_override before install.sh got this far) are used
+# verbatim instead, skipping detect.resolve_binary entirely for that key.
 found, not_found = [], []
-for key, name in (("bd_bin", "bd"), ("herdr_bin", "herdr")):
+for key, name, override_env in (
+    ("bd_bin", "bd", "BD_OVERRIDE"), ("herdr_bin", "herdr", "HERDR_OVERRIDE"),
+):
+    override = os.environ.get(override_env, "").strip()
+    if override:
+        doc[key] = override
+        found.append(f"{key}={override} (--{name} override)")
+        continue
     resolved = detect.resolve_binary(doc.get(key), name)
     if resolved:
         doc[key] = resolved
@@ -464,8 +670,13 @@ if [ "$DO_START" -eq 1 ]; then
     else
         [ -x "$SERVER_DIR/.venv/bin/uvicorn" ] \
             || fail "uvicorn not found at $SERVER_DIR/.venv/bin/uvicorn -- step 2 (venv/dependency install) did not complete successfully. Re-run ./install.sh without --start and check its output before retrying --start."
-        CURL_BIN="$(report_binary curl)" \
-            || fail "curl is required to verify the dashboard actually started, and was not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]}."
+        if [ -n "$CURL_OVERRIDE" ]; then
+            CURL_BIN="$CURL_OVERRIDE"
+            log "using curl (--curl override, detection skipped): $CURL_BIN"
+        else
+            CURL_BIN="$(report_binary curl)" \
+                || fail "curl is required to verify the dashboard actually started, and was not found on PATH or in: ${BINARY_CANDIDATE_DIRS[*]}. Supply it explicitly: ./install.sh --curl /path/to/curl --start"
+        fi
 
         # setsid (falling back to plain nohup if setsid isn't available) fully
         # detaches the new process into its own session -- plain `nohup ... &`

@@ -5,6 +5,7 @@ is installed but the dashboard says it isn't"."""
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -217,3 +218,199 @@ def test_main_exit_code_nonzero_on_mismatch(isolated_config_dir, monkeypatch, ca
     assert code == 1
     assert "MISMATCH" in out
     assert "bd_bin" in out
+
+
+# -- build_probe / --probe --json ------------------------------------------
+
+
+@pytest.fixture
+def _clear_override_env(monkeypatch):
+    """Every CRITDASH_OVERRIDE_* env var (install.sh's --python/--git/
+    --uv/--ssh/--bd/--herdr/--curl bridge -- see doctor.overrides_from_env
+    and build_python_probe) cleared, so a test starts from "no override
+    supplied" regardless of what's in the real shell running the suite."""
+    for name in (
+        "CRITDASH_OVERRIDE_PYTHON_PATH", "CRITDASH_OVERRIDE_PYTHON_VERSION",
+        "CRITDASH_OVERRIDE_GIT", "CRITDASH_OVERRIDE_UV", "CRITDASH_OVERRIDE_SSH",
+        "CRITDASH_OVERRIDE_BD", "CRITDASH_OVERRIDE_HERDR", "CRITDASH_OVERRIDE_CURL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_build_probe_ready_true_when_everything_optional_is_missing(monkeypatch, _clear_override_env):
+    """The DoD-2 shape: bd/herdr/uv (and every data path) missing is fine
+    -- only python and git are required, so ready stays true."""
+    _neutralize_detection(monkeypatch)
+    selection = detect_mod.PythonSelection(
+        selected=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 12, 1)),
+        best_below_floor=None,
+    )
+    monkeypatch.setattr(detect_mod, "select_python", lambda: selection)
+
+    probe = doctor_mod.build_probe({})
+
+    assert probe["python"]["state"] == "ok"
+    bd = next(c for c in probe["checks"] if c["key"] == "bd_bin")
+    herdr = next(c for c in probe["checks"] if c["key"] == "herdr_bin")
+    uv = next(c for c in probe["checks"] if c["key"] == "uv")
+    assert bd["state"] == "missing" and bd["required"] is False
+    assert herdr["state"] == "missing" and herdr["required"] is False
+    assert uv["state"] == "missing" and uv["required"] is False
+    git = next(c for c in probe["checks"] if c["key"] == "git")
+    assert git["state"] == "missing" and git["required"] is True
+    # git missing too -> genuinely not ready (this variant has no git
+    # candidate at all -- see the "ready true" case below for the full
+    # DoD-2 shape with git present).
+    assert probe["ready"] is False
+    assert "git" in probe["missing_required"]
+
+
+def test_build_probe_ready_true_with_git_and_python_present(monkeypatch, _clear_override_env):
+    _neutralize_detection(monkeypatch)
+    selection = detect_mod.PythonSelection(
+        selected=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 12, 1)),
+        best_below_floor=None,
+    )
+    monkeypatch.setattr(detect_mod, "select_python", lambda: selection)
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: "/usr/bin/git" if name == "git" else None)
+
+    probe = doctor_mod.build_probe({})
+
+    assert probe["ready"] is True
+    assert probe["missing_required"] == []
+    git = next(c for c in probe["checks"] if c["key"] == "git")
+    assert git["state"] == "ok"
+
+
+def test_build_probe_ready_false_when_nothing_meets_python_floor(monkeypatch, _clear_override_env):
+    """The DoD-3 shape: a below-floor interpreter was found (so the "found
+    but too old" detail is populated), but nothing meets 3.11 anywhere --
+    genuinely unsatisfiable without an override or a fresh install."""
+    _neutralize_detection(monkeypatch)
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: "/usr/bin/git" if name == "git" else None)
+    selection = detect_mod.PythonSelection(
+        selected=None,
+        best_below_floor=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 9, 18)),
+    )
+    monkeypatch.setattr(detect_mod, "select_python", lambda: selection)
+
+    probe = doctor_mod.build_probe({})
+
+    assert probe["ready"] is False
+    assert probe["missing_required"] == ["python"]
+    assert probe["python"]["state"] == "missing"
+    assert probe["python"]["detected_below_floor"] == {"path": "/usr/bin/python3", "version": "3.9.18"}
+
+
+def test_build_probe_python_override_skips_detection(monkeypatch, _clear_override_env):
+    monkeypatch.setattr(
+        detect_mod, "select_python",
+        lambda: (_ for _ in ()).throw(AssertionError("select_python() must not run when overridden")),
+    )
+    monkeypatch.setenv("CRITDASH_OVERRIDE_PYTHON_PATH", "/opt/homebrew/bin/python3.12")
+    monkeypatch.setenv("CRITDASH_OVERRIDE_PYTHON_VERSION", "3.12.4")
+
+    py = doctor_mod.build_python_probe()
+
+    assert py == {
+        "configured": "/opt/homebrew/bin/python3.12",
+        "selected": "/opt/homebrew/bin/python3.12",
+        "version": "3.12.4",
+        "floor": "3.11",
+        "state": "ok",
+        "required": True,
+        "override": True,
+        "detected_below_floor": None,
+    }
+
+
+def test_build_probe_binary_override_skips_detection(monkeypatch, _clear_override_env):
+    calls = []
+    real_resolve_binary = detect_mod.resolve_binary
+
+    def _tracking_resolve_binary(*a, **k):
+        calls.append(a)
+        return real_resolve_binary(*a, **k)
+
+    monkeypatch.setattr(detect_mod, "resolve_binary", _tracking_resolve_binary)
+    monkeypatch.setenv("CRITDASH_OVERRIDE_BD", "/custom/path/bd")
+
+    checks = doctor_mod.build_checks({}, doctor_mod.overrides_from_env())
+
+    bd = next(c for c in checks if c.key == "bd_bin")
+    assert bd.state == "ok"
+    assert bd.configured == "/custom/path/bd"
+    assert bd.override is True
+    # herdr_bin has no override -- it's still resolved normally -- but
+    # bd_bin's key never reaches resolve_binary() at all when overridden.
+    assert not any(call[1] == "bd" for call in calls)
+    assert any(call[1] == "herdr" for call in calls)
+
+
+def test_overrides_from_env_omits_unset_vars(_clear_override_env, monkeypatch):
+    monkeypatch.setenv("CRITDASH_OVERRIDE_GIT", "/x/git")
+    assert doctor_mod.overrides_from_env() == {"git": "/x/git"}
+
+
+def test_build_probe_missing_optional_never_blocks_ready(monkeypatch, _clear_override_env):
+    """MISSING (a configured/default path with no working alternative
+    anywhere) is a valid end state for every optional key -- see
+    INSTALL.md's MISSING-vs-MISMATCH section. Only python/git block
+    readiness."""
+    _neutralize_detection(monkeypatch)
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: "/usr/bin/git" if name == "git" else None)
+    selection = detect_mod.PythonSelection(
+        selected=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 12, 1)),
+        best_below_floor=None,
+    )
+    monkeypatch.setattr(detect_mod, "select_python", lambda: selection)
+
+    probe = doctor_mod.build_probe({"bd_bin": "/no/such/bd"})
+
+    assert probe["ready"] is True
+    bd = next(c for c in probe["checks"] if c["key"] == "bd_bin")
+    assert bd["state"] == "missing"
+
+
+def test_build_probe_mismatch_does_not_block_ready(tmp_path, monkeypatch, _clear_override_env):
+    """MISMATCH (configured path wrong, but a working one exists
+    elsewhere) never blocks readiness either, even for a required key --
+    the tool IS usable, just worth fixing in sources.json/the override."""
+    candidate_dir = tmp_path / "candidate-bin"
+    candidate_dir.mkdir()
+    real_git = candidate_dir / "git"
+    real_git.write_text("#!/bin/sh\n")
+    real_git.chmod(0o755)
+    monkeypatch.setattr(detect_mod, "BINARY_CANDIDATE_DIRS", [str(candidate_dir)])
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: None)
+    selection = detect_mod.PythonSelection(
+        selected=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 12, 1)),
+        best_below_floor=None,
+    )
+    monkeypatch.setattr(detect_mod, "select_python", lambda: selection)
+
+    probe = doctor_mod.build_probe({})
+
+    git = next(c for c in probe["checks"] if c["key"] == "git")
+    assert git["state"] == "mismatch"
+    assert probe["ready"] is True
+    assert probe["missing_required"] == []
+
+
+def test_main_json_mode_prints_parseable_json(isolated_config_dir, monkeypatch, capsys, _clear_override_env):
+    _neutralize_detection(monkeypatch)
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: "/usr/bin/git" if name == "git" else None)
+    selection = detect_mod.PythonSelection(
+        selected=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 12, 1)),
+        best_below_floor=None,
+    )
+    monkeypatch.setattr(detect_mod, "select_python", lambda: selection)
+    monkeypatch.setattr(sys, "argv", ["critdash.doctor", "--json"])
+
+    code = doctor_mod.main()
+
+    out = capsys.readouterr().out
+    doc = json.loads(out)
+    assert code == 0
+    assert doc["ready"] is True
+    assert "checks" in doc and "python" in doc and "platform" in doc

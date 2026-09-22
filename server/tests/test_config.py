@@ -122,6 +122,35 @@ def test_load_config_leaves_existing_sources_untouched(isolated_config_dir):
     assert cfg.sources["bind_host"] == "0.0.0.0"
 
 
+def test_load_config_create_false_does_not_bootstrap_files(isolated_config_dir):
+    """critdash.doctor (make doctor / install.sh --doctor / --probe) must
+    be side-effect-free even against a fresh clone that has neither
+    config/sources.json nor config/layout.json yet -- create=False reads
+    (falling back to DEFAULT_SOURCES) without ever writing either file."""
+    (isolated_config_dir / "sources.example.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, host="from-example"))
+    )
+
+    cfg = config_mod.load_config(create=False)
+
+    assert not (isolated_config_dir / "sources.json").exists()
+    assert not (isolated_config_dir / "layout.json").exists()
+    # Still usable: falls back to DEFAULT_SOURCES (mirroring _load_json's
+    # own missing-file fallback) rather than erroring.
+    assert cfg.sources["bind_port"] == 9999
+
+
+def test_load_config_create_false_still_reads_existing_sources(isolated_config_dir):
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, host="real-machine"))
+    )
+
+    cfg = config_mod.load_config(create=False)
+
+    assert cfg.sources["host"] == "real-machine"
+    assert not (isolated_config_dir / "layout.json").exists()
+
+
 def test_load_config_env_overrides_bind_host_and_port(isolated_config_dir, monkeypatch):
     (isolated_config_dir / "sources.example.json").write_text(json.dumps(config_mod.DEFAULT_SOURCES))
     monkeypatch.setenv("CRITDASH_BIND_HOST", "0.0.0.0")

@@ -2,57 +2,182 @@
 
 ## For coding agents
 
-One-liner, from a fresh clone of `critfusion/critboard`:
+Run this loop. It needs no human, on any machine, including one you've
+never seen before:
 
-```sh
-./install.sh --port 9999 --bind 127.0.0.1 --start
+```
+1. Probe:    ./install.sh --probe --json
+2. Not ready, or an optional tool you want is "missing"?
+   Discover or install the missing piece yourself -- see "Installing
+   missing prerequisites" below. You are authorised to do this.
+3. Supply it: --python/--git/--uv/--ssh/--bd/--herdr/--curl PATH on the
+   command line (an override), or just re-probe if you installed it at
+   a normal location -- detection usually finds it without one.
+4. Re-run the probe (step 1). Repeat until "ready" is true.
+5. Install for real, carrying over any override flags from step 3:
+     ./install.sh --port 9999 --bind 127.0.0.1 --start
+6. Verify:
+     make doctor                                    # exits 0
+     curl -fs http://127.0.0.1:9999/api/healthz      # {"ok":true,...}
 ```
 
-Success check:
+Read **"MISSING vs MISMATCH"** below before step 2 -- it is the single
+most common way an agent with install authority does the wrong thing
+here (see the beads-server-on-a-laptop example).
 
-```sh
-curl -fs http://127.0.0.1:9999/api/healthz
+### Probe schema (`./install.sh --probe --json`)
+
+Prints one JSON object to stdout and nothing else. Makes **no changes** --
+no venv, no `config/sources.json`, no server start; safe to run any number
+of times, on a totally fresh clone. Pipe it through `python3 -m json.tool`
+to confirm it parses. Exits `0` if `"ready"` is `true`, `1` otherwise (so
+a script can check the exit code alone, without parsing JSON, if that's
+all it needs).
+
+Top level:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ready` | bool | `true` unless a **required** item is `missing`. A `mismatch` never blocks readiness -- see "MISSING vs MISMATCH". |
+| `platform` | string | `"Linux"`, `"Darwin"` (macOS), or `"Windows"`. |
+| `python` | object | The Python selection (see below) -- not a `checks[]` row, since it's a >=3.11 floor over every candidate found, not one configured path. |
+| `checks` | array | One object per tool/data path -- see below. |
+| `missing_required` | array of string | Check keys (plus `"python"` if applicable) that are `missing` AND `required`. Empty exactly when `ready` is `true` -- this is the punch list. |
+
+Each `checks[]` entry:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `key` | string | `bd_bin`, `herdr_bin`, `git`, `uv`, `ssh`, `curl`, `claude_projects_dir`, `kimi_dir`, `overlord_dir`, `beads_env`, `opencode_auth_path`, `grok_auth_path`, `codex_auth_path`. |
+| `kind` | string | `"binary"` \| `"dir"` \| `"file"`. |
+| `collector` | string | Which panel/feature this powers, e.g. `"beads"`, `"agents (pane detection) / remote"`. |
+| `configured` | string or null | The value in `config/sources.json`, or the `--<key>` override if one was supplied, or `null` if unset. |
+| `configured_exists` | bool | Whether `configured` itself resolves on this machine. |
+| `detected` | string or null | What detection found instead. Always `null` when `override` is `true` -- detection is skipped entirely, not merely preferred. |
+| `state` | string | `"ok"` \| `"missing"` \| `"mismatch"` -- see "MISSING vs MISMATCH". |
+| `required` | bool | `true` only for `git` (`python`, at the top level, is also always required). Every other key is optional -- its collector/panel just stays inactive without it. |
+| `override` | bool | `true` if this key's value came from an explicit `--<key>` flag. |
+
+`python` (top level -- same idea, different shape, since it's a floor over
+several candidates rather than one configured path):
+
+| Field | Meaning |
+|---|---|
+| `configured` / `selected` | Both the same interpreter path once one is chosen, or both `null` if nothing satisfies the floor. |
+| `version` | `"X.Y.Z"`, or `null`. |
+| `floor` | `"3.11"` -- this dashboard's minimum (`datetime.UTC`, used throughout the backend). |
+| `state` | `"ok"` or `"missing"`. |
+| `required` | Always `true`. |
+| `override` | `true` if `--python PATH` was supplied (verbatim, detection skipped). |
+| `detected_below_floor` | `{"path": ..., "version": ...}` if a too-old interpreter was found -- so you know exactly what's on the machine even though it can't be used -- else `null`. |
+
+Trimmed example:
+
+```json
+{
+  "ready": true,
+  "platform": "Linux",
+  "python": {
+    "configured": null, "selected": "/usr/bin/python3", "version": "3.13.5",
+    "floor": "3.11", "state": "ok", "required": true, "override": false,
+    "detected_below_floor": null
+  },
+  "checks": [
+    {
+      "key": "bd_bin", "kind": "binary", "collector": "beads",
+      "configured": "~/.local/bin/bd", "configured_exists": true,
+      "detected": "/home/user/.local/bin/bd", "state": "ok",
+      "required": false, "override": false
+    }
+  ],
+  "missing_required": []
+}
 ```
 
-returns `{"ok":true,...}`. If `--start` was omitted, run `make run` first
-(foreground) or `./install.sh --service` (systemd --user, survives logout).
+`./install.sh --doctor` is the same data as a human-readable table instead
+of JSON (`--probe` alone, without `--json`, prints the same table). `make
+doctor` runs `--doctor`.
 
-Nothing else is required before the check above passes. `git` and either
-`uv` or `python3 >=3.11` must be installed -- on `PATH`, or in one of the
-install locations `install.sh` also checks (see "Tool & data path
-detection" below; this matters on macOS, where a non-interactive shell
-often lacks Homebrew's directories on `PATH` even though the tools are
-right there). `install.sh` verifies this itself, says when it had to fall
-back off `PATH` to find one, and fails with a clear message naming what's
-missing -- it does not silently continue with an unusable interpreter.
+### MISSING vs MISMATCH -- read this before installing anything
 
-**Required next step -- run the doctor and fix any mismatch it reports:**
+This distinction has already confused both a human and an agent working
+on this project. Get it wrong and you'll install services nobody asked
+for, or "fix" configuration that was never broken.
 
-```sh
-make doctor
-# or, if `make` isn't available:
-./install.sh --doctor
-```
+- **`MISSING`** -- the configured value (or nothing, if unset) doesn't
+  exist, **and nothing else was found either.** This is a **valid end
+  state**, not a problem: that tool genuinely isn't installed on this
+  machine, and its panel/collector simply stays inactive. For every
+  *optional* key (everything except `git`/`python`), `missing` is fine
+  and `ready` stays `true`. **Do not install something just because its
+  check says `missing`** -- an agent with install authority that does
+  this will install a beads server (`bd`) on a laptop that never wanted
+  one, because the `beads` panel happened to be `missing`. Only install a
+  missing *optional* tool if the person/task actually wants that feature
+  active. `git` and `python` are the exception: they're `required`, so
+  their `missing` state does block `ready` and does mean "go get one" --
+  see "Installing missing prerequisites" below.
+- **`MISMATCH`** -- the configured value doesn't exist, but detection
+  found a **working** one somewhere else (e.g. `bd_bin` says
+  `~/.local/bin/bd` but `bd` is actually at `/opt/homebrew/bin/bd` on this
+  Mac). The tool **is** installed and **is** usable right now -- detection
+  already resolves it live, every time, independent of `config/sources.json`
+  -- but the configured path is stale and worth fixing so the doctor table
+  (and a human reading `config/sources.json`) isn't misleading. Fix it by
+  editing that key in `config/sources.json` to the `detected` value, or by
+  passing the matching `--<key>` override on your next `./install.sh` run.
+  **Never** treat `mismatch` as a reason to install anything -- the tool
+  is already there.
 
-This prints, for every tool/data path CritBoard uses, the value configured
-in `config/sources.json`, whether that exact value exists, what was
-actually detected on this machine, and the resulting state (`OK` /
-`MISMATCH` / `MISSING`). It exits non-zero only on `MISMATCH`. Two outcomes
-need different handling:
+### Installing missing prerequisites
 
-- **`MISSING`** (configured path doesn't exist, and nothing else was found
-  either): fine, do nothing. That tool simply isn't installed on this
-  machine, and its panel stays inactive -- this is a normal, expected state,
-  not a bug.
-- **`MISMATCH`** (configured path doesn't exist, but a working one WAS
-  found elsewhere -- e.g. `bd_bin` says `~/.local/bin/bd` but `bd` is
-  actually at `/opt/homebrew/bin/bd` on this Mac): **fix it.** Edit the
-  matching key in `config/sources.json` to the value in doctor's
-  `DETECTED` column, then re-run `make doctor` to confirm it now shows
-  `OK`. This is exactly the bug that motivated this command: a tool IS
-  installed, just not where the config says, and the dashboard would
-  otherwise report it as "not configured" forever. See "Tool & data path
-  detection" below for the full table of what's checked and where.
+The owner has explicitly authorised an installing agent to **install
+missing prerequisites** -- you do not need to stop and ask a human for
+permission to install `git`, a newer Python, `uv`, `bd`, or `herdr`. You
+do need to follow these rules:
+
+1. **Prefer user-local installs that need no `sudo`.** [`uv`](https://docs.astral.sh/uv/)
+   installs into `~/.local/bin` with a single unprivileged command and can
+   provision its own Python (`uv python install 3.12`) even when the
+   system Python is too old or missing -- this resolves the common case
+   without touching a system package manager at all:
+   ```sh
+   curl -LsSf https://astral.sh/uv/install.sh | sh   # installs to ~/.local/bin
+   ```
+   Reach for Homebrew (macOS) or `apt`/`dnf`/etc. (Linux) only when `uv`
+   genuinely cannot provide what's missing (e.g. `git` itself, or `bd`/
+   `herdr`, which `uv` doesn't package).
+2. **Never run `sudo` silently.** If a step genuinely requires it (e.g. no
+   Homebrew and no user-local package manager, `apt install git` on a
+   fresh Debian box), **stop and report** the exact command a human needs
+   to run -- do not escalate privileges on your own.
+3. **Never modify or replace the system interpreter.** `/usr/bin/python3`
+   on macOS belongs to Apple; the equivalent on most Linux distros belongs
+   to the package manager. Install a new interpreter alongside it (via
+   Homebrew, `uv python install`, or the distro's versioned package, e.g.
+   `python3.12`) and point `--python` at that -- never overwrite, symlink
+   over, or `pip install --upgrade` into the system one.
+4. **Report every package installed.** State plainly what you ran and
+   what it added (e.g. "ran `brew install python@3.12`, installed
+   `/opt/homebrew/bin/python3.12`") so the machine's owner can see what
+   changed on their machine.
+5. **Be idempotent.** Check first (see "Discovery commands" below) and
+   skip the install step entirely if the tool is already present --
+   re-running this loop must never reinstall what's already there.
+
+**Discovery commands** (run these instead of guessing where something
+might be -- they're what `install.sh` itself checks, see "Tool & data path
+detection" below):
+
+| Looking for | Command |
+|---|---|
+| Any tool on `PATH` | `command -v <name>` |
+| Homebrew's prefix (macOS) | `brew --prefix` (then look in `<prefix>/bin`) |
+| Every versioned Python in a prefix | `ls <prefix>/bin/python3.*` (e.g. `ls /opt/homebrew/bin/python3.*` or `ls /usr/local/bin/python3.*`) |
+| A Python's real version (never trust the filename) | `<path> -c 'import sys; print(sys.version_info[:3])'` |
+| Whether `uv` is already here | `command -v uv` or `ls ~/.local/bin/uv` |
+| `uv`-provisioned Pythons | `uv python list` |
+| Whether Homebrew itself is installed | `command -v brew` |
 
 **Platforms:** Linux and macOS. The system panel (load average, memory,
 disk) uses `os.getloadavg()` and `/proc/meminfo` on Linux, `sysctl`/`vm_stat`
@@ -94,6 +219,17 @@ system bash may be shadowing it on `PATH`.
 error** if neither is satisfiable. It checks `ssh`/`bd`/`herdr` too, but only
 **warns** for each missing one and says exactly which feature stays
 inactive -- it never blocks the install over them.
+
+**Explicit overrides:** every tool above (plus `curl`, used only by
+`--start`'s healthz check) can be pinned with `--<name> PATH` --
+`--python`, `--git`, `--uv`, `--ssh`, `--bd`, `--herdr`, `--curl`. An
+override is used verbatim, skipping detection entirely for that tool, but
+is still validated: it must exist and be executable (and, for `--python`,
+meet the 3.11 floor) or `install.sh` fails immediately with a specific
+message -- never a silent fall-through to an unusable path. Use these when
+detection guessed wrong, or to hand a just-installed tool straight to
+`install.sh` without relying on it being found again. See `./install.sh
+--help` and "Probe schema" above.
 
 ## Steps (what `install.sh` does)
 
@@ -165,6 +301,7 @@ commit/branch (used by the self-update check -- see `SPEC.md`).
 | `./install.sh --service` | systemd --user unit, survives logout/reboot. `systemctl --user status critdash.service` / `journalctl --user -u critdash.service -f`. |
 | `make test` | Backend test suite (requires `uv`). |
 | `make doctor` / `./install.sh --doctor` | Configured vs. detected tool/data paths, one table. Exits non-zero on a `MISMATCH`. See "Tool & data path detection" below. |
+| `./install.sh --probe --json` | Same data as `--doctor`, as one JSON object for a script/agent -- no side effects. See "Probe schema" above. |
 | `make check` | `scripts/check-public.sh` -- the sanitization regression guard (only meaningful if you're working in a clone of this repo, not a downstream deploy). |
 | `make update` | `git pull --ff-only` + reinstall deps if the lockfile changed. Or use the in-app self-update API -- see `SPEC.md`'s `/api/update/*` contract; it's off by default (`allow_self_update: false`). |
 
@@ -278,8 +415,12 @@ installed on a Mac, but `config/sources.json` still had the Debian path
 
 Also checked (not `sources.json` keys -- always looked up by name, reported
 by doctor for completeness): `ssh` (multi-host fleet collection), `git`
-(worktrees/productivity), `uv` (dev tooling / self-update), using the same
-PATH-then-candidate-directories search order as `bd_bin`.
+(worktrees/productivity), `uv` (dev tooling / self-update), `curl`
+(`--start`'s healthz check), using the same PATH-then-candidate-directories
+search order as `bd_bin`. Any of the nine keys above -- and `git`/`uv`/`ssh`/
+`curl` -- can be pinned with an explicit `--<name> PATH` override, which
+skips this whole search for that one key. See "Explicit overrides" under
+"Prerequisites" above.
 
 None of the macOS Application Support candidates above are confirmed to be
 used by any of these tools in practice -- this dashboard has not been run
