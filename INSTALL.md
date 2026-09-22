@@ -293,6 +293,115 @@ curl -s http://127.0.0.1:9999/api/version
 Reports the running build hash and, if this is a git checkout, the current
 commit/branch (used by the self-update check -- see `SPEC.md`).
 
+## Setting up beads (optional work-queue integration)
+
+Beads (`bd`) is the work-queue CLI CritBoard's `beads` panel talks to.
+It is **optional** -- skip this whole section if you don't use beads.
+Without `bd`, the panel auto-detects as inactive (see "MISSING vs
+MISMATCH" above) and every other panel works fine; nothing else in the
+dashboard depends on it. Canonical project:
+[gastownhall/beads](https://github.com/gastownhall/beads) -- a previous,
+incorrect repo reference elsewhere in this project's docs has been fixed
+to point here.
+
+### 1. Detect
+
+```sh
+command -v bd
+```
+
+Found -- skip to step 3. Not found -- only install it if beads is
+actually wanted here (a `missing` `bd_bin` check by itself is not a
+reason to install anything -- see "MISSING vs MISMATCH" above).
+
+### 2. Install `bd` (only if wanted and missing)
+
+Pick one, in this order of preference (user-local first, no `sudo`):
+
+```sh
+brew install beads                     # macOS/Linux, if Homebrew is present
+npm install -g @beads/bd               # if npm is present
+curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash
+```
+
+Same install-authority rules as "Installing missing prerequisites" above:
+prefer the user-local path, never a silent `sudo`, report exactly what you
+ran and what it added, and check `command -v bd` first so re-running this
+step never reinstalls what's already there.
+
+### 3. Choose embedded vs. server
+
+Two storage modes:
+
+- **Embedded (default recommendation).** `bd init` creates a local
+  [Dolt](https://www.dolthub.com/) database under `.beads/embeddeddolt/`.
+  Single writer, nothing to run, no credentials. This is what a new user
+  wants: their own local tracker, not someone else's server.
+- **Server.** `bd init --server` connects to an external `dolt
+  sql-server` for concurrent writers across machines. This is "joining an
+  existing fleet," not a fresh setup -- it needs a host, port, and
+  credentials that live outside this repo and that an installing agent
+  cannot invent. **Stop and ask the human for the connection details
+  instead of guessing; do not run `bd init --server` speculatively.**
+
+Default to embedded unless you were explicitly told to join a server.
+
+### 4. Initialise safely -- protect this repo's `AGENTS.md`
+
+**Trap:** `bd init` creates or updates an `AGENTS.md` in the current
+directory and installs Claude/Codex integrations there by default.
+CritBoard already has its own `AGENTS.md` at the repo root (an unrelated
+agent pointer) -- running plain `bd init` inside this checkout overwrites
+it.
+
+```sh
+bd init --skip-agents          # embedded, run from inside this checkout
+```
+
+If you'd rather keep CritBoard's own beads workspace (tracking work on
+this dashboard itself) fully separate from the repo, initialise it in a
+directory outside the checkout instead (that directory's own `.beads/`
+subdirectory is the workspace -- point `BEADS_DIR` at `<that
+directory>/.beads`, e.g. from a `beads_env` file, or run `bd where` from
+inside it to confirm the resolved path). `--skip-agents` is required
+either way if you run `bd init` from inside this repo -- never let it
+touch this repo's `AGENTS.md`.
+
+### 5. Verify
+
+```sh
+bd list --json --all --limit 0    # -> "[]" or a JSON array, exit 0
+```
+
+### 6. Point CritBoard at it
+
+In `config/sources.json`:
+
+- `bd_bin` -- the path `command -v bd` resolved. Leave the shipped
+  default (`~/.local/bin/bd`) if that's where it landed; `install.sh` and
+  the running dashboard re-resolve it live against PATH and the usual
+  install locations regardless (see "Tool & data path detection" below),
+  so an exact match needs no edit.
+- `beads_env` -- leave empty unless your `bd` setup specifically needs a
+  sourced env file for credentials (typical of server mode). An embedded,
+  `bd init`-created workspace needs none.
+
+Then confirm the panel is live:
+
+```sh
+curl -s http://127.0.0.1:9999/api/healthz | python3 -c \
+  'import json,sys; d=json.load(sys.stdin)["collectors"]["beads"]; print(d["ok"], d["reason_code"])'
+# -> True None
+```
+
+`beads` staying `false` with `reason_code: "dependency_missing"` after
+this means `bd_bin` still isn't resolving -- re-run `./install.sh
+--doctor` and check the `bd_bin` row.
+
+Beads stays optional end to end: an agent that can't install it, or a
+user who doesn't want it, leaves the `beads` panel inactive and every
+other panel is unaffected.
+
 ## Running it day to day
 
 | Command | What it does |

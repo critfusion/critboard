@@ -6,32 +6,41 @@ what they cost, and why work is or is not moving.
 **It makes no LLM calls.** Every number comes from session logs, git, and
 provider metadata already on your disk, so running it costs nothing.
 
-## Install
+## What this repo is
+
+CritBoard is a **template plus a runbook**, not a hosted app you pull and
+open. `git clone` gets you the code and nothing configured for your
+machine yet. The entry point is [INSTALL.md](INSTALL.md): an executable
+runbook written for a coding agent to run on your behalf, including
+installing anything missing and configuring the optional integrations
+(beads, `herdr`, multi-host fleets) that need choices only you can make.
+
+That said, the gap isn't total. On a machine that already has `git` and a
+suitable Python (`>=3.11`, or `uv` to provision one), this genuinely works
+with no agent involved:
 
 ```sh
 git clone https://github.com/critfusion/critboard.git
 cd critboard
 ./install.sh --port 9999 --bind 127.0.0.1 --start
-```
-
-Then open <http://127.0.0.1:9999/>.
-
-Success check:
-
-```sh
 curl -fs http://127.0.0.1:9999/api/healthz    # -> {"ok":true,...}
 ```
 
-Only `git` and either `uv` or `python3 >=3.11` are required. `install.sh`
-checks both and fails with a message naming what is missing.
+That brings up a running dashboard at <http://127.0.0.1:9999/> with a venv,
+dependencies, and a machine-detected `config/sources.json` -- core panels
+(agents, worktrees, usage, system) work immediately. What it will **not**
+do for you: point `repo_roots` at your actual projects, pick a title, or
+install and wire up optional integrations (`bd`/beads, `herdr`, remote
+hosts, quota auth) -- those are exactly what an agent following
+[INSTALL.md](INSTALL.md) does next.
 
-Then run `make doctor` (or `./install.sh --doctor`) and fix any `MISMATCH`
-it reports -- it resolves `bd`/`herdr`/etc. against where they actually are
-on this machine (Homebrew, MacPorts, `~/.local/bin`, ...) instead of
-trusting one machine's baked-in path, and tells you exactly what to change
-in `config/sources.json` if a tool you have installed still shows up as
-"not configured". Full options, systemd setup and uninstall:
-[INSTALL.md](INSTALL.md).
+After either path, run `make doctor` (or `./install.sh --doctor`) and fix
+any `MISMATCH` it reports -- it resolves `bd`/`herdr`/etc. against where
+they actually are on this machine (Homebrew, MacPorts, `~/.local/bin`,
+...) instead of trusting one machine's baked-in path, and tells you
+exactly what to change in `config/sources.json` if a tool you have
+installed still shows up as "not configured". Full options, systemd setup,
+beads setup and uninstall: [INSTALL.md](INSTALL.md).
 
 ## What it tracks
 
@@ -39,7 +48,7 @@ in `config/sources.json` if a tool you have installed still shows up as
 |---|---|
 | **Agents** | Live sessions per host, with repo, branch, model and status. Found from session logs, so an agent started outside a pane manager is still seen. |
 | **Spend and tokens** | Per model, per provider, per host, per project. Today / 7d / 30d / 90d with daily history. |
-| **Work queue** | Optional [beads](https://github.com/steveyegge/beads) integration, including whether an item can actually reach an agent. |
+| **Work queue** | Optional [beads](https://github.com/gastownhall/beads) integration, including whether an item can actually reach an agent. Local by default (embedded, no server) -- see [INSTALL.md](INSTALL.md#setting-up-beads-optional-work-queue-integration). |
 | **Worktrees** | Branch, dirty state, ahead/behind and staleness across every repo it finds. |
 | **Errors** | Tool failure patterns and per-tool error rates from the transcripts. |
 | **Quota** | Manually-triggered remaining-balance check per provider. Never polled. |
