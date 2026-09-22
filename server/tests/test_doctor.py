@@ -8,6 +8,7 @@ import json
 import sys
 
 import pytest
+import test_beads as beads_test_mod
 
 from critdash import config as config_mod
 from critdash import detect as detect_mod
@@ -91,6 +92,11 @@ def test_dir_and_file_checks_report_configured_existence(tmp_path, monkeypatch):
 
 
 def test_beads_dir_check_included_and_reports_existence(tmp_path, monkeypatch):
+    """No bd_bin is configured (and _neutralize_detection blocks it from
+    resolving anywhere else), so build_checks has nothing to ask -- only
+    the cheap existence check runs, same as every other dir/file key. See
+    test_beads_dir_ok_when_bd_confirms_workspace/test_beads_dir_not_workspace_
+    when_bd_rejects_it below for the real bd-backed classification."""
     _neutralize_detection(monkeypatch)
     ws = tmp_path / "project" / ".beads"
     ws.mkdir(parents=True)
@@ -119,6 +125,105 @@ def test_beads_dir_unset_is_missing_not_required(tmp_path, monkeypatch):
     bd_dir = _find(checks, "beads_dir")
     assert bd_dir.state == "missing"
     assert bd_dir.key not in doctor_mod.REQUIRED_CHECK_KEYS
+
+
+# -- beads_dir workspace validation (the validation-gap fix): with a real
+# bd_bin resolved in the SAME build_checks() scan, beads_dir gets the same
+# `bd where --json` check as the live collector, not just an existence
+# check. Fake bd scripts (write_fake_bd) stand in for a real `bd` install.
+
+
+def test_beads_dir_ok_when_bd_confirms_workspace(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    ws = tmp_path / "project" / ".beads"
+    ws.mkdir(parents=True)
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=str(ws))
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd), "beads_dir": str(ws)})
+    bd_dir = _find(checks, "beads_dir")
+    assert bd_dir.state == "ok"
+    assert bd_dir.blocking is False
+
+
+def test_beads_dir_not_workspace_when_bd_rejects_it(tmp_path, monkeypatch):
+    """The gap this whole change closes: a directory that EXISTS (so the
+    old check passed it) but that bd does not recognize as a workspace
+    (e.g. an installing agent guessing ~/.beads) is now its own distinct
+    state, not "ok" and not "missing"."""
+    _neutralize_detection(monkeypatch)
+    not_a_workspace = tmp_path / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=None)
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd), "beads_dir": str(not_a_workspace)})
+    bd_dir = _find(checks, "beads_dir")
+    assert bd_dir.state == "not_workspace"
+    assert bd_dir.configured_exists is True
+    assert bd_dir.mismatch is False
+    assert bd_dir.blocking is True
+    assert bd_dir.note is not None
+    assert "No active beads workspace found." in bd_dir.note
+
+
+def test_exit_code_nonzero_on_beads_dir_not_workspace(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    not_a_workspace = tmp_path / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=None)
+
+    checks = doctor_mod.build_checks({"bd_bin": str(bd), "beads_dir": str(not_a_workspace)})
+    assert doctor_mod.exit_code(checks) == 1
+
+
+def test_build_probe_beads_dir_not_workspace_does_not_block_ready(tmp_path, monkeypatch, _clear_override_env):
+    """Beads stays optional throughout (briefing requirement): a
+    misconfigured beads_dir is surfaced in checks[] but never blocks
+    --probe's overall "ready" verdict, the same as MISMATCH never does."""
+    _neutralize_detection(monkeypatch)
+    selection = detect_mod.PythonSelection(
+        selected=detect_mod.PythonCandidate(path="/usr/bin/python3", version=(3, 12, 1)),
+        best_below_floor=None,
+    )
+    monkeypatch.setattr(detect_mod, "select_python", lambda: selection)
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: "/usr/bin/git" if name == "git" else None)
+    not_a_workspace = tmp_path / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = tmp_path / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=None)
+
+    sources = dict(bd_bin=str(bd), beads_dir=str(not_a_workspace))
+    probe = doctor_mod.build_probe(sources)
+    bd_dir_check = next(c for c in probe["checks"] if c["key"] == "beads_dir")
+    assert bd_dir_check["state"] == "not_workspace"
+    assert bd_dir_check["note"] is not None
+    assert probe["ready"] is True
+    assert "beads_dir" not in probe["missing_required"]
+
+
+def test_main_shows_not_workspace_distinctly(isolated_config_dir, monkeypatch, capsys):
+    """`make doctor` / `./install.sh --doctor` against a temp config
+    pointed at a non-workspace beads_dir: distinct NOT_WORKSPACE state in
+    the table, a follow-up remedy line, and a nonzero exit code -- not
+    silently reported as OK."""
+    _neutralize_detection(monkeypatch)
+    not_a_workspace = isolated_config_dir / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = isolated_config_dir / "bd"
+    beads_test_mod.write_fake_bd(bd, workspace_path=None)
+
+    sources = dict(config_mod.DEFAULT_SOURCES, bd_bin=str(bd), beads_dir=str(not_a_workspace))
+    (isolated_config_dir / "sources.json").write_text(json.dumps(sources))
+
+    code = doctor_mod.main()
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "NOT_WORKSPACE" in out
+    assert "beads_dir" in out
+    assert "bd where --json" in out
 
 
 def test_prereq_binaries_are_included(tmp_path, monkeypatch):

@@ -54,9 +54,10 @@ Each `checks[]` entry:
 | `configured` | string or null | The value in `config/sources.json`, or the `--<key>` override if one was supplied, or `null` if unset. |
 | `configured_exists` | bool | Whether `configured` itself resolves on this machine. |
 | `detected` | string or null | What detection found instead. Always `null` when `override` is `true` -- detection is skipped entirely, not merely preferred. |
-| `state` | string | `"ok"` \| `"missing"` \| `"mismatch"` -- see "MISSING vs MISMATCH". |
+| `state` | string | `"ok"` \| `"missing"` \| `"mismatch"` \| `"not_workspace"` (`beads_dir` only) -- see "MISSING vs MISMATCH". |
 | `required` | bool | `true` only for `git` (`python`, at the top level, is also always required). Every other key is optional -- its collector/panel just stays inactive without it. |
 | `override` | bool | `true` if this key's value came from an explicit `--<key>` flag. |
+| `note` | string or null | Extra human-readable detail a state above doesn't already carry. Only ever set for `beads_dir`'s `"not_workspace"` state (bd's own reason, from `bd where --json`, for rejecting the directory); `null` for every other key/state. |
 
 `python` (top level -- same idea, different shape, since it's a floor over
 several candidates rather than one configured path):
@@ -98,7 +99,7 @@ Trimmed example:
 of JSON (`--probe` alone, without `--json`, prints the same table). `make
 doctor` runs `--doctor`.
 
-### MISSING vs MISMATCH -- read this before installing anything
+### MISSING vs MISMATCH vs NOT_WORKSPACE -- read this before installing anything
 
 This distinction has already confused both a human and an agent working
 on this project. Get it wrong and you'll install services nobody asked
@@ -128,6 +129,21 @@ for, or "fix" configuration that was never broken.
   passing the matching `--<key>` override on your next `./install.sh` run.
   **Never** treat `mismatch` as a reason to install anything -- the tool
   is already there.
+- **`NOT_WORKSPACE`** (`beads_dir` only) -- the configured directory
+  **exists**, but `bd where --json`, run with `BEADS_DIR` pointed at it,
+  does not resolve it to a workspace (see check_beads_workspace in
+  `server/critdash/collectors/beads.py`). This is the validation gap that
+  motivated this whole section: an existing directory is **not** evidence
+  it is the right one -- `~/.beads` is the textbook example (it exists on
+  most machines, but only holds `bd`'s own global event/lock state, never
+  a workspace). Never treat `not_workspace` as "close enough" or edit
+  around it -- go back to "Obtaining `beads_dir` safely" above, get the
+  real path from `bd where --json`'s `"path"` field, and verify via
+  `/api/healthz` before considering it fixed. `not_workspace` never blocks
+  `ready` (beads stays optional, like `missing`/`mismatch`), but `make
+  doctor`/`./install.sh --doctor` exit non-zero when it's present, since
+  -- unlike a merely-unconfigured optional tool -- it means something IS
+  configured and IS wrong.
 
 ### Installing missing prerequisites
 
@@ -390,28 +406,62 @@ In `config/sources.json`:
   explicitly if the `beads` panel reports "no beads database found" even
   though `bd` works fine for you interactively -- the collector runs `bd`
   from CritBoard's own working directory, not your shell, so it doesn't
-  inherit anything ambient. `install.sh` tries to detect this for you via
-  `bd where --json` when writing a fresh config. **Must be the `.beads`
-  directory itself** (e.g. `/path/to/project/.beads`), not its parent --
-  that's the easy mistake; `bd where --json`'s `"path"` field is always the
-  right value. Takes precedence over `beads_env`, which takes precedence
-  over `bd`'s own resolution.
+  inherit anything ambient.
 
-Then confirm the panel is live:
+  **Obtaining `beads_dir` safely -- a path that merely exists is not
+  evidence it is correct.** Do not guess a plausible-looking directory
+  (`~/.beads` is the single most common wrong guess -- on most machines it
+  holds only `bd`'s own global event/lock state, not a workspace, and it
+  will pass a naive "does this directory exist" check while still being
+  wrong). Never assume `~/.beads` is the answer. Instead:
 
-```sh
-curl -s http://127.0.0.1:9999/api/healthz | python3 -c \
-  'import json,sys; d=json.load(sys.stdin)["collectors"]["beads"]; print(d["ok"], d["reason_code"])'
-# -> True None
-```
+  1. **Obtain the path, don't invent one.** From a directory where `bd`
+     already works for you (interactively, or the directory you'd `cd`
+     into to run `bd list`), run:
+     ```sh
+     bd where --json
+     ```
+     Use its `"path"` field verbatim. **That is the `.beads` directory
+     itself** (e.g. `/path/to/project/.beads`), never its parent -- the
+     easy mistake -- and never a directory you merely suspect. If `bd
+     where --json` fails or finds nothing from anywhere you try, there is
+     no workspace yet to point at: leave `beads_dir` unset (see below),
+     don't write a guess.
+  2. **Write it** to `beads_dir` in `config/sources.json`.
+  3. **Verify end to end, not just that the file was written.** Writing
+     the key proves nothing on its own -- `bd` itself has the final word.
+     Restart the dashboard, then check the `beads` entry directly:
+     ```sh
+     systemctl --user restart critdash.service   # or your non-systemd equivalent
+     curl -s http://127.0.0.1:9999/api/healthz | python3 -c \
+       'import json,sys; d=json.load(sys.stdin)["collectors"]["beads"]; print(d["ok"], d["reason_code"])'
+     # -> True None
+     ```
+     `"ok": true` (with `"reason_code": null`) is the only thing that
+     counts as success.
+  4. **If it is not `ok`, don't leave it looking configured but broken.**
+     Read that same entry's full `"detail"` and `"remedy"` fields (not
+     just `ok`/`reason_code`) -- the collector runs the exact same `bd
+     where --json` check against the configured `beads_dir` and reports
+     bd's own reason it rejected the directory (e.g. "beads_dir exists but
+     is not a beads workspace: No active beads workspace found."). Fix
+     `beads_dir` using that reason (usually: re-run `bd where --json` from
+     the right place, or realize no workspace exists yet) and go back to
+     step 3. Do not stop at "the key has a value" -- a `beads_dir` that
+     exists on disk but that `bd` itself doesn't recognize is exactly the
+     failure this whole section exists to prevent (see "NOT_WORKSPACE" in
+     "MISSING vs MISMATCH vs NOT_WORKSPACE" above), and it produces a
+     *worse* outcome than leaving it unset: a panel that looks configured
+     but never works.
 
-`beads` staying `false` with `reason_code: "dependency_missing"` after
-this means `bd_bin` still isn't resolving -- re-run `./install.sh
---doctor` and check the `bd_bin` row.
+  Takes precedence over `beads_env`, which takes precedence over `bd`'s
+  own resolution.
 
-Beads stays optional end to end: an agent that can't install it, or a
-user who doesn't want it, leaves the `beads` panel inactive and every
-other panel is unaffected.
+Beads stays optional end to end: an agent that cannot find a workspace by
+following step 1 above (nothing `bd where --json` resolves anywhere)
+leaves `beads_dir` unset and the `beads` panel inactive, and every other
+panel is unaffected. That is a normal, valid outcome -- not a failure to
+fix by guessing.
 
 ## Running it day to day
 
@@ -536,12 +586,19 @@ installed on a Mac, but `config/sources.json` still had the Debian path
 `~/.local/bin/bd` baked in from the example file, so the dashboard reported
 "not configured" for a tool that was right there.
 
+**`beads_dir` alone can also be `NOT_WORKSPACE`**: the configured directory
+exists (so it isn't `MISSING`), but `bd where --json` run against it
+doesn't resolve to a workspace -- an installing agent guessing `~/.beads`
+is the case that motivated this. A directory existing is never, by itself,
+proof it is the right one; see "MISSING vs MISMATCH vs NOT_WORKSPACE" above
+and "Obtaining `beads_dir` safely" under "Setting up beads" for the fix.
+
 | Key | What it's for | Powers | Binary search order / directories checked |
 |---|---|---|---|
 | `bd_bin` | The `bd` (beads) CLI | `beads` panel | PATH, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`, `/usr/bin` (in that order) -- re-checked live, not just at install |
 | `herdr_bin` | The `herdr` CLI (pane-level agent detection) | `agents` panel's pane/workspace fields (local host); `remote` panel per remote host | Same search order as `bd_bin`, resolved once at startup for the local host. A remote (`ssh`-mode) host resolves its own `herdr_bin` on ITS OWN filesystem, never against the local host's resolved path |
 | `beads_env` | **Optional.** Env file some `bd` setups source before every call (actor/DB config) -- a site-specific convention, not something `bd` itself requires. Empty by default; a `bd` with its own local workspace (`bd init`, or `BEADS_DIR` set) needs none. Sourced only when it exists | `beads` panel | Not searched for -- set it yourself only if your `bd` setup actually uses one; no default path is guessed |
-| `beads_dir` | **Optional.** The beads workspace's `.beads` directory itself -- exported as `BEADS_DIR` before every `bd` call, taking precedence over `beads_env`. Empty by default | `beads` panel | Not searched for -- `install.sh` tries `bd where --json` once, on first config write, and writes its `"path"` field if found; otherwise left empty, a normal state |
+| `beads_dir` | **Optional.** The beads workspace's `.beads` directory itself -- exported as `BEADS_DIR` before every `bd` call, taking precedence over `beads_env`. Empty by default | `beads` panel | Not searched for -- `install.sh` tries `bd where --json` once, on first config write, uses its `"path"` field only if that same path then passes the workspace check below too, and otherwise leaves it empty, a normal state. Validated as a real workspace (not just an existing directory) by running `bd where --json` with `BEADS_DIR` set to the candidate -- the same check `make doctor`/`--probe` and the live collector both run; see `check_beads_workspace` in `server/critdash/collectors/beads.py` and "NOT_WORKSPACE" above |
 | `claude_projects_dir` | Claude Code's session logs | `agents`, `usage`, `analytics` panels | `~/.claude/projects` on every platform (Claude Code does not use a macOS Application Support directory) |
 | `kimi_dir` | Kimi Code CLI's session/credentials directory | `kimi` panel, Kimi quota check | `~/.kimi-code` (dotfile, same on every platform this dashboard has verified). `~/Library/Application Support/Kimi` is probed as an unconfirmed, defensive fallback candidate on macOS only -- checked, never assumed |
 | `overlord_dir` | Optional integration with a fleet dispatch tool | `dispatch` panel | `~/.overlord` (a homegrown dotfile, not a packaged/Homebrew tool -- no macOS-specific location exists to check) |

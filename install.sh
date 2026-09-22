@@ -548,7 +548,7 @@ if [ -f "$SOURCES_JSON" ]; then
     if run_doctor; then
         log "doctor: no mismatches -- every configured path either exists or has no working alternative anyway."
     else
-        log "doctor: WARNING -- see the MISMATCH row(s) printed above. A path in config/sources.json is missing, but critdash.detect found a working one at a different location (its DETECTED column) -- that tool IS installed, just not where sources.json says. Update the matching key in config/sources.json to the DETECTED value, or that panel stays inactive even though the tool works."
+        log "doctor: WARNING -- see the MISMATCH/NOT_WORKSPACE row(s) and any follow-up lines printed above. MISMATCH means a path in config/sources.json is missing but critdash.detect found a working one at a different location (its DETECTED column) -- that tool IS installed, just not where sources.json says. NOT_WORKSPACE means beads_dir exists but bd itself does not recognize it as a workspace -- see the printed remedy. Either way, update the matching key in config/sources.json, or that panel stays inactive even though the tool works."
     fi
 else
     [ -f "$SOURCES_EXAMPLE" ] || fail "config/sources.example.json is missing -- cannot bootstrap a config."
@@ -567,6 +567,7 @@ import sys
 
 sys.path.insert(0, os.environ["PYTHONPATH"])
 from critdash import detect  # noqa: E402
+from critdash.collectors.beads import validate_beads_dir  # noqa: E402
 
 with open(os.environ["SRC"]) as f:
     doc = json.load(f)
@@ -605,11 +606,16 @@ for key, name, override_env in (
 # fixes the collector running `bd` from CritBoard's own directory instead
 # of the user's shell, without the user ever having to figure out the
 # BEADS_DIR value themselves. Left empty (the example's default) if bd
-# isn't resolved, or if `bd where` fails/finds nothing -- both are normal
-# "no workspace yet" states, not failures; `make doctor` surfaces beads_dir
-# too, for a later fix.
+# isn't resolved, or if `bd where` fails/finds nothing, or if the path it
+# reports doesn't itself pass validate_beads_dir (the SAME check
+# BeadsCollector's availability gate runs -- see
+# critdash.collectors.beads.check_beads_workspace) -- all are normal "no
+# workspace yet" states, not failures; `make doctor` surfaces beads_dir
+# too, for a later fix. Never falls back to guessing a plausible-looking
+# path (e.g. ~/.beads) -- only a path bd itself resolved AND validated.
 bd_bin_resolved = doc.get("bd_bin")
 if bd_bin_resolved and not (doc.get("beads_dir") or "").strip():
+    workspace = None
     try:
         bd_where = subprocess.run(
             [bd_bin_resolved, "where", "--json"],
@@ -617,11 +623,11 @@ if bd_bin_resolved and not (doc.get("beads_dir") or "").strip():
         )
         if bd_where.returncode == 0:
             workspace = json.loads(bd_where.stdout).get("path")
-            if workspace:
-                doc["beads_dir"] = workspace
-                found.append(f"beads_dir={workspace} (from `bd where --json`)")
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError):
-        pass
+        workspace = None
+    if workspace and validate_beads_dir(workspace, bd_bin_resolved) is None:
+        doc["beads_dir"] = workspace
+        found.append(f"beads_dir={workspace} (from `bd where --json`, verified)")
 
 with open(os.environ["DST"], "w") as f:
     json.dump(doc, f, indent=2)

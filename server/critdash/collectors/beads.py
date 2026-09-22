@@ -41,6 +41,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -340,33 +341,130 @@ _BEADS_DIR_REMEDY = (
     "value (its \"path\" field)."
 )
 
+_BEADS_DIR_NOT_WORKSPACE_REMEDY = (
+    "That directory exists but bd does not resolve it to a workspace. Run `bd where --json` from a "
+    "directory where bd already works (or right after `bd init`) and use its \"path\" field verbatim "
+    "-- that's the .beads directory ITSELF, not its parent, and not ~/.beads unless that genuinely is "
+    "a workspace (on most machines ~/.beads holds only bd's global event/lock state, not a workspace)."
+)
 
-def validate_beads_dir(beads_dir: str) -> CollectorIssue | None:
+
+def check_beads_workspace(bd_bin: str, beads_dir: str, timeout: float = 10.0) -> tuple[bool, str]:
+    """Ask `bd` itself whether `beads_dir` is a real workspace, by running
+    `bd where --json` with BEADS_DIR set to the candidate -- the same
+    resolution `bd_shell_prefix` makes every real collector call go
+    through, and the most honest check available: it works for both
+    storage modes (a server-mode workspace's `dolt/` subdir, an embedded
+    one's `embeddeddolt/` subdir) without this code having to pattern-match
+    either shape and risk drifting from bd's own format.
+
+    Verified live on this host (2026-09-22):
+      server-mode workspace (/srv/.../.beads, dolt/ subdir)
+        -> exit 0, {"path": "...", "database_path": "...", ...}
+      freshly `bd init --skip-agents`-created embedded workspace
+        -> exit 0, {"path": "...", "database_path": "...", "prefix": "...", ...}
+      ~/.beads (bd's global event/lock state -- NOT a workspace)
+        -> exit 1, {"error": "no_beads_directory",
+                     "message": "No active beads workspace found.", "hint": "..."}
+      an ordinary readable directory that is not a workspace at all (/tmp)
+        -> exit 0, {"path": "/tmp", "schema_version": 1} -- bd echoes the
+           BEADS_DIR it was handed back as "path" and succeeds. This is why
+           the check keys on "database_path" and NOT on exit status or
+           "path": only a resolved workspace reports where its database
+           lives. Keying on "path" classified /tmp as a valid workspace.
+      a real workspace's PARENT directory (the classic mistake)
+        -> same exit 1 / no_beads_directory as ~/.beads -- bd's own
+           resolution rejects both identically, which is exactly why this
+           is preferred over a filesystem marker (e.g. "has a dolt/ or
+           embeddeddolt/ subdir"): bd already knows the difference and this
+           reuses that knowledge instead of re-deriving it.
+
+    Returns (True, "") when bd confirms a workspace (exit 0 and a non-empty
+    "database_path" in its JSON -- see the /tmp case above for why "path"
+    alone is not enough). Otherwise (False, detail), where detail is bd's
+    own message/error/hint -- never an invented reason -- or a description
+    of why bd couldn't even be asked (it timed out, or didn't produce
+    parseable JSON)."""
+    env = dict(os.environ)
+    env["BEADS_DIR"] = os.path.expanduser(beads_dir)
+    try:
+        result = subprocess.run(
+            [bd_bin, "where", "--json"], capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"`bd where --json` timed out after {timeout}s"
+    except OSError as exc:
+        return False, f"could not run `bd where --json`: {exc}"
+    parsed: dict = {}
+    try:
+        loaded = json.loads(result.stdout.strip() or "{}")
+        if isinstance(loaded, dict):
+            parsed = loaded
+    except json.JSONDecodeError:
+        pass
+    if result.returncode == 0 and parsed.get("database_path"):
+        return True, ""
+    if result.returncode == 0:
+        # bd succeeded but named no database: it simply echoed the directory
+        # back (the /tmp case above). Say that plainly -- bd's own stderr here
+        # is usually an unrelated grumble (e.g. a 0777 permissions warning).
+        return False, (
+            "bd resolved this directory but reported no database in it, so it "
+            "is not a beads workspace"
+        )
+    detail = (
+        parsed.get("message") or parsed.get("error") or parsed.get("hint")
+        or result.stderr.strip()[:300] or result.stdout.strip()[:300]
+        or f"bd where --json exited {result.returncode}"
+    )
+    return False, detail
+
+
+def validate_beads_dir(beads_dir: str, bd_bin: str | None = None) -> CollectorIssue | None:
     """None if `beads_dir` is unset (fine -- it's optional, see module
-    docstring) or points at an existing directory. A configured-but-wrong
-    value is a real misconfiguration (the user set it, just to the wrong
-    path -- most often the workspace's parent instead of the .beads
-    directory itself), so this is reported as `optional=False`: worth a
-    warning, not a quiet "not configured" notice."""
+    docstring), or points at a directory `bd` itself confirms is a real
+    workspace. A configured-but-wrong value is a real misconfiguration --
+    either a path that doesn't exist at all, or one that exists but isn't
+    actually a workspace (e.g. ~/.beads, or the workspace's parent instead
+    of its .beads directory -- see check_beads_workspace) -- so either case
+    is reported as `optional=False`: worth a warning, not a quiet
+    "not configured" notice.
+
+    `bd_bin` is the resolved `bd` binary (see resolve_bd_bin) used to ask
+    bd itself via check_beads_workspace. Every real caller in this codebase
+    (availability_issue below, install.sh, critdash.doctor) passes one; it
+    is optional here only so a caller with no resolved bd yet still gets
+    the cheap existence check rather than an exception."""
     if not beads_dir:
         return None
-    if not Path(os.path.expanduser(beads_dir)).is_dir():
+    expanded = os.path.expanduser(beads_dir)
+    if not Path(expanded).is_dir():
         return CollectorIssue(
             "config_missing",
             f"beads_dir does not exist or is not a directory: {beads_dir!r}",
             remedy=_BEADS_DIR_REMEDY,
             optional=False,
         )
-    return None
+    if not bd_bin:
+        return None
+    ok, detail = check_beads_workspace(bd_bin, expanded)
+    if ok:
+        return None
+    return CollectorIssue(
+        "config_missing",
+        f"beads_dir exists but is not a beads workspace ({beads_dir!r}): {detail}",
+        remedy=_BEADS_DIR_NOT_WORKSPACE_REMEDY,
+        optional=False,
+    )
 
 
 def availability_issue(bd_bin: str, beads_dir: str = "") -> CollectorIssue | None:
-    """None if `bd` is installed and `beads_dir` (if set) is valid -- the
-    preflight checks BeadsCollector.collect() runs before ever shelling
-    out, factored out so main.py can run the exact same checks at startup
-    (and on periodic re-detection) to decide whether to schedule this
-    collector at all, without duplicating the logic or actually running
-    collect().
+    """None if `bd` is installed and `beads_dir` (if set) is a real
+    workspace -- the preflight checks BeadsCollector.collect() runs before
+    ever shelling out, factored out so main.py can run the exact same
+    checks at startup (and on periodic re-detection) to decide whether to
+    schedule this collector at all, without duplicating the logic or
+    actually running collect().
 
     The beads env file is deliberately NOT checked here (see module
     docstring): it is optional, and a `bd` with no workspace configured
@@ -374,15 +472,20 @@ def availability_issue(bd_bin: str, beads_dir: str = "") -> CollectorIssue | Non
     it -- that surfaces through the normal command_failed classification,
     not through this availability gate. `beads_dir` IS checked here (see
     validate_beads_dir) since a bad value is a configuration mistake worth
-    surfacing immediately, not a "bd itself will explain it" case."""
-    if resolve_bd_bin(bd_bin) is None:
+    surfacing immediately, not a "bd itself will explain it" case -- and
+    now that check runs `bd where --json` itself (see
+    check_beads_workspace), so a directory that merely exists but isn't a
+    real workspace (e.g. an installing agent guessing ~/.beads) is caught
+    here too, not just a directory that doesn't exist at all."""
+    resolved = resolve_bd_bin(bd_bin)
+    if resolved is None:
         return CollectorIssue(
             "dependency_missing",
             f"bd is not installed: {bd_bin!r} was not found on PATH",
             remedy=_BD_DEPENDENCY_REMEDY,
             optional=True,
         )
-    return validate_beads_dir(beads_dir)
+    return validate_beads_dir(beads_dir, resolved)
 
 
 class BeadsCollector(BaseCollector):

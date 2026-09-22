@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import detect
+from .collectors.beads import check_beads_workspace
 from .config import DEFAULT_SOURCES, load_config
 
 # (key, kind, collector, canonical binary name for kind == "binary")
@@ -90,12 +91,26 @@ class PathCheck:
     configured: str | None
     configured_exists: bool
     detected: str | None
-    state: str  # "ok" | "mismatch" | "missing"
+    state: str  # "ok" | "mismatch" | "missing" | "not_workspace"
     override: bool = False
+    # Extra human-readable detail for a state the other fields don't fully
+    # explain -- today only set for beads_dir's "not_workspace" state (bd's
+    # own reason it rejected the directory, from check_beads_workspace).
+    # None everywhere else.
+    note: str | None = None
 
     @property
     def mismatch(self) -> bool:
         return self.state == "mismatch"
+
+    @property
+    def blocking(self) -> bool:
+        """Whether this check's state represents a real, fixable problem
+        that should make doctor/CI fail -- mismatch (configured path is
+        stale) or not_workspace (beads_dir exists but bd rejects it).
+        "missing" alone never blocks: an unconfigured optional tool is a
+        normal end state (see INSTALL.md's MISSING vs MISMATCH)."""
+        return self.state in ("mismatch", "not_workspace")
 
 
 def _check_binary(
@@ -132,6 +147,28 @@ def _check_dir(key: str, collector: str, configured: str | None) -> PathCheck:
     return _finish(key, "dir", collector, configured, configured_exists, detected)
 
 
+def _check_beads_dir(configured: str | None, bd_bin_resolved: str | None) -> PathCheck:
+    """Like _check_dir, but for beads_dir specifically: existing isn't
+    enough (that's the validation gap this exists to close -- see
+    critdash.collectors.beads.check_beads_workspace). If the configured
+    directory exists AND a real `bd` binary was resolved elsewhere in this
+    same build_checks() run, ask bd itself whether it's a workspace; a
+    directory that exists but that bd rejects is reported as the distinct
+    "not_workspace" state, never as "ok". With no resolved bd_bin (bd isn't
+    installed on this machine at all), only the cheap existence check runs
+    -- there's nothing to ask."""
+    configured_exists = bool(configured) and Path(configured).expanduser().is_dir()
+    detected = detect.detect_dir(configured, DEFAULT_SOURCES.get("beads_dir"), "beads_dir")
+    if configured_exists and bd_bin_resolved and configured:
+        ok, detail = check_beads_workspace(bd_bin_resolved, str(Path(configured).expanduser()))
+        if not ok:
+            return PathCheck(
+                key="beads_dir", kind="dir", collector="beads", configured=configured,
+                configured_exists=True, detected=detected, state="not_workspace", note=detail,
+            )
+    return _finish("beads_dir", "dir", "beads", configured, configured_exists, detected)
+
+
 def _check_file(key: str, collector: str, configured: str | None) -> PathCheck:
     configured_exists = bool(configured) and Path(configured).expanduser().is_file()
     detected = detect.detect_file(configured)
@@ -157,11 +194,23 @@ def _finish(
 def build_checks(sources: dict, overrides: dict[str, str] | None = None) -> list[PathCheck]:
     overrides = overrides or {}
     checks: list[PathCheck] = []
+    # Resolved bd_bin from THIS SAME scan (not a fresh detect call) -- set
+    # once the "bd_bin" entry in PATH_SPECS is processed, since it always
+    # comes before "beads_dir" in that list. Used by _check_beads_dir to
+    # actually ask bd whether beads_dir is a real workspace; stays None
+    # (workspace check skipped, existence-only) if bd itself isn't
+    # resolvable anywhere on this machine.
+    bd_bin_resolved: str | None = None
     for key, kind, collector, bin_name in PATH_SPECS:
         configured = sources.get(key)
         configured = configured if isinstance(configured, str) and configured else None
-        if kind == "binary":
-            checks.append(_check_binary(key, collector, bin_name, configured, overrides.get(key)))
+        if key == "beads_dir":
+            checks.append(_check_beads_dir(configured, bd_bin_resolved))
+        elif kind == "binary":
+            c = _check_binary(key, collector, bin_name, configured, overrides.get(key))
+            checks.append(c)
+            if key == "bd_bin":
+                bd_bin_resolved = c.configured if c.configured_exists else c.detected
         elif kind == "dir":
             checks.append(_check_dir(key, collector, configured))
         else:
@@ -172,7 +221,7 @@ def build_checks(sources: dict, overrides: dict[str, str] | None = None) -> list
 
 
 def exit_code(checks: list[PathCheck]) -> int:
-    return 1 if any(c.mismatch for c in checks) else 0
+    return 1 if any(c.blocking for c in checks) else 0
 
 
 def format_table(checks: list[PathCheck]) -> str:
@@ -307,6 +356,7 @@ def build_probe(sources: dict) -> dict:
             "state": c.state,
             "required": required,
             "override": c.override,
+            "note": c.note,
         })
         # MISSING blocks readiness only for a required key -- see
         # REQUIRED_CHECK_KEYS. MISMATCH never blocks readiness, required or
@@ -354,12 +404,23 @@ def main() -> int:
     code = exit_code(checks)
     if code != 0:
         mismatched = [c.key for c in checks if c.mismatch]
-        print()
-        print(
-            "doctor: MISMATCH -- config/sources.json has a configured path that is "
-            "missing, but a working one was detected elsewhere: " + ", ".join(mismatched)
-        )
-        print("Update config/sources.json's \"DETECTED\" column values above to fix this.")
+        if mismatched:
+            print()
+            print(
+                "doctor: MISMATCH -- config/sources.json has a configured path that is "
+                "missing, but a working one was detected elsewhere: " + ", ".join(mismatched)
+            )
+            print("Update config/sources.json's \"DETECTED\" column values above to fix this.")
+        not_workspace = [c for c in checks if c.state == "not_workspace"]
+        for c in not_workspace:
+            print()
+            print(f"doctor: NOT_WORKSPACE -- beads_dir ({c.configured}) exists but bd does not "
+                  f"recognize it as a workspace: {c.note}")
+            print(
+                "Run `bd where --json` from a directory where bd already works and use its "
+                "\"path\" field -- that's the .beads directory ITSELF, not its parent, and not "
+                "~/.beads unless that genuinely is a workspace."
+            )
     return code
 
 

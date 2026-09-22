@@ -9,11 +9,69 @@ from critdash.collectors.beads import (
     BeadsCollector,
     bd_shell_prefix,
     build_dependency_maps,
+    check_beads_workspace,
     guess_repo,
     is_review_lane,
     resolve_bd_bin,
     transform_item,
+    validate_beads_dir,
 )
+
+
+def write_fake_bd(path, workspace_path=None):
+    """A fake `bd` binary that only implements `where --json`, the same way
+    real `bd` does it (see check_beads_workspace's module docstring for the
+    real shapes this mirrors): if `workspace_path` is given, always reports
+    that as a resolved workspace (exit 0); otherwise always reports "no
+    active workspace" (exit 1), regardless of $BEADS_DIR -- good enough to
+    test both sides of check_beads_workspace without a real `bd` install."""
+    if workspace_path is not None:
+        path.write_text(
+            "#!/bin/sh\n"
+            f'echo \'{{"path": "{workspace_path}", "database_path": "{workspace_path}/dolt"}}\'\n'
+            "exit 0\n"
+        )
+    else:
+        path.write_text(
+            "#!/bin/sh\n"
+            "echo '{\"error\": \"no_beads_directory\", "
+            "\"message\": \"No active beads workspace found.\", "
+            "\"hint\": \"run bd init or set BEADS_DIR\"}'\n"
+            "exit 1\n"
+        )
+    path.chmod(0o755)
+
+
+def write_fake_bd_conditional(path, accept_dir):
+    """A fake `bd` that reports a workspace ONLY when $BEADS_DIR equals
+    `accept_dir` exactly -- used to prove the workspace's PARENT directory
+    (the classic beads_dir mistake) is rejected the same way bd itself
+    rejects it, not merely because the fake always says no."""
+    path.write_text(
+        "#!/bin/sh\n"
+        f'if [ "$BEADS_DIR" = "{accept_dir}" ]; then\n'
+        f'  echo \'{{"path": "{accept_dir}", "database_path": "{accept_dir}/dolt"}}\'\n'
+        "  exit 0\n"
+        "fi\n"
+        "echo '{\"error\": \"no_beads_directory\", "
+        "\"message\": \"No active beads workspace found.\"}'\n"
+        "exit 1\n"
+    )
+    path.chmod(0o755)
+
+
+def write_fake_bd_echoing(path):
+    """A fake `bd` that reproduces real bd's behaviour for a readable
+    directory that is NOT a workspace: it echoes $BEADS_DIR back as "path",
+    names no "database_path", and exits 0 (measured live 2026-09-22 with
+    BEADS_DIR=/tmp). This is the shape that a check keyed on exit status or
+    on "path" wrongly accepts."""
+    path.write_text(
+        "#!/bin/sh\n"
+        'echo \'{"path": "\'"$BEADS_DIR"\'", "schema_version": 1}\'\n'
+        "exit 0\n"
+    )
+    path.chmod(0o755)
 
 
 def load_fixture(fixtures_dir, name):
@@ -415,7 +473,11 @@ def test_validate_beads_dir_none_when_unset():
     assert beads_mod.validate_beads_dir("") is None
 
 
-def test_validate_beads_dir_none_when_directory_exists(tmp_path):
+def test_validate_beads_dir_none_when_directory_exists_and_no_bd_bin_given(tmp_path):
+    """With no bd_bin, only the cheap existence check runs -- there's
+    nothing to ask. Every real caller (availability_issue, install.sh,
+    critdash.doctor) always supplies a resolved bd_bin; see the
+    check_beads_workspace-backed tests below for the real validation."""
     ws = tmp_path / ".beads"
     ws.mkdir()
     assert beads_mod.validate_beads_dir(str(ws)) is None
@@ -430,30 +492,141 @@ def test_validate_beads_dir_issue_when_path_does_not_exist(tmp_path):
     assert ".beads directory ITSELF" in issue.remedy
 
 
+# -- check_beads_workspace / validate_beads_dir(bd_bin=...): the three real
+# cases from the briefing (server-mode workspace, freshly `bd init`-ed
+# embedded workspace, ~/.beads-style non-workspace), reproduced with fake
+# `bd` scripts (see write_fake_bd/write_fake_bd_conditional above) instead
+# of the owner's real directories or a real `bd` install. ------------------
+
+
+def test_check_beads_workspace_true_for_server_mode_shaped_workspace(tmp_path):
+    """Server-mode workspace: bd resolves it and reports a "database_path"
+    -- the presence of a `dolt` vs `embeddeddolt` subdir on disk is
+    irrelevant to this check (see check_beads_workspace's docstring); what
+    matters is that `bd where --json` itself names a database."""
+    ws = tmp_path / "example-project" / ".beads"
+    ws.mkdir(parents=True)
+    (ws / "dolt").mkdir()  # server-mode shape, for realism only
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=str(ws))
+    ok, detail = check_beads_workspace(str(bd), str(ws))
+    assert ok is True
+    assert detail == ""
+
+
+def test_check_beads_workspace_true_for_fresh_embedded_workspace(tmp_path):
+    """Freshly `bd init --skip-agents`-created embedded workspace: same
+    "bd says yes" shape, embeddeddolt/ subdir instead of dolt/."""
+    ws = tmp_path / "myproject" / ".beads"
+    ws.mkdir(parents=True)
+    (ws / "embeddeddolt").mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=str(ws))
+    ok, detail = check_beads_workspace(str(bd), str(ws))
+    assert ok is True
+    assert detail == ""
+
+
+def test_check_beads_workspace_false_for_non_workspace_directory(tmp_path):
+    """~/.beads-shaped case: exists, holds unrelated state (here just an
+    "eventsData" dir, matching the real ~/.beads on this host), but bd
+    itself does not resolve it to a workspace."""
+    not_a_workspace = tmp_path / "dot-beads-global-state"
+    (not_a_workspace / "eventsData").mkdir(parents=True)
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=None)
+    ok, detail = check_beads_workspace(str(bd), str(not_a_workspace))
+    assert ok is False
+    assert "No active beads workspace found." in detail
+
+
+def test_check_beads_workspace_false_for_workspace_parent(tmp_path):
+    """The classic mistake: beads_dir pointed at the workspace's PARENT
+    instead of its .beads directory. bd's own resolution rejects the
+    parent exactly like it rejects any other non-workspace directory (see
+    write_fake_bd_conditional) -- this is the gap the validation now
+    closes; previously this directory-exists case was accepted."""
+    workspace = tmp_path / "myproject" / ".beads"
+    workspace.mkdir(parents=True)
+    parent = workspace.parent
+    bd = tmp_path / "bd"
+    write_fake_bd_conditional(bd, accept_dir=str(workspace))
+    ok, detail = check_beads_workspace(str(bd), str(parent))
+    assert ok is False
+    assert "No active beads workspace found." in detail
+    # The .beads directory itself is still accepted by the same fake bd.
+    ok_ws, _ = check_beads_workspace(str(bd), str(workspace))
+    assert ok_ws is True
+
+
+def test_validate_beads_dir_none_when_bd_confirms_workspace(tmp_path):
+    ws = tmp_path / ".beads"
+    ws.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=str(ws))
+    assert validate_beads_dir(str(ws), str(bd)) is None
+
+
+def test_validate_beads_dir_issue_when_bd_rejects_existing_directory(tmp_path):
+    """The bug report reproduced directly: an installing agent guesses
+    ~/.beads, the directory exists (so the old existence-only check
+    passed), but bd does not recognize it as a workspace."""
+    not_a_workspace = tmp_path / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=None)
+    issue = validate_beads_dir(str(not_a_workspace), str(bd))
+    assert issue is not None
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is False
+    assert "not a beads workspace" in issue.detail
+    assert str(not_a_workspace) in issue.detail
+    assert "bd where --json" in issue.remedy
+    assert ".beads directory ITSELF" in issue.remedy
+    assert "~/.beads" in issue.remedy
+
+
 def test_validate_beads_dir_issue_when_path_is_the_parent_not_dot_beads(tmp_path):
     """The documented easy mistake: pointing beads_dir at the workspace's
-    PARENT directory instead of its .beads subdirectory. The parent exists
-    as a directory, so this can't be caught by existence alone -- but a
-    parent that has no .beads child is still just "not a workspace" from
-    bd's point of view once BEADS_DIR is exported; validate_beads_dir only
-    guarantees the configured path itself exists as a directory. This test
-    documents that a nonexistent path (the more common typo) is caught."""
-    parent = tmp_path / "myproject"
-    parent.mkdir()
-    assert beads_mod.validate_beads_dir(str(parent)) is None  # exists as a dir -- not rejected here
+    PARENT directory instead of its .beads subdirectory -- now rejected
+    (see test_check_beads_workspace_false_for_workspace_parent) once a real
+    bd_bin is supplied, closing the validation gap the briefing reported."""
+    workspace = tmp_path / "myproject" / ".beads"
+    workspace.mkdir(parents=True)
+    parent = workspace.parent
+    bd = tmp_path / "bd"
+    write_fake_bd_conditional(bd, accept_dir=str(workspace))
+    issue = validate_beads_dir(str(parent), str(bd))
+    assert issue is not None
+    assert issue.reason_code == "config_missing"
 
 
 def test_availability_issue_none_when_beads_dir_valid(tmp_path):
     ws = tmp_path / ".beads"
     ws.mkdir()
-    assert beads_mod.availability_issue(sys.executable, str(ws)) is None
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=str(ws))
+    assert beads_mod.availability_issue(str(bd), str(ws)) is None
 
 
-def test_availability_issue_config_missing_when_beads_dir_bad(tmp_path):
+def test_availability_issue_config_missing_when_beads_dir_does_not_exist(tmp_path):
     bad = tmp_path / "no-such-workspace"
-    issue = beads_mod.availability_issue(sys.executable, str(bad))
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=None)
+    issue = beads_mod.availability_issue(str(bd), str(bad))
     assert issue.reason_code == "config_missing"
     assert issue.optional is False
+
+
+def test_availability_issue_config_missing_when_beads_dir_exists_but_not_a_workspace(tmp_path):
+    not_a_workspace = tmp_path / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=None)
+    issue = beads_mod.availability_issue(str(bd), str(not_a_workspace))
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is False
+    assert "not a beads workspace" in issue.detail
 
 
 def test_availability_issue_bd_missing_takes_priority_over_beads_dir(tmp_path):
@@ -464,10 +637,13 @@ def test_availability_issue_bd_missing_takes_priority_over_beads_dir(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_collect_uses_beads_dir_in_command_prefix(monkeypatch, fixtures_dir):
+async def test_collect_uses_beads_dir_in_command_prefix(monkeypatch, tmp_path):
     """End-to-end: BeadsCollector actually threads beads_dir into every `bd`
     invocation via _prefix()."""
-    ws = fixtures_dir  # any existing directory works for validate_beads_dir
+    ws = tmp_path / ".beads"
+    ws.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=str(ws))
     seen_cmds = []
 
     async def fake_exec(cmd, **kwargs):
@@ -479,10 +655,31 @@ async def test_collect_uses_beads_dir_in_command_prefix(monkeypatch, fixtures_di
         return _FakeProc(stdout=b"[]")
 
     monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
-    collector = BeadsCollector(bd_bin=sys.executable, beads_env="", beads_dir=str(ws))
+    collector = BeadsCollector(bd_bin=str(bd), beads_env="", beads_dir=str(ws))
     await collector.collect()
     assert seen_cmds
     assert all(f"BEADS_DIR={ws}" in cmd for cmd in seen_cmds)
+
+
+@pytest.mark.asyncio
+async def test_collect_raises_config_missing_when_beads_dir_not_a_workspace(monkeypatch, tmp_path):
+    """collect() must refuse to even shell out to `bd list`/`stats`/`ready`
+    when beads_dir is set but bd itself rejects it as a workspace -- this
+    is the whole point of running the check inside availability_issue
+    before collect()'s real work starts."""
+    not_a_workspace = tmp_path / "dot-beads"
+    not_a_workspace.mkdir()
+    bd = tmp_path / "bd"
+    write_fake_bd(bd, workspace_path=None)
+
+    async def fake_exec(cmd, **kwargs):
+        raise AssertionError("must not shell out to bd list/stats/ready when beads_dir is invalid")
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    collector = BeadsCollector(bd_bin=str(bd), beads_env="", beads_dir=str(not_a_workspace))
+    with pytest.raises(CollectorIssue) as exc_info:
+        await collector.collect()
+    assert exc_info.value.reason_code == "config_missing"
 
 
 @pytest.mark.asyncio
@@ -508,3 +705,34 @@ async def test_bd_no_workspace_failure_classified_with_real_message(monkeypatch)
     assert issue.reason_code == "command_failed"
     assert "no beads database found" in issue.detail
     assert "bd init" in issue.detail
+
+
+def test_check_beads_workspace_false_when_bd_exits_zero_without_database_path(tmp_path):
+    """The regression this test exists for: real `bd where --json` given an
+    ordinary directory echoes it back as "path" and exits 0, so a check
+    keyed on exit status or on "path" calls /tmp a valid workspace. Only
+    "database_path" distinguishes a resolved workspace."""
+    bd = tmp_path / "bd"
+    write_fake_bd_echoing(bd)
+    not_a_workspace = tmp_path / "plain"
+    not_a_workspace.mkdir()
+
+    ok, detail = check_beads_workspace(str(bd), str(not_a_workspace))
+
+    assert ok is False
+    assert "not a beads workspace" in detail
+    assert str(not_a_workspace) not in detail or "database" in detail
+
+
+def test_validate_beads_dir_rejects_directory_bd_only_echoes_back(tmp_path):
+    """Same shape, one layer up: a configured beads_dir that bd merely
+    echoes back must surface as a real misconfiguration, not pass silently."""
+    bd = tmp_path / "bd"
+    write_fake_bd_echoing(bd)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    issue = validate_beads_dir(str(plain), bd_bin=str(bd))
+
+    assert issue is not None
+    assert issue.optional is False
