@@ -2,6 +2,7 @@ import { getWidget, dependencies } from "./registry.js";
 import { get, setPath, fmtRelTime, el, applyTheme } from "./utils.js";
 import * as modal from "./modal.js";
 import { setupSettingsGear } from "./settings.js";
+import { isUpdateBannerActive } from "./banner_priority.js";
 
 // ---------------- data source resolution ----------------
 // Three ways to run against a fixture instead of the live API (documented
@@ -45,6 +46,11 @@ const state = {
   autoReloadTimer: null,
   dismissedUpdateKey: null,
   updateApplying: false,
+  // Set when showReloadBanner() is suppressed because the update banner
+  // (higher priority, see banner_priority.js) is active at that moment --
+  // replayed once the update banner clears (renderUpdateBanner() calls
+  // maybeShowPendingReloadBanner() every time it decides NOT to show).
+  pendingReloadVersion: null,
   breakpoint: "desktop", // "mobile" | "tablet" | "desktop" -- see computeBreakpoint()
 };
 
@@ -326,7 +332,17 @@ function versionKey(v) {
   return v && v.build ? `${v.build}::${v.started_at || ""}` : null;
 }
 
+// Defect 3 (macOS install report): #reload-banner and #update-banner must
+// never both show at once -- the update banner is the actionable one and
+// takes priority (see banner_priority.js). If it's active right now, remember
+// this version and defer -- maybeShowPendingReloadBanner() replays it once
+// the update banner clears.
 function showReloadBanner(v) {
+  if (isUpdateBannerActive(state.data && state.data.update, state.dismissedUpdateKey)) {
+    state.pendingReloadVersion = v;
+    return;
+  }
+  state.pendingReloadVersion = null;
   const cfg = state.theme?.reload_banner || {};
   if (cfg.enabled === false) return;
   const banner = document.getElementById("reload-banner");
@@ -378,6 +394,16 @@ window.__critdashSetVersion = (v) => {
   checkVersion(v);
 };
 
+// Test/debug hook: the update-banner counterpart of __critdashSetVersion
+// above, so the two banners' mutual exclusion (see banner_priority.js) can
+// be driven from a browser test without a backend that actually has a
+// newer commit to offer, e.g.
+//   window.__critdashSetUpdate({update_available: true, latest: "abc1234", behind: 3})
+window.__critdashSetUpdate = (u) => {
+  if (state.data) state.data.update = u;
+  renderUpdateBanner();
+};
+
 // ---------------- update banner ----------------
 // Close cousin of the reload banner above: same fixed/pill/dismiss shape,
 // driven by /api/snapshot's `update` object (see AGENTS.md briefing) instead
@@ -396,22 +422,37 @@ function updateKey(u) {
   return (u && u.latest) || null;
 }
 
+// Defect 3: called every time renderUpdateBanner() decides the update banner
+// should NOT be shown -- if a reload was deferred while the update banner was
+// active (see showReloadBanner()), this is where it finally gets shown, e.g.
+// after an update is applied elsewhere: the server restarts, update_available
+// flips back to false (behind becomes 0) and the deferred reload banner is
+// then the correct, un-suppressed thing to show.
+function maybeShowPendingReloadBanner() {
+  if (state.pendingReloadVersion) {
+    const v = state.pendingReloadVersion;
+    state.pendingReloadVersion = null;
+    showReloadBanner(v);
+  }
+}
+
 function renderUpdateBanner() {
   const banner = document.getElementById("update-banner");
   if (!banner) return;
   if (state.updateApplying) return; // in-progress UI owns the banner until it resolves
 
   const u = state.data && state.data.update;
-  if (!u || !u.update_available) {
+  if (!isUpdateBannerActive(u, state.dismissedUpdateKey)) {
     banner.classList.remove("show");
-    return;
-  }
-  const key = updateKey(u);
-  if (key !== null && key === state.dismissedUpdateKey) {
-    banner.classList.remove("show");
+    maybeShowPendingReloadBanner();
     return;
   }
 
+  // Update banner takes priority (defect 3) -- if the reload banner happens
+  // to be up already, hide it now rather than showing both at once.
+  hideReloadBanner(false);
+
+  const key = updateKey(u);
   banner.dataset.latestKey = key || "";
   const behind = typeof u.behind === "number" ? u.behind : null;
   const textEl = document.getElementById("update-banner-text");
@@ -531,6 +572,9 @@ function hideUpdateBanner(dismiss) {
   if (!banner) return;
   if (dismiss) state.dismissedUpdateKey = banner.dataset.latestKey || null;
   banner.classList.remove("show");
+  // Defect 3: a manual dismiss also counts as "the update banner cleared" --
+  // if a reload was waiting behind it, show it now.
+  maybeShowPendingReloadBanner();
 }
 
 // ---------------- connection indicator ----------------

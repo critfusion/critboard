@@ -300,6 +300,41 @@ class Config:
         base = float(self.sources.get("remote_interval_s", 120))
         return base * self.refresh_multiplier()
 
+    def reload_sources(self) -> bool:
+        """Re-read config/sources.json from disk and merge it into
+        self.sources IN PLACE (mutate the existing dict, never rebind it --
+        main.py and every collector hold their own reference to this same
+        dict, taken once at startup via `config = load_config()`). Without
+        this, a hand edit to config/sources.json is silently ignored by the
+        running server until restart -- see GET /api/settings/updates and
+        POST /api/update/apply, the only two callers, which call this
+        before reading anything self.sources holds (POST /api/update/apply
+        calls it before update.apply_update()'s allow_self_update gate is
+        evaluated, so a hand-flipped "allow_self_update": true takes effect
+        with no restart).
+
+        Deliberately not called on the hot snapshot path or any
+        per-collector tick -- this is a `stat` + parse on every call, cheap
+        but not free, and most of self.sources (repo_roots, ssh hosts, ...)
+        has no need to be live-reloaded that often.
+
+        Safe by construction: on a missing file, an unreadable file, invalid
+        JSON, or a JSON value that isn't an object, this logs and returns
+        False, leaving self.sources completely untouched -- a half-written
+        save (an editor mid-write, or a POST racing this read) must never
+        wipe live config. Returns True if self.sources was updated."""
+        try:
+            with self.sources_path.open() as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("could not reload config/sources.json: %s", exc)
+            return False
+        if not isinstance(data, dict):
+            logger.warning("config/sources.json did not contain a JSON object -- ignoring reload")
+            return False
+        self.sources.update(data)
+        return True
+
     def refresh_multiplier(self) -> float:
         """Settings panel cadence preset (briefing Task 5): "normal" (1x,
         today's intervals_s numbers unchanged) or "relaxed" (~3x longer --

@@ -135,6 +135,26 @@ async def test_fetch_commits_behind_failure_returns_none_not_raise():
     assert n is None
 
 
+# -- resolve_repo (defect 4: _update_settings_view must use this, not a naive
+#    `.get("update_repo") or ""`) ------------------------------------------
+
+
+def test_resolve_repo_absent_key_returns_default():
+    assert update.resolve_repo(_Cfg()) == update.DEFAULT_UPDATE_REPO
+
+
+def test_resolve_repo_explicit_empty_stays_empty():
+    assert update.resolve_repo(_Cfg(update_repo="")) == ""
+
+
+def test_resolve_repo_non_string_value_returns_empty():
+    assert update.resolve_repo(_Cfg(update_repo=None)) == ""
+
+
+def test_resolve_repo_returns_configured_value():
+    assert update.resolve_repo(_Cfg(update_repo="someone/fork")) == "someone/fork"
+
+
 # -- check_for_update ----------------------------------------------------------
 
 

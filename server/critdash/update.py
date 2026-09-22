@@ -79,14 +79,17 @@ def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def _resolve_repo(config) -> str:
+def resolve_repo(config) -> str:
     """`update_repo`'s effective value: DEFAULT_UPDATE_REPO only when the
     key is entirely absent from sources.json (an old config that predates
     this key, or a from-scratch dict a test built). An explicit "" (or a
     non-string, e.g. JSON null) means self-update was deliberately disabled
     and must NOT silently fall back to the default repo -- `... or
     DEFAULT_UPDATE_REPO` would do exactly that once DEFAULT_UPDATE_REPO
-    stopped being empty itself."""
+    stopped being empty itself. Public (not `_resolve_repo`) so main.py's
+    _update_settings_view() can report the same effective repo the
+    check/apply paths actually use, instead of reaching into a private name
+    or re-deriving the same logic and drifting out of sync."""
     if "update_repo" not in config.sources:
         return DEFAULT_UPDATE_REPO
     val = config.sources.get("update_repo")
@@ -244,7 +247,7 @@ async def check_for_update(
     ):
         return state.cached
 
-    repo = _resolve_repo(config)
+    repo = resolve_repo(config)
     branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
     timeout = float(config.sources.get("quota_timeout_s", DEFAULT_CHECK_TIMEOUT_S))
     current = git_identity(dashboard_root)["commit"]
@@ -306,7 +309,7 @@ async def periodic_update_check(
     auto_apply}. Makes no network call at all when `update_check_enabled`
     is false or `update_repo` is empty. See module docstring for the
     ETag/persistence contract."""
-    repo = _resolve_repo(config).strip()
+    repo = resolve_repo(config).strip()
     branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
     enabled = bool(config.sources.get("update_check_enabled", True))
     auto_apply = bool(config.sources.get("update_auto_apply", False))
@@ -432,14 +435,14 @@ def apply_update(config, dashboard_root: Path) -> dict:
     if not config.sources.get("allow_self_update", False):
         raise UpdateError(
             "self_update_disabled",
-            'self-update is disabled. Set "allow_self_update": true in config/sources.json to enable it.',
+            'self-update is disabled. Turn on "Allow self-update" in Settings -> Updates to enable it.',
         )
 
     root = Path(dashboard_root)
     if not (root / ".git").exists():
         raise UpdateError("not_a_git_checkout", f"{root} is not a git checkout -- self-update needs git")
 
-    repo = _resolve_repo(config)
+    repo = resolve_repo(config)
     branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
 
     if not repo:

@@ -253,6 +253,7 @@ async function loadAll(mySession) {
       check_enabled: !!updatesRes.data.check_enabled,
       check_interval_s: typeof updatesRes.data.check_interval_s === "number" ? updatesRes.data.check_interval_s : 300,
       auto_apply: !!updatesRes.data.auto_apply,
+      allow_self_update: !!updatesRes.data.allow_self_update,
     };
     S.updatesDraftOriginal = deepClone(S.updatesDraft);
     S.updatesStatus = "ok";
@@ -690,17 +691,52 @@ function renderUpdatesSection() {
   );
   children.push(hint("The server enforces a 5 minute (300s) minimum -- entering less is rounded up."));
 
+  const originLabel = repoConfigured ? `${info.repo}${info.branch ? ` @ ${info.branch}` : ""}` : "the configured origin";
+
+  // Allow self-update -> allow_self_update. The master switch (defect 2 in
+  // the macOS install report): with this off, neither "Update now" nor
+  // auto_apply below can ever touch the running checkout -- update.py
+  // refuses at the top of apply_update() either way. Styled the same warn
+  // box as auto_apply below since it's the more consequential permission of
+  // the two: it is what lets the dashboard pull and run new code at all.
+  const allowCb = el("input", { type: "checkbox", id: "settings-update-allow-self-update" });
+  allowCb.checked = !!draft.allow_self_update;
+  allowCb.addEventListener("change", () => {
+    draft.allow_self_update = allowCb.checked;
+    updateFooter();
+    renderNow(); // keep auto_apply's disabled state (below) in sync
+  });
+  children.push(
+    el("div", { class: "settings-warn-box" }, [
+      el("div", { class: "settings-warn-box-icon", "aria-hidden": "true" }, "⚠"),
+      el("div", { class: "settings-warn-box-body" }, [
+        el("label", { class: "settings-checkbox-row settings-warn-label", for: "settings-update-allow-self-update" }, [
+          allowCb,
+          el("span", {}, "Allow self-update"),
+        ]),
+        el(
+          "div",
+          { class: "settings-hint" },
+          `Permits the dashboard to pull and run new code from ${originLabel} -- required before "Update now" (or auto-apply below) can do anything. Off by default. Turning this on does not apply anything by itself; it only unlocks the button and the option below.`
+        ),
+      ]),
+    ])
+  );
+
   // Apply updates automatically -> auto_apply. Deliberately styled apart from
   // the checkboxes above: this one lets the machine change its own running
   // code with nobody watching, so it does not get to look like an ordinary
-  // preference (see AGENTS.md briefing / task spec).
+  // preference (see AGENTS.md briefing / task spec). Disabled while
+  // allow_self_update is off, since it is a silent no-op until that master
+  // switch is also on (see update.py's module docstring) -- the relationship
+  // must be visible, not just documented in the hint text below.
   const autoCb = el("input", { type: "checkbox", id: "settings-update-autoapply" });
   autoCb.checked = !!draft.auto_apply;
+  autoCb.disabled = !draft.allow_self_update;
   autoCb.addEventListener("change", () => {
     draft.auto_apply = autoCb.checked;
     updateFooter();
   });
-  const originLabel = repoConfigured ? `${info.repo}${info.branch ? ` @ ${info.branch}` : ""}` : "the configured origin";
   children.push(
     el("div", { class: "settings-warn-box" }, [
       el("div", { class: "settings-warn-box-icon", "aria-hidden": "true" }, "⚠"),
@@ -712,7 +748,9 @@ function renderUpdatesSection() {
         el(
           "div",
           { class: "settings-hint" },
-          `Only fast-forward updates from ${originLabel} are ever applied -- never a rewritten or diverged history. With this on, the dashboard updates itself the moment a new commit is detected, with no one asked first. Leave it off to review and click "Update now" yourself.`
+          draft.allow_self_update
+            ? `Only fast-forward updates from ${originLabel} are ever applied -- never a rewritten or diverged history. With this on, the dashboard updates itself the moment a new commit is detected, with no one asked first. Leave it off to review and click "Update now" yourself.`
+            : `Only takes effect once "Allow self-update" above is turned on -- until then this has no effect either way.`
         ),
       ]),
     ])
@@ -828,6 +866,7 @@ async function doSave(saveBtn, errorBox, confirmBox) {
         if (typeof res.data.check_enabled === "boolean") S.updatesDraft.check_enabled = res.data.check_enabled;
         if (typeof res.data.check_interval_s === "number") S.updatesDraft.check_interval_s = res.data.check_interval_s;
         if (typeof res.data.auto_apply === "boolean") S.updatesDraft.auto_apply = res.data.auto_apply;
+        if (typeof res.data.allow_self_update === "boolean") S.updatesDraft.allow_self_update = res.data.allow_self_update;
       }
       S.updatesDraftOriginal = deepClone(S.updatesDraft);
     } else {

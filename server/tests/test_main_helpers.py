@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from critdash import config as config_mod
 from critdash import detect as detect_mod
 from critdash import main as main_mod
+from critdash import update as update_mod
 from critdash.main import (
     _REQUIRED_COLOR_TOKENS,
     _atomic_write_json,
@@ -738,6 +739,156 @@ def test_post_settings_updates_empty_body_is_a_no_op_200(isolated_app):
     resp = isolated_app.post("/api/settings/updates", json={})
     assert resp.status_code == 200
     assert resp.json() == before
+
+
+# -- defect 2 (macOS install report): allow_self_update as a 4th settable key --
+
+
+def test_get_settings_updates_reports_allow_self_update_default_false(isolated_app):
+    resp = isolated_app.get("/api/settings/updates")
+    assert resp.json()["allow_self_update"] is False
+
+
+def test_post_settings_updates_accepts_allow_self_update(isolated_app):
+    resp = isolated_app.post("/api/settings/updates", json={"allow_self_update": True})
+    assert resp.status_code == 200
+    assert resp.json()["allow_self_update"] is True
+
+    get_resp = isolated_app.get("/api/settings/updates")
+    assert get_resp.json()["allow_self_update"] is True
+
+
+def test_post_settings_updates_allow_self_update_persists_to_sources_json(tmp_path, monkeypatch):
+    config_dir = _write_isolated_config(tmp_path)
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    resp = client.post("/api/settings/updates", json={"allow_self_update": True})
+    assert resp.status_code == 200
+
+    with (config_dir / "sources.json").open() as f:
+        on_disk = json.load(f)
+    assert on_disk["allow_self_update"] is True
+
+
+def test_post_settings_updates_rejects_non_bool_allow_self_update(isolated_app):
+    resp = isolated_app.post("/api/settings/updates", json={"allow_self_update": "yes"})
+    assert resp.status_code == 400
+    assert any("allow_self_update" in e for e in resp.json()["detail"]["errors"])
+
+
+# -- defect 1 (macOS install report): a hand edit to config/sources.json ------
+# must be picked up by the running server, no restart, via the two call
+# sites main.py wires config.reload_sources() into: GET
+# /api/settings/updates and POST /api/update/apply. Config.reload_sources()
+# itself is unit-tested directly in test_config.py -- these prove the HTTP
+# wiring specifically.
+
+
+def test_get_settings_updates_reflects_hand_edit_without_restart(tmp_path, monkeypatch):
+    config_dir = _write_isolated_config(tmp_path, extra_sources={"allow_self_update": False})
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    before = client.get("/api/settings/updates").json()
+    assert before["allow_self_update"] is False
+    assert before["check_interval_s"] == 900
+
+    # A hand edit to the file on disk -- never through the app's own POST --
+    # exactly what a user editing config/sources.json in a text editor does.
+    on_disk = json.loads((config_dir / "sources.json").read_text())
+    on_disk["allow_self_update"] = True
+    on_disk["update_check_interval_s"] = 1234
+    (config_dir / "sources.json").write_text(json.dumps(on_disk))
+
+    after = client.get("/api/settings/updates").json()
+    assert after["allow_self_update"] is True
+    assert after["check_interval_s"] == 1234
+
+
+def test_post_update_apply_reloads_sources_before_allow_self_update_gate(tmp_path, monkeypatch):
+    """The exact reported consequence: the user hand-flipped allow_self_update
+    false -> true and clicked "Update now", and the running process still
+    saw false. Proves reload_sources() runs BEFORE update.apply_update() is
+    even called, by making a stand-in apply_update read config.sources back
+    and report what it saw -- never touches git or the real dashboard_root."""
+    config_dir = _write_isolated_config(tmp_path, extra_sources={"allow_self_update": False})
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    on_disk = json.loads((config_dir / "sources.json").read_text())
+    on_disk["allow_self_update"] = True
+    (config_dir / "sources.json").write_text(json.dumps(on_disk))
+
+    seen = {}
+
+    def fake_apply_update(config, dashboard_root):
+        seen["allow_self_update"] = config.sources.get("allow_self_update")
+        return {
+            "applied": True, "commit": "deadbeef",
+            "reinstalled": False, "restart_requested": False, "applied_at": "now",
+        }
+
+    monkeypatch.setattr(main_mod.update_mod, "apply_update", fake_apply_update)
+
+    resp = client.post("/api/update/apply")
+
+    assert resp.status_code == 200
+    assert seen["allow_self_update"] is True
+
+
+# -- defect 4 (macOS install report): _update_settings_view's repo field ------
+# must use update.py's own repo resolution, not a naive `.get(...) or ""`.
+
+
+def test_get_settings_updates_repo_reports_default_when_key_absent(tmp_path, monkeypatch):
+    """sources.json has no update_repo key at all (the exact measured bug:
+    an old/minimal config that predates this key) -- the view must report
+    the effective repo that check/apply would actually use
+    (DEFAULT_UPDATE_REPO), not "" (which reads as unconfigured). Deliberately
+    NOT using the isolated_app fixture: _write_isolated_config seeds the
+    full DEFAULT_SOURCES dict, which already has update_repo set explicitly
+    -- this test needs the key genuinely absent."""
+    config_dir = _write_isolated_config(tmp_path)
+    on_disk = json.loads((config_dir / "sources.json").read_text())
+    del on_disk["update_repo"]
+    (config_dir / "sources.json").write_text(json.dumps(on_disk))
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    resp = client.get("/api/settings/updates")
+    assert "update_repo" not in json.loads((config_dir / "sources.json").read_text())
+    assert resp.json()["repo"] == update_mod.DEFAULT_UPDATE_REPO
+
+
+def test_get_settings_updates_repo_reports_empty_when_explicitly_disabled(tmp_path, monkeypatch):
+    config_dir = _write_isolated_config(tmp_path, extra_sources={"update_repo": ""})
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    resp = client.get("/api/settings/updates")
+    assert resp.json()["repo"] == ""
+
+
+def test_get_settings_updates_repo_reports_configured_value(tmp_path, monkeypatch):
+    config_dir = _write_isolated_config(tmp_path, extra_sources={"update_repo": "someone/fork"})
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    resp = client.get("/api/settings/updates")
+    assert resp.json()["repo"] == "someone/fork"
 
 
 # -- per-collector enablement (Bug 2) ------------------------------------------

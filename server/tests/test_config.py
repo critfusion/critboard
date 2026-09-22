@@ -205,6 +205,91 @@ def test_env_interval_override_still_wins_over_relaxed_preset(isolated_config_di
     assert cfg.interval("beads") == 7.0
 
 
+def test_reload_sources_picks_up_a_hand_edit(isolated_config_dir):
+    """The exact bug report: allow_self_update hand-edited true -> false in
+    config/sources.json on disk while the server is running must be visible
+    to the already-loaded Config without a restart."""
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, allow_self_update=False))
+    )
+    cfg = config_mod.load_config()
+    assert cfg.sources["allow_self_update"] is False
+
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, allow_self_update=True))
+    )
+    ok = cfg.reload_sources()
+
+    assert ok is True
+    assert cfg.sources["allow_self_update"] is True
+
+
+def test_reload_sources_mutates_in_place_not_rebind(isolated_config_dir):
+    """Other modules (main.py's closures, every collector) hold their own
+    reference to the SAME dict main.py's `config.sources` points at --
+    reload_sources() must mutate that dict, never replace it with a new one,
+    or those other references would keep seeing stale data forever."""
+    (isolated_config_dir / "sources.json").write_text(json.dumps(config_mod.DEFAULT_SOURCES))
+    cfg = config_mod.load_config()
+    same_dict = cfg.sources
+    alias = cfg.sources  # a second reference, standing in for another module's
+
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, host="changed-via-reload"))
+    )
+    cfg.reload_sources()
+
+    assert cfg.sources is same_dict  # never rebound
+    assert alias["host"] == "changed-via-reload"  # the alias sees the change too
+
+
+def test_reload_sources_missing_file_leaves_config_untouched(isolated_config_dir):
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, host="real-machine"))
+    )
+    cfg = config_mod.load_config()
+    (isolated_config_dir / "sources.json").unlink()
+
+    ok = cfg.reload_sources()
+
+    assert ok is False
+    assert cfg.sources["host"] == "real-machine"
+
+
+def test_reload_sources_malformed_json_leaves_config_untouched(isolated_config_dir):
+    """The hard safety requirement: a half-written save (an editor mid-write,
+    or a POST racing this read) must never wipe live config -- on any parse
+    failure, the in-memory values from before the reload are left exactly as
+    they were."""
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, host="real-machine", allow_self_update=True))
+    )
+    cfg = config_mod.load_config()
+    assert cfg.sources["host"] == "real-machine"
+    assert cfg.sources["allow_self_update"] is True
+
+    (isolated_config_dir / "sources.json").write_text('{"host": "real-machine", "allow_self_update": ')
+
+    ok = cfg.reload_sources()
+
+    assert ok is False
+    assert cfg.sources["host"] == "real-machine"
+    assert cfg.sources["allow_self_update"] is True
+
+
+def test_reload_sources_non_object_json_leaves_config_untouched(isolated_config_dir):
+    (isolated_config_dir / "sources.json").write_text(
+        json.dumps(dict(config_mod.DEFAULT_SOURCES, host="real-machine"))
+    )
+    cfg = config_mod.load_config()
+
+    (isolated_config_dir / "sources.json").write_text(json.dumps(["not", "an", "object"]))
+    ok = cfg.reload_sources()
+
+    assert ok is False
+    assert cfg.sources["host"] == "real-machine"
+
+
 def test_default_sources_are_host_agnostic():
     """The in-memory fallback must never bake in a specific machine's
     hostnames or absolute home-dir paths -- it's what ships to everyone."""
