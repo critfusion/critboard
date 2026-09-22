@@ -7,19 +7,22 @@
 //
 // Contract this module works against (server/**, frozen, see AGENTS.md
 // briefing / task spec): GET+POST /api/config/layout, GET+POST
-// /api/config/theme, GET /api/settings/suggest, and a `settings` object on
-// /api/snapshot. As of this writing GET layout/theme already work; POST
-// layout validates but the write path is still landing; POST theme and GET
-// suggest 404; snapshot has no `settings` key yet. Every section below is
-// written to degrade to a clear inline message instead of throwing when a
-// call 404s -- do not assume any endpoint is live.
-import { el, applyTheme } from "./utils.js";
+// /api/config/theme, GET /api/settings/suggest, GET+POST
+// /api/settings/updates, and a `settings` object on /api/snapshot. As of
+// this writing GET layout/theme already work; POST layout validates but the
+// write path is still landing; POST theme, GET suggest, and GET+POST
+// settings/updates all 404; snapshot has no `settings` or `update` key yet.
+// Every section below is written to degrade to a clear inline message
+// instead of throwing when a call 404s -- do not assume any endpoint is
+// live.
+import { el, applyTheme, fmtRelTime } from "./utils.js";
 import { openModal, closeModal } from "./modal.js";
 import { PROVIDER_LABELS } from "./widgets/provider_quota.js";
 
 const LAYOUT_URL = "/api/config/layout";
 const THEME_URL = "/api/config/theme";
 const SUGGEST_URL = "/api/settings/suggest";
+const UPDATES_URL = "/api/settings/updates";
 
 // Bumped on every openSettings() call. Async fetches started by an earlier
 // open (e.g. the user closed the dialog before a GET resolved, then
@@ -132,6 +135,10 @@ function freshState() {
     themeOriginal: null,
     suggest: null,
     suggestStatus: null, // "ok" | "unavailable"
+    updatesInfo: null, // raw GET /api/settings/updates response (repo/current/latest/behind/checked_at/last_error + the 3 editable fields)
+    updatesDraft: null, // { check_enabled, check_interval_s, auto_apply } -- the only shape POST accepts
+    updatesDraftOriginal: null,
+    updatesStatus: null, // "ok" | "unavailable"
     snapshotSettings: null,
     saving: false,
     saveErrors: [], // strings shown in the shared error box
@@ -144,7 +151,11 @@ let S = freshState();
 
 function isDirty() {
   if (!S.loaded) return false;
-  return JSON.stringify(S.layout) !== JSON.stringify(S.layoutOriginal) || JSON.stringify(S.theme) !== JSON.stringify(S.themeOriginal);
+  return (
+    JSON.stringify(S.layout) !== JSON.stringify(S.layoutOriginal) ||
+    JSON.stringify(S.theme) !== JSON.stringify(S.themeOriginal) ||
+    (S.updatesDraft !== null && JSON.stringify(S.updatesDraft) !== JSON.stringify(S.updatesDraftOriginal))
+  );
 }
 
 function findQuotaPanel(layout) {
@@ -204,10 +215,11 @@ function handleDialogClose() {
 // ---------------- data loading ----------------
 
 async function loadAll(mySession) {
-  const [layoutRes, themeRes, suggestRes] = await Promise.all([
+  const [layoutRes, themeRes, suggestRes, updatesRes] = await Promise.all([
     fetchJSONSafe(LAYOUT_URL),
     fetchJSONSafe(THEME_URL),
     fetchJSONSafe(SUGGEST_URL),
+    fetchJSONSafe(UPDATES_URL),
   ]);
   if (mySession !== session) return; // dialog closed/reopened while we were fetching
 
@@ -233,6 +245,22 @@ async function loadAll(mySession) {
   } else {
     S.suggest = null;
     S.suggestStatus = "unavailable";
+  }
+
+  if (updatesRes.ok && updatesRes.data) {
+    S.updatesInfo = updatesRes.data;
+    S.updatesDraft = {
+      check_enabled: !!updatesRes.data.check_enabled,
+      check_interval_s: typeof updatesRes.data.check_interval_s === "number" ? updatesRes.data.check_interval_s : 300,
+      auto_apply: !!updatesRes.data.auto_apply,
+    };
+    S.updatesDraftOriginal = deepClone(S.updatesDraft);
+    S.updatesStatus = "ok";
+  } else {
+    S.updatesInfo = null;
+    S.updatesDraft = null;
+    S.updatesDraftOriginal = null;
+    S.updatesStatus = "unavailable";
   }
 
   S.snapshotSettings = (window.__critdashData && window.__critdashData.settings) || null;
@@ -306,6 +334,7 @@ function renderShell(bodyEl) {
   form.appendChild(renderTimezoneSection());
   const cadence = renderRefreshCadenceSection();
   if (cadence) form.appendChild(cadence);
+  form.appendChild(renderUpdatesSection());
   form.appendChild(renderFooter());
   bodyEl.appendChild(form);
 }
@@ -593,6 +622,125 @@ function renderRefreshCadenceSection() {
   return section("Refresh cadence", hint("Relaxed polls less often -- useful on a slow connection."), el("div", { class: "settings-row" }, [select]));
 }
 
+// ---- 8. updates (self-update: GET+POST /api/settings/updates) ----
+
+function statusRow(label, value) {
+  return el("div", { class: "table-card-field" }, [
+    el("span", { class: "table-card-field-label" }, label),
+    el("span", { class: "table-card-field-value" }, value),
+  ]);
+}
+
+function renderUpdatesSection() {
+  if (S.updatesStatus === "unavailable" || !S.updatesDraft) {
+    return section(
+      "Updates",
+      degraded("Update settings are not available yet (the /api/settings/updates endpoint isn't live yet -- backend still landing it).")
+    );
+  }
+
+  const draft = S.updatesDraft;
+  const info = S.updatesInfo || {};
+  const repoConfigured = !!info.repo;
+  const children = [];
+
+  if (!repoConfigured) {
+    children.push(
+      degraded(
+        "Updates are not configured -- no repository is set for this install, so there is nothing to check yet. The settings below take effect once one is."
+      )
+    );
+  }
+
+  // Check for updates automatically -> check_enabled
+  const enabledCb = el("input", { type: "checkbox", id: "settings-update-check-enabled" });
+  enabledCb.checked = !!draft.check_enabled;
+  enabledCb.addEventListener("change", () => {
+    draft.check_enabled = enabledCb.checked;
+    updateFooter();
+  });
+  children.push(
+    el("label", { class: "settings-checkbox-row", for: "settings-update-check-enabled" }, [enabledCb, el("span", {}, "Check for updates automatically")])
+  );
+
+  // Check interval -> check_interval_s, edited in minutes; server clamps below 300s (5m).
+  const intervalInput = el("input", {
+    type: "number",
+    min: "5",
+    step: "1",
+    class: "settings-input settings-input-inline",
+    id: "settings-update-interval",
+    "aria-label": "Check interval in minutes",
+    value: String(Math.max(5, Math.round((draft.check_interval_s || 300) / 60))),
+  });
+  function commitInterval() {
+    const raw = Number(intervalInput.value);
+    const mins = Number.isFinite(raw) && raw > 0 ? Math.round(raw) : 5;
+    const clampedMins = Math.max(5, mins);
+    intervalInput.value = String(clampedMins); // reflect the clamp immediately -- never let the field imply a smaller value took
+    draft.check_interval_s = clampedMins * 60;
+    updateFooter();
+  }
+  intervalInput.addEventListener("change", commitInterval);
+  children.push(
+    el("div", { class: "settings-row" }, [
+      el("label", { for: "settings-update-interval", class: "settings-hint", style: "margin-bottom:0;" }, "Check interval (minutes)"),
+      intervalInput,
+    ])
+  );
+  children.push(hint("The server enforces a 5 minute (300s) minimum -- entering less is rounded up."));
+
+  // Apply updates automatically -> auto_apply. Deliberately styled apart from
+  // the checkboxes above: this one lets the machine change its own running
+  // code with nobody watching, so it does not get to look like an ordinary
+  // preference (see AGENTS.md briefing / task spec).
+  const autoCb = el("input", { type: "checkbox", id: "settings-update-autoapply" });
+  autoCb.checked = !!draft.auto_apply;
+  autoCb.addEventListener("change", () => {
+    draft.auto_apply = autoCb.checked;
+    updateFooter();
+  });
+  const originLabel = repoConfigured ? `${info.repo}${info.branch ? ` @ ${info.branch}` : ""}` : "the configured origin";
+  children.push(
+    el("div", { class: "settings-warn-box" }, [
+      el("div", { class: "settings-warn-box-icon", "aria-hidden": "true" }, "⚠"),
+      el("div", { class: "settings-warn-box-body" }, [
+        el("label", { class: "settings-checkbox-row settings-warn-label", for: "settings-update-autoapply" }, [
+          autoCb,
+          el("span", {}, "Apply updates automatically — no confirmation"),
+        ]),
+        el(
+          "div",
+          { class: "settings-hint" },
+          `Only fast-forward updates from ${originLabel} are ever applied -- never a rewritten or diverged history. With this on, the dashboard updates itself the moment a new commit is detected, with no one asked first. Leave it off to review and click "Update now" yourself.`
+        ),
+      ]),
+    ])
+  );
+
+  // Read-only current state -- only shown once a repo exists to report on,
+  // so an unconfigured install never renders a checker that looks broken.
+  if (repoConfigured) {
+    children.push(
+      el("div", { class: "table-card-fields", style: "margin-top: 4px;" }, [
+        statusRow("Repo", `${info.repo}${info.branch ? ` @ ${info.branch}` : ""}`),
+        statusRow("Current commit", info.current || "--"),
+        statusRow("Latest commit", info.latest || "--"),
+        statusRow("Behind", typeof info.behind === "number" ? String(info.behind) : "--"),
+        statusRow("Last checked", info.checked_at ? fmtRelTime(info.checked_at) : "never"),
+      ])
+    );
+    if (info.last_error) {
+      // A checker that has been failing silently must not read as "up to
+      // date" -- surface the error plainly rather than just the last-known
+      // current/latest pair, which alone would look healthy.
+      children.push(degraded(`Last check failed: ${info.last_error}`));
+    }
+  }
+
+  return section("Updates", ...children);
+}
+
 // ---- footer: dirty indicator, error box, cancel/save ----
 
 function renderFooter() {
@@ -642,6 +790,7 @@ async function doSave(saveBtn, errorBox, confirmBox) {
   const messages = [];
   const layoutChanged = JSON.stringify(S.layout) !== JSON.stringify(S.layoutOriginal);
   const themeChanged = S.theme && JSON.stringify(S.theme) !== JSON.stringify(S.themeOriginal);
+  const updatesChanged = S.updatesDraft && JSON.stringify(S.updatesDraft) !== JSON.stringify(S.updatesDraftOriginal);
 
   if (layoutChanged) {
     const res = await postJSONSafe(LAYOUT_URL, S.layout);
@@ -659,6 +808,30 @@ async function doSave(saveBtn, errorBox, confirmBox) {
       S.themeOriginal = deepClone(S.theme);
     } else {
       messages.push(`Theme preset: ${res.message}`);
+    }
+  }
+  if (updatesChanged) {
+    // The endpoint accepts exactly these three keys -- never send the
+    // read-only fields (repo/current/latest/...) back, even though they
+    // live in the same S.updatesInfo object for rendering.
+    const res = await postJSONSafe(UPDATES_URL, S.updatesDraft);
+    if (mySession !== session) return;
+    if (res.ok) {
+      // Server may clamp/normalize (e.g. the 300s interval floor) -- fold
+      // whatever it echoes back into both the draft and the read-only info
+      // so the form reflects reality, not just what the user typed. Mutated
+      // in place (not reassigned) so the checkbox/input closures above,
+      // which close over this same `draft` object, stay live if the dialog
+      // re-renders on a later tick.
+      if (res.data) {
+        S.updatesInfo = { ...(S.updatesInfo || {}), ...res.data };
+        if (typeof res.data.check_enabled === "boolean") S.updatesDraft.check_enabled = res.data.check_enabled;
+        if (typeof res.data.check_interval_s === "number") S.updatesDraft.check_interval_s = res.data.check_interval_s;
+        if (typeof res.data.auto_apply === "boolean") S.updatesDraft.auto_apply = res.data.auto_apply;
+      }
+      S.updatesDraftOriginal = deepClone(S.updatesDraft);
+    } else {
+      messages.push(`Updates: ${res.message}`);
     }
   }
 

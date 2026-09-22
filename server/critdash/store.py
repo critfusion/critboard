@@ -315,6 +315,20 @@ CREATE TABLE IF NOT EXISTS quota_cache (
     payload TEXT NOT NULL,
     checked_at TEXT NOT NULL
 );
+
+-- Periodic background update check (critdash/update.py's
+-- periodic_update_check). Single row (id=1). `etag` is the GitHub API
+-- ETag from the last 200 response -- persisted across restarts so a
+-- restart doesn't throw away the conditional-request cache and force a
+-- full (non-304) call. `payload` is the rest of the last real result
+-- (latest/behind/checked_at/last_error) as JSON -- never touched on a
+-- 304 (see periodic_update_check's "no state change on not-modified"
+-- contract), so a busy day of 304s costs nothing on disk either.
+CREATE TABLE IF NOT EXISTS update_check_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    etag TEXT,
+    payload TEXT NOT NULL
+);
 """
 
 
@@ -1388,6 +1402,40 @@ class Store:
                    ON CONFLICT(provider) DO UPDATE SET
                        payload=excluded.payload, checked_at=excluded.checked_at""",
                 (provider, json.dumps(payload), str(payload.get("checked_at") or "")),
+            )
+            self._conn.commit()
+
+    # -- periodic update-check state (critdash/update.py) ---------------------
+    def get_update_check_state(self) -> dict | None:
+        """{"etag": ..., "latest": ..., "behind": ..., "checked_at": ...,
+        "last_error": ...} from the last real (non-304) check, or None if
+        no check has ever completed (fresh DB, or every check so far has
+        errored before a first 200 response)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT etag, payload FROM update_check_state WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except json.JSONDecodeError:
+            payload = {}
+        payload["etag"] = row["etag"]
+        return payload
+
+    def set_update_check_state(self, payload: dict) -> None:
+        """Replace the single persisted row wholesale. `payload` may include
+        "etag" (stored in its own column) alongside the rest, which is
+        stored as-is under "payload" -- get_update_check_state() puts etag
+        back into the returned dict either way."""
+        etag = payload.get("etag")
+        body = {k: v for k, v in payload.items() if k != "etag"}
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO update_check_state (id, etag, payload) VALUES (1, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET etag=excluded.etag, payload=excluded.payload""",
+                (etag, json.dumps(body)),
             )
             self._conn.commit()
 

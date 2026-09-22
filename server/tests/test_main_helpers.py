@@ -638,6 +638,108 @@ def test_snapshot_settings_timezone_reflects_saved_layout(isolated_app):
     assert snap_resp.json()["settings"]["timezone"] == "America/Chicago"
 
 
+# -- GET/POST /api/settings/updates (briefing Task 3) --------------------------
+# Lifespan (and therefore update_check_loop, scheduler.start(), every other
+# background task) never runs under a plain TestClient.get()/.post() call --
+# only `with TestClient(...) as c:` triggers it (verified: no test in this
+# suite uses that form for the FastAPI app) -- so these tests never make a
+# real network call, and /api/snapshot's "update" key stays the static
+# empty_snapshot() default unless a test sets it explicitly.
+
+
+def test_get_settings_updates_defaults(isolated_app):
+    resp = isolated_app.get("/api/settings/updates")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["check_enabled"] is True
+    assert body["check_interval_s"] == 900
+    assert body["auto_apply"] is False
+    assert body["repo"] == "critfusion/critboard"
+    assert body["branch"] == "main"
+    assert body["update_available"] is False
+    assert body["current"] is None
+    assert body["latest"] is None
+
+
+def test_post_settings_updates_valid_persists_and_reflected_on_get(isolated_app, tmp_path):
+    resp = isolated_app.post(
+        "/api/settings/updates",
+        json={"check_enabled": False, "check_interval_s": 1200, "auto_apply": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["check_enabled"] is False
+    assert body["check_interval_s"] == 1200
+    assert body["auto_apply"] is True
+
+    get_resp = isolated_app.get("/api/settings/updates")
+    assert get_resp.json()["check_enabled"] is False
+    assert get_resp.json()["check_interval_s"] == 1200
+    assert get_resp.json()["auto_apply"] is True
+
+
+def test_post_settings_updates_persists_to_sources_json_on_disk(tmp_path, monkeypatch):
+    config_dir = _write_isolated_config(tmp_path)
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    resp = client.post("/api/settings/updates", json={"auto_apply": True})
+    assert resp.status_code == 200
+
+    with (config_dir / "sources.json").open() as f:
+        on_disk = json.load(f)
+    assert on_disk["update_auto_apply"] is True
+    # every other key untouched -- this endpoint must never clobber the rest
+    # of sources.json (ssh hosts, filesystem paths, etc.)
+    assert on_disk["repo_roots"] == config_mod.DEFAULT_SOURCES["repo_roots"]
+    assert on_disk["bd_bin"] == config_mod.DEFAULT_SOURCES["bd_bin"]
+
+
+def test_post_settings_updates_rejects_unknown_key(isolated_app):
+    resp = isolated_app.post("/api/settings/updates", json={"repo_roots": ["/evil"]})
+    assert resp.status_code == 400
+    assert "repo_roots" in resp.json()["detail"]
+
+
+def test_post_settings_updates_rejects_multiple_unknown_keys_names_both(isolated_app):
+    resp = isolated_app.post("/api/settings/updates", json={"ssh_opts": [], "beads_env": "/x"})
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "ssh_opts" in detail
+    assert "beads_env" in detail
+
+
+def test_post_settings_updates_clamps_interval_floor(isolated_app):
+    resp = isolated_app.post("/api/settings/updates", json={"check_interval_s": 10})
+    assert resp.status_code == 200
+    assert resp.json()["check_interval_s"] == 300  # floor, not the requested 10
+
+
+def test_post_settings_updates_rejects_bad_types(isolated_app):
+    for body in (
+        {"check_enabled": "yes"},
+        {"auto_apply": "yes"},
+        {"check_interval_s": "900"},
+        {"check_interval_s": True},  # bool is not an int here, even though bool subclasses int
+    ):
+        resp = isolated_app.post("/api/settings/updates", json=body)
+        assert resp.status_code == 400, body
+
+
+def test_post_settings_updates_writes_disabled_returns_403(isolated_app_writes_disabled):
+    resp = isolated_app_writes_disabled.post("/api/settings/updates", json={"check_enabled": False})
+    assert resp.status_code == 403
+
+
+def test_post_settings_updates_empty_body_is_a_no_op_200(isolated_app):
+    before = isolated_app.get("/api/settings/updates").json()
+    resp = isolated_app.post("/api/settings/updates", json={})
+    assert resp.status_code == 200
+    assert resp.json() == before
+
+
 # -- per-collector enablement (Bug 2) ------------------------------------------
 # Every assertion here reads /api/healthz (or /api/snapshot's "sources" key)
 # immediately after build_app() returns, BEFORE the scheduler's background

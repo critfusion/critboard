@@ -380,6 +380,111 @@ def test_bd_shell_prefix_skips_sourcing_when_env_empty_string():
     assert prefix.startswith("export BEADS_ACTOR=")
 
 
+# -- beads_dir precedence: beads_dir -> beads_env -> bd's own resolution ----
+
+
+def test_bd_shell_prefix_exports_beads_dir_when_set(tmp_path):
+    ws = tmp_path / "workspace" / ".beads"
+    ws.mkdir(parents=True)
+    prefix = bd_shell_prefix("", "critdash", str(ws))
+    assert prefix == f"export BEADS_ACTOR=critdash; export BEADS_DIR={ws};"
+
+
+def test_bd_shell_prefix_omits_beads_dir_when_unset():
+    prefix = bd_shell_prefix("", "critdash", "")
+    assert "BEADS_DIR" not in prefix
+
+
+def test_bd_shell_prefix_beads_dir_exported_after_env_file_so_it_wins(tmp_path):
+    """beads_dir takes precedence over whatever beads_env's sourced script
+    exports -- it must be exported AFTER the `.` (source) line, so a shell
+    evaluating this prefix left-to-right ends up with BEADS_DIR pointed at
+    beads_dir, not whatever the env file set."""
+    env_path = tmp_path / "env"
+    env_path.write_text("export BEADS_DIR=/wrong/path\n")
+    ws = tmp_path / "workspace" / ".beads"
+    ws.mkdir(parents=True)
+    prefix = bd_shell_prefix(str(env_path), "critdash", str(ws))
+    source_idx = prefix.index(". ")
+    beads_dir_idx = prefix.index("export BEADS_DIR=")
+    assert source_idx < beads_dir_idx
+    assert str(ws) in prefix
+
+
+def test_validate_beads_dir_none_when_unset():
+    assert beads_mod.validate_beads_dir("") is None
+
+
+def test_validate_beads_dir_none_when_directory_exists(tmp_path):
+    ws = tmp_path / ".beads"
+    ws.mkdir()
+    assert beads_mod.validate_beads_dir(str(ws)) is None
+
+
+def test_validate_beads_dir_issue_when_path_does_not_exist(tmp_path):
+    bad = tmp_path / "does-not-exist" / ".beads"
+    issue = beads_mod.validate_beads_dir(str(bad))
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is False
+    assert str(bad) in issue.detail
+    assert ".beads directory ITSELF" in issue.remedy
+
+
+def test_validate_beads_dir_issue_when_path_is_the_parent_not_dot_beads(tmp_path):
+    """The documented easy mistake: pointing beads_dir at the workspace's
+    PARENT directory instead of its .beads subdirectory. The parent exists
+    as a directory, so this can't be caught by existence alone -- but a
+    parent that has no .beads child is still just "not a workspace" from
+    bd's point of view once BEADS_DIR is exported; validate_beads_dir only
+    guarantees the configured path itself exists as a directory. This test
+    documents that a nonexistent path (the more common typo) is caught."""
+    parent = tmp_path / "myproject"
+    parent.mkdir()
+    assert beads_mod.validate_beads_dir(str(parent)) is None  # exists as a dir -- not rejected here
+
+
+def test_availability_issue_none_when_beads_dir_valid(tmp_path):
+    ws = tmp_path / ".beads"
+    ws.mkdir()
+    assert beads_mod.availability_issue(sys.executable, str(ws)) is None
+
+
+def test_availability_issue_config_missing_when_beads_dir_bad(tmp_path):
+    bad = tmp_path / "no-such-workspace"
+    issue = beads_mod.availability_issue(sys.executable, str(bad))
+    assert issue.reason_code == "config_missing"
+    assert issue.optional is False
+
+
+def test_availability_issue_bd_missing_takes_priority_over_beads_dir(tmp_path):
+    """bd_bin missing is checked first -- a dependency_missing issue, not a
+    beads_dir config_missing one, even if beads_dir is ALSO bad."""
+    issue = beads_mod.availability_issue(str(tmp_path / "no-such-bd"), str(tmp_path / "no-such-dir"))
+    assert issue.reason_code == "dependency_missing"
+
+
+@pytest.mark.asyncio
+async def test_collect_uses_beads_dir_in_command_prefix(monkeypatch, fixtures_dir):
+    """End-to-end: BeadsCollector actually threads beads_dir into every `bd`
+    invocation via _prefix()."""
+    ws = fixtures_dir  # any existing directory works for validate_beads_dir
+    seen_cmds = []
+
+    async def fake_exec(cmd, **kwargs):
+        seen_cmds.append(cmd)
+        if "list" in cmd:
+            return _FakeProc(stdout=b"[]")
+        if "stats" in cmd:
+            return _FakeProc(stdout=b'{"summary": {}}')
+        return _FakeProc(stdout=b"[]")
+
+    monkeypatch.setattr(beads_mod.asyncio, "create_subprocess_shell", fake_exec)
+    collector = BeadsCollector(bd_bin=sys.executable, beads_env="", beads_dir=str(ws))
+    await collector.collect()
+    assert seen_cmds
+    assert all(f"BEADS_DIR={ws}" in cmd for cmd in seen_cmds)
+
+
 @pytest.mark.asyncio
 async def test_bd_no_workspace_failure_classified_with_real_message(monkeypatch):
     """Live-verified (isolated HOME, no env file, no `bd init`): `bd list

@@ -64,6 +64,11 @@ def empty_snapshot(host: str) -> dict[str, Any]:
         "system": {},
         "events": [],
         "version": {"build": None, "started_at": None},
+        "update": {
+            "repo": None, "branch": None, "current": None, "latest": None, "behind": None,
+            "update_available": False, "checked_at": None, "last_error": None,
+            "enabled": True, "auto_apply": False,
+        },
         "analytics": {
             "errors": {
                 "window": "7d", "top_errors": [], "by_tool": [], "trouble_files": [],

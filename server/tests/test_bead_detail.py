@@ -154,7 +154,7 @@ async def test_fetch_bead_detail_other_failure_raises_runtime_error(monkeypatch)
 
 
 def test_get_bead_detail_endpoint_success(monkeypatch):
-    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0):
+    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0, beads_dir=""):
         return {"id": bead_id, "title": "fake bead", "status": "open"}
 
     monkeypatch.setattr(main_mod, "fetch_bead_detail", fake_fetch)
@@ -167,7 +167,7 @@ def test_get_bead_detail_endpoint_success(monkeypatch):
 
 
 def test_get_bead_detail_endpoint_404(monkeypatch):
-    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0):
+    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0, beads_dir=""):
         raise BeadNotFoundError(bead_id)
 
     monkeypatch.setattr(main_mod, "fetch_bead_detail", fake_fetch)
@@ -179,7 +179,7 @@ def test_get_bead_detail_endpoint_404(monkeypatch):
 
 
 def test_get_bead_detail_endpoint_rejects_invalid_id(monkeypatch):
-    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0):
+    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0, beads_dir=""):
         raise AssertionError("must not call fetch_bead_detail for an invalid id")
 
     monkeypatch.setattr(main_mod, "fetch_bead_detail", fake_fetch)
@@ -191,7 +191,7 @@ def test_get_bead_detail_endpoint_rejects_invalid_id(monkeypatch):
 def test_get_bead_detail_endpoint_uses_cache_on_repeat_lookup(monkeypatch):
     calls = []
 
-    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0):
+    async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0, beads_dir=""):
         calls.append(bead_id)
         return {"id": bead_id, "title": "fake bead", "status": "open"}
 

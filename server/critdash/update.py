@@ -15,14 +15,33 @@ Hard rules (mirrors quota.py's manual-only contract):
     `message`; main.py maps each reason to a specific HTTP status, never a
     bare 500. It refuses a dirty working tree, anything that is not a clean
     fast-forward, and a pull from any remote other than the configured repo.
-  - `update_repo` defaults to "" (empty), not a specific repo -- the
-    upstream critfusion/critboard repo this dashboard was originally built
-    against is now private, so a third-party install's update check would
-    404 against a repo it has no access to. GET /api/update/check reports
-    "no update repo configured" for an empty repo instead of hitting GitHub
-    at all; POST /api/update/apply refuses the same way (reason
-    "update_repo_not_configured"). A fork that wants self-update should set
-    "update_repo" in config/sources.json to its own "owner/repo".
+  - `update_repo` defaults to "critfusion/critboard" -- that repo is public
+    again, so an unauthenticated GET against it returns 200 and both the
+    manual check and the periodic background check (see below) work with
+    zero setup. GET /api/update/check reports "no update repo configured"
+    for an empty repo instead of hitting GitHub at all; POST
+    /api/update/apply refuses the same way (reason
+    "update_repo_not_configured"). A fork should set "update_repo" in
+    config/sources.json to its own "owner/repo".
+
+Periodic background check (periodic_update_check, briefing Task 2):
+  - Runs on an interval (`update_check_interval_s`, default 900s) driven by
+    main.py's update_check_loop -- this module only implements one tick.
+    Does nothing at all -- no network call -- when `update_repo` is empty
+    or `update_check_enabled` is false.
+  - Uses a conditional GET (ETag / If-None-Match): GitHub's unauthenticated
+    limit is 60/hour, and a 304 response does NOT count against it -- this
+    is what makes a 15-minute poll free. The ETag (and the last real
+    result) persists across restarts via `store` (Store.get/
+    set_update_check_state), so a restart doesn't throw away the cache and
+    force a full request. A 304 changes NO persisted state at all -- see
+    the "not_modified" branch below.
+  - Never applies an update itself. `update_auto_apply` (default false) is
+    read by main.py's update_check_loop, which -- separately from this
+    function -- calls apply_update() when true and an update is available;
+    every existing apply_update safety check still gates that call (dirty
+    tree, fast-forward only, configured origin only, allow_self_update
+    still required).
 """
 
 from __future__ import annotations
@@ -39,16 +58,39 @@ import httpx
 
 logger = logging.getLogger("critdash.update")
 
-DEFAULT_UPDATE_REPO = ""
+DEFAULT_UPDATE_REPO = "critfusion/critboard"
 DEFAULT_UPDATE_BRANCH = "main"
 DEFAULT_CHECK_TIMEOUT_S = 10.0
 DEFAULT_CHECK_MIN_INTERVAL_S = 300.0
 GIT_TIMEOUT_S = 15.0
 REINSTALL_TIMEOUT_S = 300.0
 
+# Periodic background check (briefing Task 2/3) -- separate from
+# DEFAULT_CHECK_MIN_INTERVAL_S above, which only bounds the manual
+# GET /api/update/check cache. This is main.py's update_check_loop cadence.
+DEFAULT_UPDATE_CHECK_INTERVAL_S = 900.0
+# Floor POST /api/settings/updates clamps check_interval_s to -- nobody can
+# configure a rate-limit violation from the settings UI (see main.py's
+# post_settings_updates).
+MIN_UPDATE_CHECK_INTERVAL_S = 300
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _resolve_repo(config) -> str:
+    """`update_repo`'s effective value: DEFAULT_UPDATE_REPO only when the
+    key is entirely absent from sources.json (an old config that predates
+    this key, or a from-scratch dict a test built). An explicit "" (or a
+    non-string, e.g. JSON null) means self-update was deliberately disabled
+    and must NOT silently fall back to the default repo -- `... or
+    DEFAULT_UPDATE_REPO` would do exactly that once DEFAULT_UPDATE_REPO
+    stopped being empty itself."""
+    if "update_repo" not in config.sources:
+        return DEFAULT_UPDATE_REPO
+    val = config.sources.get("update_repo")
+    return val if isinstance(val, str) else ""
 
 
 class UpdateError(Exception):
@@ -141,6 +183,41 @@ async def fetch_commits_behind(
         return None
 
 
+async def fetch_latest_commit_conditional(
+    client: httpx.AsyncClient, repo: str, branch: str, etag: str | None,
+    *, timeout: float = DEFAULT_CHECK_TIMEOUT_S,
+) -> tuple[str | None, str | None, bool]:
+    """Conditional variant of fetch_latest_commit, for the periodic
+    background check (briefing Task 2): sends `If-None-Match: etag` when a
+    cached ETag is already known. Returns (sha, response_etag,
+    not_modified). On a 304, sha is None (not_modified=True) and the
+    caller must keep using its own cached `latest` -- see
+    periodic_update_check. A 304 does not count against GitHub's
+    unauthenticated 60/hour rate limit, which is what makes a 15-minute
+    poll free."""
+    url = f"https://api.github.com/repos/{repo}/commits/{branch}"
+    headers = {"Accept": "application/vnd.github+json"}
+    if etag:
+        headers["If-None-Match"] = etag
+    try:
+        resp = await client.get(url, timeout=timeout, headers=headers)
+    except httpx.HTTPError as exc:
+        raise UpdateError("github_unreachable", f"could not reach GitHub API: {exc}") from exc
+    if resp.status_code == 304:
+        return None, etag, True
+    if resp.status_code != 200:
+        raise UpdateError(
+            "github_error", f"GitHub API returned {resp.status_code} for repos/{repo}/commits/{branch}"
+        )
+    try:
+        sha = resp.json()["sha"]
+        if not isinstance(sha, str) or not sha:
+            raise ValueError("empty sha")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise UpdateError("github_bad_response", f"unexpected GitHub API response shape: {exc}") from exc
+    return sha, resp.headers.get("ETag"), False
+
+
 @dataclass
 class CheckState:
     """In-memory only, like quota.RefreshState -- resets on restart, which is
@@ -167,7 +244,7 @@ async def check_for_update(
     ):
         return state.cached
 
-    repo = config.sources.get("update_repo") or DEFAULT_UPDATE_REPO
+    repo = _resolve_repo(config)
     branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
     timeout = float(config.sources.get("quota_timeout_s", DEFAULT_CHECK_TIMEOUT_S))
     current = git_identity(dashboard_root)["commit"]
@@ -214,6 +291,88 @@ async def check_for_update(
     state.cached = result
     state.last_checked_monotonic = now
     return result
+
+
+# -- periodic background check (briefing Task 2) ------------------------------
+
+
+async def periodic_update_check(
+    config, dashboard_root: Path, store, *, client: httpx.AsyncClient | None = None,
+) -> dict:
+    """One tick of the periodic background check -- main.py's
+    update_check_loop calls this every `update_check_interval_s`. Returns
+    the /api/snapshot "update" object shape: {repo, branch, current,
+    latest, behind, update_available, checked_at, last_error, enabled,
+    auto_apply}. Makes no network call at all when `update_check_enabled`
+    is false or `update_repo` is empty. See module docstring for the
+    ETag/persistence contract."""
+    repo = _resolve_repo(config).strip()
+    branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
+    enabled = bool(config.sources.get("update_check_enabled", True))
+    auto_apply = bool(config.sources.get("update_auto_apply", False))
+    timeout = float(config.sources.get("quota_timeout_s", DEFAULT_CHECK_TIMEOUT_S))
+
+    prior = store.get_update_check_state() or {}
+    current = git_identity(dashboard_root)["commit"]
+
+    if not enabled or not repo:
+        return {
+            "repo": repo or None, "branch": branch, "current": current,
+            "latest": prior.get("latest"), "behind": prior.get("behind"),
+            "update_available": False, "checked_at": prior.get("checked_at"),
+            "last_error": None, "enabled": enabled, "auto_apply": auto_apply,
+        }
+
+    etag = prior.get("etag")
+    latest = prior.get("latest")
+    behind = prior.get("behind")
+    checked_at = prior.get("checked_at")
+    last_error = None
+
+    own_client = client is None
+    client = client or httpx.AsyncClient()
+    try:
+        try:
+            sha, resp_etag, not_modified = await fetch_latest_commit_conditional(
+                client, repo, branch, etag, timeout=timeout,
+            )
+        except UpdateError as exc:
+            last_error = exc.message
+            checked_at = _now_iso()
+            store.set_update_check_state({
+                "etag": etag, "latest": latest, "behind": behind,
+                "checked_at": checked_at, "last_error": last_error,
+            })
+        else:
+            if not_modified:
+                # No state change at all -- GitHub confirmed the cached ETag
+                # is still current. This is exactly what a 304 is for: it
+                # doesn't count against the unauthenticated 60/hour limit,
+                # so nothing is written and `checked_at`/`latest`/`behind`
+                # stay exactly what they were.
+                pass
+            else:
+                latest_changed = sha != latest
+                latest = sha
+                if latest_changed and current:
+                    behind = await fetch_commits_behind(client, repo, current, latest, timeout=timeout)
+                elif not current:
+                    behind = None
+                checked_at = _now_iso()
+                store.set_update_check_state({
+                    "etag": resp_etag, "latest": latest, "behind": behind,
+                    "checked_at": checked_at, "last_error": None,
+                })
+    finally:
+        if own_client:
+            await client.aclose()
+
+    update_available = bool(current) and bool(latest) and current != latest
+    return {
+        "repo": repo, "branch": branch, "current": current, "latest": latest,
+        "behind": behind, "update_available": update_available, "checked_at": checked_at,
+        "last_error": last_error, "enabled": enabled, "auto_apply": auto_apply,
+    }
 
 
 # -- POST /api/update/apply ---------------------------------------------------
@@ -280,7 +439,7 @@ def apply_update(config, dashboard_root: Path) -> dict:
     if not (root / ".git").exists():
         raise UpdateError("not_a_git_checkout", f"{root} is not a git checkout -- self-update needs git")
 
-    repo = config.sources.get("update_repo") or DEFAULT_UPDATE_REPO
+    repo = _resolve_repo(config)
     branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
 
     if not repo:

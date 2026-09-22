@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from critdash import update
+from critdash.store import Store
 
 
 def mock_client(handler) -> httpx.AsyncClient:
@@ -230,16 +231,37 @@ async def test_check_for_update_empty_repo_reports_not_configured_with_no_http_c
     assert result["message"] == "no update repo configured"
 
 
-async def test_check_for_update_default_repo_is_empty_when_unset(tmp_path):
-    """No update_repo key at all in sources.json -- same "not configured"
-    behavior as an explicit empty string, via DEFAULT_UPDATE_REPO."""
+async def test_check_for_update_uses_default_repo_when_unset(tmp_path):
+    """No update_repo key at all in sources.json -- falls back to
+    DEFAULT_UPDATE_REPO ("critfusion/critboard", now public) rather than
+    "not configured": an old config that predates this key, or the owner's
+    live instance, gets a working update check with zero edits."""
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        assert request.url.path == "/repos/critfusion/critboard/commits/main"
+        return httpx.Response(200, json={"sha": "deadbeef"})
+
+    cfg = _Cfg()  # no update_repo at all
+    state = update.CheckState()
+    result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
+
+    assert calls["n"] == 1
+    assert result["latest"] == "deadbeef"
+
+
+async def test_check_for_update_explicit_empty_repo_stays_not_configured(tmp_path):
+    """An explicit "" is different from an absent key -- it means the owner
+    deliberately disabled the check, and must NOT silently fall back to
+    DEFAULT_UPDATE_REPO just because that default is no longer empty."""
     calls = {"n": 0}
 
     def handler(request):
         calls["n"] += 1
         return httpx.Response(200, json={"sha": "deadbeef"})
 
-    cfg = _Cfg()  # no update_repo at all
+    cfg = _Cfg(update_repo="")
     state = update.CheckState()
     result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
 
@@ -400,3 +422,141 @@ def test_apply_update_refuses_non_fast_forward_on_diverged_history(tmp_path, mon
     with pytest.raises(update.UpdateError) as exc_info:
         update.apply_update(cfg, clone_dir)
     assert exc_info.value.reason == "not_fast_forward"
+
+
+# -- periodic_update_check (briefing Task 2) -----------------------------------
+
+
+def _store(tmp_path) -> Store:
+    s = Store(tmp_path / "periodic.db")
+    return s
+
+
+async def test_periodic_check_skips_with_no_network_call_when_disabled(tmp_path):
+    _init_repo(tmp_path)
+    store = _store(tmp_path)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"sha": "deadbeef"})
+
+    cfg = _Cfg(update_repo="o/r", update_check_enabled=False)
+    result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
+
+    assert calls["n"] == 0
+    assert result["enabled"] is False
+    assert result["update_available"] is False
+    store.close()
+
+
+async def test_periodic_check_skips_with_no_network_call_when_repo_empty(tmp_path):
+    _init_repo(tmp_path)
+    store = _store(tmp_path)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"sha": "deadbeef"})
+
+    cfg = _Cfg(update_repo="", update_check_enabled=True)
+    result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
+
+    assert calls["n"] == 0
+    assert result["repo"] is None
+    assert result["update_available"] is False
+    store.close()
+
+
+async def test_periodic_check_first_run_persists_etag_and_state(tmp_path):
+    _init_repo(tmp_path)
+    current = _head(tmp_path)
+    store = _store(tmp_path)
+
+    def handler(request):
+        assert "If-None-Match" not in request.headers
+        return httpx.Response(200, json={"sha": "deadbeef"}, headers={"ETag": '"abc123"'})
+
+    cfg = _Cfg(update_repo="o/r", update_branch="main", update_check_enabled=True)
+    result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
+
+    assert result["current"] == current
+    assert result["latest"] == "deadbeef"
+    assert result["update_available"] is True
+    assert result["last_error"] is None
+    assert set(result.keys()) == {
+        "repo", "branch", "current", "latest", "behind", "update_available",
+        "checked_at", "last_error", "enabled", "auto_apply",
+    }
+
+    persisted = store.get_update_check_state()
+    assert persisted["etag"] == '"abc123"'
+    assert persisted["latest"] == "deadbeef"
+    store.close()
+
+
+async def test_periodic_check_304_makes_no_state_change(tmp_path):
+    """The core ETag contract: once a 304 comes back, NOTHING persisted
+    changes -- not latest, not behind, not checked_at, not the etag
+    itself. This is what makes a 15-minute poll free against GitHub's
+    unauthenticated 60/hour limit."""
+    _init_repo(tmp_path)
+    store = _store(tmp_path)
+
+    def handler_200(request):
+        return httpx.Response(200, json={"sha": "deadbeef"}, headers={"ETag": '"etag-1"'})
+
+    cfg = _Cfg(update_repo="o/r", update_branch="main", update_check_enabled=True)
+    await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler_200))
+    before = store.get_update_check_state()
+
+    seen_if_none_match = {}
+
+    def handler_304(request):
+        seen_if_none_match["value"] = request.headers.get("If-None-Match")
+        return httpx.Response(304)
+
+    result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler_304))
+    after = store.get_update_check_state()
+
+    assert seen_if_none_match["value"] == '"etag-1"'
+    assert after == before  # no state change at all
+    assert result["latest"] == "deadbeef"  # still reports the cached value
+    assert result["checked_at"] == before["checked_at"]
+    store.close()
+
+
+async def test_periodic_check_error_persists_last_error_but_keeps_prior_facts(tmp_path):
+    _init_repo(tmp_path)
+    store = _store(tmp_path)
+
+    def handler_200(request):
+        return httpx.Response(200, json={"sha": "deadbeef"}, headers={"ETag": '"etag-1"'})
+
+    cfg = _Cfg(update_repo="o/r", update_branch="main", update_check_enabled=True)
+    await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler_200))
+
+    def handler_fail(request):
+        return httpx.Response(500)
+
+    result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler_fail))
+
+    assert result["last_error"] is not None
+    assert result["latest"] == "deadbeef"  # kept from the last successful check
+    persisted = store.get_update_check_state()
+    assert persisted["last_error"] is not None
+    assert persisted["latest"] == "deadbeef"
+    store.close()
+
+
+async def test_periodic_check_auto_apply_false_by_default(tmp_path):
+    _init_repo(tmp_path)
+    store = _store(tmp_path)
+
+    def handler(request):
+        return httpx.Response(200, json={"sha": "deadbeef"})
+
+    cfg = _Cfg(update_repo="o/r", update_check_enabled=True)
+    result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
+    assert result["auto_apply"] is False
+    store.close()

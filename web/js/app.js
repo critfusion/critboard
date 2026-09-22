@@ -43,6 +43,8 @@ const state = {
   knownStartedAt: null,
   dismissedVersionKey: null,
   autoReloadTimer: null,
+  dismissedUpdateKey: null,
+  updateApplying: false,
   breakpoint: "desktop", // "mobile" | "tablet" | "desktop" -- see computeBreakpoint()
 };
 
@@ -376,6 +378,161 @@ window.__critdashSetVersion = (v) => {
   checkVersion(v);
 };
 
+// ---------------- update banner ----------------
+// Close cousin of the reload banner above: same fixed/pill/dismiss shape,
+// driven by /api/snapshot's `update` object (see AGENTS.md briefing) instead
+// of `version`. Two differences from the reload banner's model: (1) it's a
+// live boolean (update.update_available), not an edge-triggered "did the
+// value change" check -- so it stays hidden/shown in sync with whatever the
+// snapshot currently says, not just the first time it flips; (2) dismissal
+// is keyed on `update.latest` (the commit hash that would be pulled in),
+// not a single opaque build id, so a dismissed banner reappears the moment
+// a newer commit lands upstream even if the dashboard's own build hasn't
+// changed at all.
+
+const UPDATE_APPLY_URL = "/api/update/apply";
+
+function updateKey(u) {
+  return (u && u.latest) || null;
+}
+
+function renderUpdateBanner() {
+  const banner = document.getElementById("update-banner");
+  if (!banner) return;
+  if (state.updateApplying) return; // in-progress UI owns the banner until it resolves
+
+  const u = state.data && state.data.update;
+  if (!u || !u.update_available) {
+    banner.classList.remove("show");
+    return;
+  }
+  const key = updateKey(u);
+  if (key !== null && key === state.dismissedUpdateKey) {
+    banner.classList.remove("show");
+    return;
+  }
+
+  banner.dataset.latestKey = key || "";
+  const behind = typeof u.behind === "number" ? u.behind : null;
+  const textEl = document.getElementById("update-banner-text");
+  if (textEl) {
+    textEl.textContent =
+      behind !== null ? `${behind} commit${behind === 1 ? "" : "s"} behind — update available` : "Update available";
+  }
+  const errEl = document.getElementById("update-banner-error");
+  if (errEl) {
+    errEl.textContent = "";
+    errEl.classList.remove("show");
+  }
+  const goBtn = document.getElementById("update-banner-go");
+  if (goBtn) {
+    goBtn.disabled = false;
+    goBtn.textContent = "Update now";
+  }
+  const dismissBtn = document.getElementById("update-banner-dismiss");
+  if (dismissBtn) dismissBtn.disabled = false;
+
+  banner.classList.add("show");
+}
+
+// Polls /api/snapshot every 2s until it answers, then reloads. Used after a
+// successful apply, where the server process itself restarts -- the apply
+// response returns before the restart necessarily completes, so this is the
+// "page will reload shortly" promise made in the banner text.
+function waitForServerThenReload(attempt = 0) {
+  setTimeout(async () => {
+    try {
+      const res = await fetch(SNAPSHOT_URL, { cache: "no-store" });
+      if (res.ok) {
+        location.reload();
+        return;
+      }
+    } catch (e) {
+      // still down, keep waiting
+    }
+    const textEl = document.getElementById("update-banner-text");
+    if (textEl && attempt === 15) {
+      textEl.textContent = "Still restarting… this is taking longer than usual.";
+    }
+    waitForServerThenReload(attempt + 1);
+  }, 2000);
+}
+
+async function applyUpdate() {
+  const banner = document.getElementById("update-banner");
+  const goBtn = document.getElementById("update-banner-go");
+  const dismissBtn = document.getElementById("update-banner-dismiss");
+  const textEl = document.getElementById("update-banner-text");
+  const errEl = document.getElementById("update-banner-error");
+  if (!banner || !goBtn) return;
+
+  state.updateApplying = true;
+  goBtn.disabled = true;
+  goBtn.textContent = "Updating…";
+  if (dismissBtn) dismissBtn.disabled = true;
+  if (errEl) {
+    errEl.textContent = "";
+    errEl.classList.remove("show");
+  }
+  const prevText = textEl ? textEl.textContent : "";
+  if (textEl) textEl.textContent = "Applying update…";
+
+  let applied = false;
+  try {
+    const res = await fetch(UPDATE_APPLY_URL, { method: "POST" });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      // no/invalid JSON body
+    }
+    if (res.ok && data && data.applied) {
+      applied = true;
+      if (textEl) {
+        textEl.textContent = data.restart_requested
+          ? "Update applied — the dashboard is restarting, this page will reload shortly…"
+          : "Update applied — reloading…";
+      }
+      waitForServerThenReload();
+    } else {
+      // On refusal, show the server's message verbatim -- see AGENTS.md
+      // briefing: a dirty working tree and a disabled self-update need
+      // completely different responses from the user, so a generic
+      // "update failed" is not enough here.
+      const detail = data && data.detail;
+      const message =
+        (detail && typeof detail.message === "string" && detail.message) ||
+        (typeof data === "string" && data) ||
+        `Update failed (HTTP ${res.status}).`;
+      if (errEl) {
+        errEl.textContent = message;
+        errEl.classList.add("show");
+      }
+      if (textEl) textEl.textContent = prevText;
+    }
+  } catch (e) {
+    if (errEl) {
+      errEl.textContent = `Network error: ${String((e && e.message) || e)}`;
+      errEl.classList.add("show");
+    }
+    if (textEl) textEl.textContent = prevText;
+  }
+
+  if (!applied) {
+    state.updateApplying = false;
+    goBtn.disabled = false;
+    goBtn.textContent = "Update now";
+    if (dismissBtn) dismissBtn.disabled = false;
+  }
+}
+
+function hideUpdateBanner(dismiss) {
+  const banner = document.getElementById("update-banner");
+  if (!banner) return;
+  if (dismiss) state.dismissedUpdateKey = banner.dataset.latestKey || null;
+  banner.classList.remove("show");
+}
+
 // ---------------- connection indicator ----------------
 
 function setConn(status) {
@@ -419,6 +576,7 @@ async function loadSnapshot() {
   window.__critdashData = data;
   state.lastGoodAt = new Date();
   checkVersion(data.version);
+  renderUpdateBanner();
   renderAllPanels();
 }
 
@@ -467,6 +625,7 @@ function connectStream() {
       state.lastGoodAt = new Date();
       setConn("live");
       checkVersion(state.data.version);
+      renderUpdateBanner();
       renderAllPanels();
     } catch (e) {
       console.error("bad snapshot event", e);
@@ -487,6 +646,7 @@ function connectStream() {
       state.lastGoodAt = new Date();
       setConn("live");
       if (touchedRoots.has("version")) checkVersion(state.data.version);
+      if (touchedRoots.has("update")) renderUpdateBanner();
       renderPanelsForKeys(touchedRoots);
     } catch (e) {
       console.error("bad patch event", e);
@@ -573,6 +733,7 @@ function setupKeyboard() {
     } else if (e.key === "Escape") {
       document.getElementById("help-overlay").classList.remove("open");
       hideReloadBanner(true);
+      hideUpdateBanner(true);
     } else if (e.key === "r" || e.key === "R") {
       loadSnapshot().catch((err) => console.error("resnapshot failed", err));
     } else if (e.key === "f" || e.key === "F") {
@@ -592,6 +753,9 @@ function setupKeyboard() {
 
   document.getElementById("reload-banner-go")?.addEventListener("click", () => location.reload());
   document.getElementById("reload-banner-dismiss")?.addEventListener("click", () => hideReloadBanner(true));
+
+  document.getElementById("update-banner-go")?.addEventListener("click", () => applyUpdate());
+  document.getElementById("update-banner-dismiss")?.addEventListener("click", () => hideUpdateBanner(true));
 }
 
 // ---------------- responsive: breakpoint changes on resize/orientation ----------------

@@ -90,6 +90,37 @@ def test_dir_and_file_checks_report_configured_existence(tmp_path, monkeypatch):
     assert _find(checks, "kimi_dir").state == "missing"
 
 
+def test_beads_dir_check_included_and_reports_existence(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    ws = tmp_path / "project" / ".beads"
+    ws.mkdir(parents=True)
+
+    checks = doctor_mod.build_checks({
+        "beads_dir": str(ws),
+    })
+    bd_dir = _find(checks, "beads_dir")
+    assert bd_dir.kind == "dir"
+    assert bd_dir.collector == "beads"
+    assert bd_dir.state == "ok"
+    assert bd_dir.configured_exists is True
+
+
+def test_beads_dir_missing_with_no_alternative_is_missing_not_mismatch(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    checks = doctor_mod.build_checks({"beads_dir": str(tmp_path / "no-such-workspace" / ".beads")})
+    bd_dir = _find(checks, "beads_dir")
+    assert bd_dir.state == "missing"
+    assert bd_dir.mismatch is False
+
+
+def test_beads_dir_unset_is_missing_not_required(tmp_path, monkeypatch):
+    _neutralize_detection(monkeypatch)
+    checks = doctor_mod.build_checks({})
+    bd_dir = _find(checks, "beads_dir")
+    assert bd_dir.state == "missing"
+    assert bd_dir.key not in doctor_mod.REQUIRED_CHECK_KEYS
+
+
 def test_prereq_binaries_are_included(tmp_path, monkeypatch):
     _neutralize_detection(monkeypatch)
     checks = doctor_mod.build_checks({})

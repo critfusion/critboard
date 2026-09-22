@@ -48,7 +48,7 @@ Each `checks[]` entry:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `key` | string | `bd_bin`, `herdr_bin`, `git`, `uv`, `ssh`, `curl`, `claude_projects_dir`, `kimi_dir`, `overlord_dir`, `beads_env`, `opencode_auth_path`, `grok_auth_path`, `codex_auth_path`. |
+| `key` | string | `bd_bin`, `herdr_bin`, `git`, `uv`, `ssh`, `curl`, `claude_projects_dir`, `kimi_dir`, `overlord_dir`, `beads_env`, `beads_dir`, `opencode_auth_path`, `grok_auth_path`, `codex_auth_path`. |
 | `kind` | string | `"binary"` \| `"dir"` \| `"file"`. |
 | `collector` | string | Which panel/feature this powers, e.g. `"beads"`, `"agents (pane detection) / remote"`. |
 | `configured` | string or null | The value in `config/sources.json`, or the `--<key>` override if one was supplied, or `null` if unset. |
@@ -385,6 +385,17 @@ In `config/sources.json`:
 - `beads_env` -- leave empty unless your `bd` setup specifically needs a
   sourced env file for credentials (typical of server mode). An embedded,
   `bd init`-created workspace needs none.
+- `beads_dir` -- leave empty if `bd` from your own shell already finds the
+  right workspace with no `BEADS_DIR` set (the common case). Set it
+  explicitly if the `beads` panel reports "no beads database found" even
+  though `bd` works fine for you interactively -- the collector runs `bd`
+  from CritBoard's own working directory, not your shell, so it doesn't
+  inherit anything ambient. `install.sh` tries to detect this for you via
+  `bd where --json` when writing a fresh config. **Must be the `.beads`
+  directory itself** (e.g. `/path/to/project/.beads`), not its parent --
+  that's the easy mistake; `bd where --json`'s `"path"` field is always the
+  right value. Takes precedence over `beads_env`, which takes precedence
+  over `bd`'s own resolution.
 
 Then confirm the panel is live:
 
@@ -468,12 +479,27 @@ if a key is missing entirely. Notable ones for a fresh install:
   detection with e.g. `{"beads": {"enabled": false}}`.
 - `allow_self_update` -- `false` by default. See `SPEC.md` for the
   `/api/update/check` and `/api/update/apply` contract before turning this
-  on.
-- `update_repo` -- empty by default. This dashboard's own upstream repo is
-  private, so a third-party install's update check would 404 against a repo
-  it can't read; leaving this empty makes `/api/update/check` report "no
-  update repo configured" instead. If you forked this repo and want
-  self-update, set `update_repo` to your own `"owner/repo"`.
+  on. `update_auto_apply` (below) still requires this to be `true` -- it's
+  an additional opt-in, not a replacement.
+- `update_repo` -- `"critfusion/critboard"` by default (that repo is
+  public, so this works unauthenticated with zero setup). If you forked
+  this repo, set `update_repo` to your own `"owner/repo"`, or `""` to
+  disable the check entirely (an explicit empty string always means
+  "disabled", even though the default is no longer empty).
+- `update_check_enabled` -- `true` by default. Turns on a background check
+  every `update_check_interval_s` seconds; it's read-only (a conditional
+  GET, ETag-cached across restarts) and safe on its own. `GET
+  /api/settings/updates` / `POST /api/settings/updates` is the
+  settings-panel-facing way to change this plus `check_interval_s` and
+  `auto_apply` without touching `sources.json` by hand -- see `SPEC.md`.
+- `update_check_interval_s` -- `900` (15 minutes) by default. GitHub's
+  unauthenticated rate limit is 60 requests/hour; a 304 (unchanged) response
+  doesn't count against it, which is what makes this interval free. The
+  settings endpoint clamps any value below 300s.
+- `update_auto_apply` -- `false` by default. `true` lets the periodic check
+  pull a fast-forward update on its own, no click -- but only when
+  `allow_self_update` is also `true`, and every existing apply safety check
+  (clean tree, fast-forward only, configured origin only) still applies.
 
 `config/layout.json` is gitignored and personal by the same design -- see
 `config/layout.example.json` for the shipped panel layout. It is created on
@@ -515,6 +541,7 @@ installed on a Mac, but `config/sources.json` still had the Debian path
 | `bd_bin` | The `bd` (beads) CLI | `beads` panel | PATH, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`, `/usr/bin` (in that order) -- re-checked live, not just at install |
 | `herdr_bin` | The `herdr` CLI (pane-level agent detection) | `agents` panel's pane/workspace fields (local host); `remote` panel per remote host | Same search order as `bd_bin`, resolved once at startup for the local host. A remote (`ssh`-mode) host resolves its own `herdr_bin` on ITS OWN filesystem, never against the local host's resolved path |
 | `beads_env` | **Optional.** Env file some `bd` setups source before every call (actor/DB config) -- a site-specific convention, not something `bd` itself requires. Empty by default; a `bd` with its own local workspace (`bd init`, or `BEADS_DIR` set) needs none. Sourced only when it exists | `beads` panel | Not searched for -- set it yourself only if your `bd` setup actually uses one; no default path is guessed |
+| `beads_dir` | **Optional.** The beads workspace's `.beads` directory itself -- exported as `BEADS_DIR` before every `bd` call, taking precedence over `beads_env`. Empty by default | `beads` panel | Not searched for -- `install.sh` tries `bd where --json` once, on first config write, and writes its `"path"` field if found; otherwise left empty, a normal state |
 | `claude_projects_dir` | Claude Code's session logs | `agents`, `usage`, `analytics` panels | `~/.claude/projects` on every platform (Claude Code does not use a macOS Application Support directory) |
 | `kimi_dir` | Kimi Code CLI's session/credentials directory | `kimi` panel, Kimi quota check | `~/.kimi-code` (dotfile, same on every platform this dashboard has verified). `~/Library/Application Support/Kimi` is probed as an unconfirmed, defensive fallback candidate on macOS only -- checked, never assumed |
 | `overlord_dir` | Optional integration with a fleet dispatch tool | `dispatch` panel | `~/.overlord` (a homegrown dotfile, not a packaged/Homebrew tool -- no macOS-specific location exists to check) |
@@ -526,7 +553,7 @@ Also checked (not `sources.json` keys -- always looked up by name, reported
 by doctor for completeness): `ssh` (multi-host fleet collection), `git`
 (worktrees/productivity), `uv` (dev tooling / self-update), `curl`
 (`--start`'s healthz check), using the same PATH-then-candidate-directories
-search order as `bd_bin`. Any of the nine keys above -- and `git`/`uv`/`ssh`/
+search order as `bd_bin`. Any of the ten keys above -- and `git`/`uv`/`ssh`/
 `curl` -- can be pinned with an explicit `--<name> PATH` override, which
 skips this whole search for that one key. See "Explicit overrides" under
 "Prerequisites" above.

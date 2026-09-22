@@ -242,6 +242,7 @@ def build_app() -> FastAPI:
     repo_roots = config.sources.get("repo_roots", [])
 
     beads_env = config.expand("beads_env")
+    beads_dir = config.expand("beads_dir")
     bd_bin_configured = config.expand("bd_bin") or "bd"
     beads_actor = config.sources.get("beads_actor", "critdash")
 
@@ -258,13 +259,14 @@ def build_app() -> FastAPI:
 
     def _build_beads_collector() -> BeadsCollector:
         c = BeadsCollector(
-            ctx=app_ctx, beads_env=beads_env, bd_bin=_resolve_bd_bin(), actor=beads_actor, store=store
+            ctx=app_ctx, beads_env=beads_env, bd_bin=_resolve_bd_bin(), actor=beads_actor, store=store,
+            beads_dir=beads_dir,
         )
         c.interval_s = config.interval("beads")
         return c
 
     _apply_enablement(
-        "beads", lambda: beads_availability_issue(_resolve_bd_bin()), _build_beads_collector
+        "beads", lambda: beads_availability_issue(_resolve_bd_bin(), beads_dir), _build_beads_collector
     )
 
     local_host = config.sources.get("host", "localhost")
@@ -453,6 +455,34 @@ def build_app() -> FastAPI:
             if version_tracker.refresh():
                 snap.set_version(version_tracker.to_dict())
 
+    # Periodic background update check (briefing Task 2). Runs a tick
+    # immediately on startup (so /api/snapshot has real values without
+    # waiting a full interval), then re-reads update_check_interval_s from
+    # config.sources fresh on every iteration -- so a POST
+    # /api/settings/updates change (which mutates config.sources in place,
+    # see post_settings_updates) takes effect on the very next tick, no
+    # restart needed. auto_apply is read from the same tick's result;
+    # apply_update() keeps every existing safety check (including
+    # allow_self_update, still required) -- see update.py's module
+    # docstring.
+    async def update_check_loop():
+        while True:
+            try:
+                result = await update_mod.periodic_update_check(config, config.dashboard_root, store)
+                snap.update_path("update", result)
+                if result.get("update_available") and result.get("auto_apply"):
+                    try:
+                        await asyncio.to_thread(update_mod.apply_update, config, config.dashboard_root)
+                    except update_mod.UpdateError as exc:
+                        logger.warning("periodic auto-apply refused: %s: %s", exc.reason, exc.message)
+            except Exception:  # noqa: BLE001 - one bad tick must not kill the loop
+                logger.exception("periodic update check failed")
+            interval = float(
+                config.sources.get("update_check_interval_s", update_mod.DEFAULT_UPDATE_CHECK_INTERVAL_S)
+            )
+            interval = max(interval, update_mod.MIN_UPDATE_CHECK_INTERVAL_S)
+            await asyncio.sleep(interval)
+
     background_tasks: list[asyncio.Task] = []
 
     @asynccontextmanager
@@ -464,6 +494,7 @@ def build_app() -> FastAPI:
         background_tasks.append(asyncio.create_task(vacuum_loop()))
         background_tasks.append(asyncio.create_task(version_loop()))
         background_tasks.append(asyncio.create_task(collector_redetect_loop()))
+        background_tasks.append(asyncio.create_task(update_check_loop()))
         yield
         for t in background_tasks:
             t.cancel()
@@ -669,6 +700,7 @@ def build_app() -> FastAPI:
                 _resolve_bd_bin(),
                 config.sources.get("beads_actor", "critdash"),
                 bead_id,
+                beads_dir=config.expand("beads_dir"),
             )
         except BeadNotFoundError:
             _bead_detail_cache[bead_id] = (now + _BEAD_DETAIL_TTL_S, None, 404)
@@ -751,6 +783,93 @@ def build_app() -> FastAPI:
             detail = {"reason": exc.reason, "message": exc.message}
             raise HTTPException(status_code=status, detail=detail) from exc
         return JSONResponse(result)
+
+    # Narrow settings-panel endpoint for update preferences (briefing Task
+    # 3): unlike POST /api/config/layout|theme, the browser can never write
+    # arbitrary sources.json content here -- only these three keys, and only
+    # these three, ever change. sources.json also holds ssh hosts and
+    # filesystem paths, which must stay off-limits to a browser POST.
+    _UPDATE_SETTINGS_KEYS = {"check_enabled", "check_interval_s", "auto_apply"}
+
+    def _update_settings_view() -> dict:
+        u = snap.snapshot.get("update") or {}
+        return {
+            "check_enabled": bool(config.sources.get("update_check_enabled", True)),
+            "check_interval_s": int(
+                config.sources.get("update_check_interval_s", update_mod.DEFAULT_UPDATE_CHECK_INTERVAL_S)
+            ),
+            "auto_apply": bool(config.sources.get("update_auto_apply", False)),
+            "repo": config.sources.get("update_repo") or "",
+            "branch": config.sources.get("update_branch") or update_mod.DEFAULT_UPDATE_BRANCH,
+            "current": u.get("current"),
+            "latest": u.get("latest"),
+            "behind": u.get("behind"),
+            "update_available": bool(u.get("update_available", False)),
+            "checked_at": u.get("checked_at"),
+            "last_error": u.get("last_error"),
+        }
+
+    @app.get("/api/settings/updates")
+    async def get_settings_updates():
+        return JSONResponse(_update_settings_view())
+
+    @app.post("/api/settings/updates")
+    async def post_settings_updates(request: Request):
+        _check_config_writes_allowed(config)
+        body = await _read_config_body(request)
+
+        unknown = sorted(set(body) - _UPDATE_SETTINGS_KEYS)
+        if unknown:
+            raise HTTPException(
+                status_code=400, detail=f"unknown key(s) (not settable here): {', '.join(unknown)}"
+            )
+
+        errors = []
+        if "check_enabled" in body and not isinstance(body["check_enabled"], bool):
+            errors.append("'check_enabled' must be a boolean")
+        if "auto_apply" in body and not isinstance(body["auto_apply"], bool):
+            errors.append("'auto_apply' must be a boolean")
+        if "check_interval_s" in body:
+            v = body["check_interval_s"]
+            if not isinstance(v, int) or isinstance(v, bool):
+                errors.append("'check_interval_s' must be an integer")
+        if errors:
+            raise HTTPException(status_code=400, detail={"errors": errors})
+
+        updates: dict[str, Any] = {}
+        if "check_enabled" in body:
+            updates["update_check_enabled"] = body["check_enabled"]
+        if "auto_apply" in body:
+            updates["update_auto_apply"] = body["auto_apply"]
+        if "check_interval_s" in body:
+            # Floor, not ceiling -- nobody can configure a rate-limit
+            # violation from the settings UI (see update.py's
+            # MIN_UPDATE_CHECK_INTERVAL_S).
+            updates["update_check_interval_s"] = max(
+                int(body["check_interval_s"]), update_mod.MIN_UPDATE_CHECK_INTERVAL_S
+            )
+
+        try:
+            with config.sources_path.open() as f:
+                doc = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            doc = dict(config.sources)
+        doc.update(updates)
+        path = _safe_config_path(config.sources_path, config.config_dir)
+        try:
+            _atomic_write_json(path, doc)
+        except OSError:
+            logger.exception("failed to write config/sources.json")
+            raise HTTPException(status_code=500, detail="failed to write update settings") from None
+
+        # Keep the running process in sync immediately -- update_check_loop
+        # re-reads config.sources.get(...) fresh every tick, so mutating
+        # this in-memory dict (not just the on-disk file) means the next
+        # tick picks up the change with no restart. POST /api/config/layout
+        # and /api/config/theme never need this: neither writes sources.json.
+        config.sources.update(updates)
+
+        return JSONResponse(_update_settings_view())
 
     web_dir = config.dashboard_root / "web"
     if web_dir.exists():

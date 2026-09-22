@@ -224,6 +224,8 @@ def test_default_sources_collectors_empty_means_auto_detect():
     assert config_mod.DEFAULT_SOURCES["collectors"] == {}
 
 
-def test_default_sources_update_repo_is_empty():
-    # Bug 3: the upstream repo is private -- a fork must opt in explicitly.
-    assert config_mod.DEFAULT_SOURCES["update_repo"] == ""
+def test_default_sources_update_repo_is_the_upstream_slug():
+    # The upstream repo is public again -- a fresh install's update check
+    # (manual and periodic) works unauthenticated with zero edits. A fork
+    # opts out by setting update_repo to its own "owner/repo" (or "").
+    assert config_mod.DEFAULT_SOURCES["update_repo"] == "critfusion/critboard"

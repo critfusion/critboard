@@ -29,6 +29,7 @@ from .config import DEFAULT_SOURCES, load_config
 PATH_SPECS: list[tuple[str, str, str, str | None]] = [
     ("bd_bin", "binary", "beads", "bd"),
     ("beads_env", "file", "beads", None),
+    ("beads_dir", "dir", "beads", None),
     ("herdr_bin", "binary", "agents (pane detection) / remote", "herdr"),
     ("claude_projects_dir", "dir", "agents / usage / analytics", None),
     ("kimi_dir", "dir", "kimi / quota (kimi)", None),

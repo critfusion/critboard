@@ -731,6 +731,91 @@ table.dtable th .sort-indicator {
   border-color: transparent;
 }
 
+/* ---------- update banner (self-update: config/layout.json's `update`
+   block from /api/snapshot) -- close cousin of #reload-banner above, same
+   position/animation/pill shape, just a second row for the apply-refusal
+   message (extractErrorMessage-style) that reload-banner never needs since
+   it only ever triggers location.reload(). ---------- */
+
+#update-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translate(-50%, -140%);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 12px 9px 16px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-accent-cyan);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 4px 24px -6px var(--color-accent-cyan-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  opacity: 0;
+  pointer-events: none;
+  max-width: min(92vw, 520px);
+}
+
+#update-banner.show {
+  animation: reload-banner-in var(--motion-transition-med) ease-out forwards;
+  pointer-events: auto;
+}
+
+.update-banner-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+#update-banner .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--color-accent-cyan);
+  box-shadow: 0 0 6px var(--color-accent-cyan);
+  flex: none;
+}
+
+#update-banner-text { flex: 1 1 auto; min-width: 0; }
+
+#update-banner button {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  border-radius: 5px;
+  padding: 4px 11px;
+  cursor: pointer;
+  border: 1px solid var(--color-border-bright);
+  background: transparent;
+  color: var(--color-text-dim);
+  flex: none;
+}
+#update-banner button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+#update-banner #update-banner-go {
+  background: var(--color-accent-cyan-dim);
+  border-color: var(--color-accent-cyan);
+  color: var(--color-accent-cyan);
+  font-weight: 700;
+}
+
+#update-banner #update-banner-dismiss {
+  padding: 4px 8px;
+  color: var(--color-text-faint);
+  border-color: transparent;
+}
+
+.update-banner-error {
+  display: none;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-status-crit);
+  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
+}
+.update-banner-error.show { display: block; }
+
 /* ---------- dispatch-paused banner (top of bead panels) ----------
    Deliberately not a pill: a small "ALL DISPATCH PAUSED" pill is exactly
    what let 149 idle beads read as a stale queue instead of "the dispatcher
@@ -1537,6 +1622,37 @@ table.dtable th .sort-indicator {
 .settings-inline-pill {
   font-size: 9px;
   padding: 1px 7px;
+}
+
+/* ---------- "consequential" toggle (auto-apply updates) -- deliberately
+   louder than a plain .settings-checkbox-row: full-strength warn border
+   instead of the dimmer .settings-degraded tone, so it reads as a control
+   with teeth, not an FYI. ---------- */
+.settings-warn-box {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--color-status-warn);
+  background: rgba(242, 169, 59, 0.1);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.settings-warn-box-icon {
+  flex: none;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--color-status-warn);
+  margin-top: 1px;
+}
+.settings-warn-box-body { min-width: 0; flex: 1 1 auto; }
+.settings-warn-label {
+  padding: 0 0 4px;
+  font-weight: 700;
+  color: var(--color-status-warn);
+}
+.settings-warn-box .settings-warn-label input[type="checkbox"] {
+  accent-color: var(--color-status-warn);
 }
 
 /* The footer is the last child inside .detail-modal-body (the shared

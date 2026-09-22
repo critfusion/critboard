@@ -89,14 +89,24 @@ uPlot vendored locally so the page works offline.
 
 ## Updating
 
-The dashboard can check a repo for a newer commit and apply it.
-Self-update is **disabled by default**: it refuses a dirty working tree,
-refuses anything that is not a fast-forward, and only pulls from the
-configured origin. `update_repo` is empty by default (this repo's own
-upstream is private, so a third-party install has nothing it could 404
-against) -- if you forked this repo, set `update_repo` to your own
-`"owner/repo"` in `config/sources.json`, then enable with
-`"allow_self_update": true`.
+The dashboard checks this repo for a newer commit every 15 minutes
+(`update_check_interval_s`, default 900s) using a conditional request --
+GitHub's unauthenticated rate limit is 60/hour, and an unchanged (304)
+response doesn't count against it, so this costs nothing. `update_repo`
+defaults to `"critfusion/critboard"` (public, so this works out of the box);
+if you forked this repo, point it at your own `"owner/repo"`, or set it to
+`""` to disable checking entirely. The settings panel (gear icon) can toggle
+checking on/off and the interval without editing `config/sources.json`
+directly (`GET`/`POST /api/settings/updates`).
+
+Applying an update is separate and **disabled by default**: it refuses a
+dirty working tree, refuses anything that is not a fast-forward, and only
+pulls from the configured origin. Enable manual apply (a button in the
+update banner) with `"allow_self_update": true` in `config/sources.json`.
+Enable fully automatic apply -- the periodic check pulls a fast-forward
+update on its own, no click -- with `"update_auto_apply": true` as well
+(still requires `allow_self_update: true`; every safety check above still
+applies).
 
 ## Privacy
 

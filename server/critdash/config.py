@@ -44,6 +44,17 @@ DEFAULT_SOURCES = {
     # generic `bd init`/BEADS_DIR workspace needs no such file at all. Set
     # this only if your `bd` setup actually uses an env file like this.
     "beads_env": "",
+    # Empty by default. When set, the collector exports BEADS_DIR to this
+    # path before every `bd` call -- this is what lets the collector find a
+    # workspace `bd` itself would find fine from a normal shell, since it
+    # runs `bd` from CritBoard's own directory and does not inherit a user's
+    # shell environment. Takes precedence over whatever beads_env's sourced
+    # file exports, which in turn takes precedence over bd's own resolution.
+    # Must be the .beads directory itself (e.g. /path/to/project/.beads),
+    # not its parent -- an easy mistake; `bd where --json`'s "path" field is
+    # the documented way to find the right value. See collectors/beads.py's
+    # bd_shell_prefix/validate_beads_dir.
+    "beads_dir": "",
     "beads_actor": "critdash",
     "bd_bin": "~/.local/bin/bd",
     "herdr_bin": "herdr",
@@ -114,13 +125,26 @@ DEFAULT_SOURCES = {
     # `git pull` from update_repo/update_branch and restarts the service, so
     # a fresh install must opt in explicitly (see that module's docstring).
     "allow_self_update": False,
-    # Empty by default -- the dashboard's own upstream repo is private, so a
-    # third-party install's update check would 404 against a repo it can't
-    # read. A fork that wants self-update sets this to its own "owner/repo".
-    # See update.py's module docstring.
-    "update_repo": "",
+    # critfusion/critboard is public again, so an unauthenticated
+    # GET /repos/critfusion/critboard returns 200 and the periodic/manual
+    # check works out of the box. A fork should point this at its own
+    # "owner/repo" instead.
+    "update_repo": "critfusion/critboard",
     "update_branch": "main",
     "update_check_min_interval_s": 300,
+    # Periodic background check (critdash/update.py's periodic_update_check,
+    # briefing Task 5): read-only and safe, so it's on by default, unlike
+    # allow_self_update/update_auto_apply, which actually change the
+    # checkout. Interval floor is enforced by POST /api/settings/updates
+    # (not below 300s) so the settings UI can't configure a rate-limit
+    # violation; conditional (ETag) requests are what make a 900s default
+    # free against GitHub's unauthenticated 60/hour limit either way.
+    "update_check_enabled": True,
+    "update_check_interval_s": 900,
+    # Off by default -- true lets the periodic check pull a fast-forward
+    # update on its own with no human click, still gated behind
+    # allow_self_update and every safety check in update.apply_update.
+    "update_auto_apply": False,
     "ssh_opts": [
         "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
     ],

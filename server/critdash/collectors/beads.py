@@ -63,19 +63,30 @@ def resolve_bd_bin(bd_bin: str) -> str | None:
     return shutil.which(bd_bin)
 
 
-def bd_shell_prefix(beads_env: str, actor: str) -> str:
+def bd_shell_prefix(beads_env: str, actor: str, beads_dir: str = "") -> str:
     """Shell prefix for a `bd` invocation: sources `beads_env` only when
     that file actually exists -- it is an optional, site-specific
     convention (see module docstring), never something `bd` requires -- then
     exports BEADS_ACTOR. A generic `bd init`/BEADS_DIR workspace with no env
     file at all runs `bd` directly, with no `.` (dot) of a nonexistent path
     ever reaching the shell. Shared by BeadsCollector._prefix() and
-    fetch_bead_detail() so the two call sites can't drift."""
+    fetch_bead_detail() so the two call sites can't drift.
+
+    `beads_dir` (config key of the same name), when set, is exported as
+    BEADS_DIR *after* beads_env is sourced -- so it overrides whatever
+    BEADS_DIR beads_env's own script may have exported. This is the fix for
+    a `bd` that works fine from a user's own shell but reports "no
+    workspace configured" here: the collector runs `bd` from CritBoard's
+    own working directory, not the user's, and doesn't inherit their shell
+    env at all. Precedence, high to low: beads_dir -> whatever beads_env
+    provides -> bd's own resolution (nothing exported here)."""
     parts = []
     env_path = Path(os.path.expanduser(beads_env)) if beads_env else None
     if env_path is not None and env_path.is_file():
         parts.append(f". {shlex.quote(str(env_path))} 2>/dev/null;")
     parts.append(f"export BEADS_ACTOR={shlex.quote(actor)};")
+    if beads_dir:
+        parts.append(f"export BEADS_DIR={shlex.quote(os.path.expanduser(beads_dir))};")
     return " ".join(parts)
 
 # Labels that describe agent routing intent, not a repo. Used to skip them
@@ -244,7 +255,7 @@ async def _run_capture(cmd: str, timeout: float = 20.0) -> tuple[int, str, str]:
 
 
 async def fetch_bead_detail(
-    beads_env: str, bd_bin: str, actor: str, bead_id: str, timeout: float = 20.0
+    beads_env: str, bd_bin: str, actor: str, bead_id: str, timeout: float = 20.0, beads_dir: str = ""
 ) -> dict:
     """Run `bd show <id> --json --include-dependents` and return the
     transformed detail dict. Raises BeadNotFoundError if bd reports no
@@ -254,7 +265,7 @@ async def fetch_bead_detail(
     if not validate_bead_id(bead_id):
         raise ValueError(f"invalid bead id: {bead_id!r}")
 
-    prefix = bd_shell_prefix(beads_env, actor)
+    prefix = bd_shell_prefix(beads_env, actor, beads_dir)
     cmd = (
         f"{prefix} {shlex.quote(bd_bin)} show {shlex.quote(bead_id)} "
         "--json --include-dependents"
@@ -323,18 +334,47 @@ async def _run(cmd: str, timeout: float = 20.0) -> str:
     return stdout.decode(errors="replace")
 
 
-def availability_issue(bd_bin: str) -> CollectorIssue | None:
-    """None if `bd` is installed -- the one preflight check
-    BeadsCollector.collect() runs before ever shelling out, factored out so
-    main.py can run the exact same check at startup (and on periodic
-    re-detection) to decide whether to schedule this collector at all,
-    without duplicating the logic or actually running collect().
+_BEADS_DIR_REMEDY = (
+    "Set beads_dir to the .beads directory ITSELF (e.g. /path/to/project/.beads), not its parent -- "
+    "that's the easy mistake. Run `bd where --json` inside your beads workspace to see the right "
+    "value (its \"path\" field)."
+)
+
+
+def validate_beads_dir(beads_dir: str) -> CollectorIssue | None:
+    """None if `beads_dir` is unset (fine -- it's optional, see module
+    docstring) or points at an existing directory. A configured-but-wrong
+    value is a real misconfiguration (the user set it, just to the wrong
+    path -- most often the workspace's parent instead of the .beads
+    directory itself), so this is reported as `optional=False`: worth a
+    warning, not a quiet "not configured" notice."""
+    if not beads_dir:
+        return None
+    if not Path(os.path.expanduser(beads_dir)).is_dir():
+        return CollectorIssue(
+            "config_missing",
+            f"beads_dir does not exist or is not a directory: {beads_dir!r}",
+            remedy=_BEADS_DIR_REMEDY,
+            optional=False,
+        )
+    return None
+
+
+def availability_issue(bd_bin: str, beads_dir: str = "") -> CollectorIssue | None:
+    """None if `bd` is installed and `beads_dir` (if set) is valid -- the
+    preflight checks BeadsCollector.collect() runs before ever shelling
+    out, factored out so main.py can run the exact same checks at startup
+    (and on periodic re-detection) to decide whether to schedule this
+    collector at all, without duplicating the logic or actually running
+    collect().
 
     The beads env file is deliberately NOT checked here (see module
     docstring): it is optional, and a `bd` with no workspace configured
     fails with its own clear, actionable error once collect() actually runs
     it -- that surfaces through the normal command_failed classification,
-    not through this availability gate."""
+    not through this availability gate. `beads_dir` IS checked here (see
+    validate_beads_dir) since a bad value is a configuration mistake worth
+    surfacing immediately, not a "bd itself will explain it" case."""
     if resolve_bd_bin(bd_bin) is None:
         return CollectorIssue(
             "dependency_missing",
@@ -342,7 +382,7 @@ def availability_issue(bd_bin: str) -> CollectorIssue | None:
             remedy=_BD_DEPENDENCY_REMEDY,
             optional=True,
         )
-    return None
+    return validate_beads_dir(beads_dir)
 
 
 class BeadsCollector(BaseCollector):
@@ -350,19 +390,20 @@ class BeadsCollector(BaseCollector):
     interval_s = 30.0
 
     def __init__(self, ctx=None, beads_env: str = "~/.config/beads/env", bd_bin: str = "bd",
-                 actor: str = "critdash", store=None):
+                 actor: str = "critdash", store=None, beads_dir: str = ""):
         super().__init__(ctx)
         self.beads_env = beads_env
         self.bd_bin = bd_bin
         self.actor = actor
         self.store = store
+        self.beads_dir = beads_dir
         self._prev: dict[str, tuple[str, str | None]] = {}
 
     def _prefix(self) -> str:
-        return bd_shell_prefix(self.beads_env, self.actor)
+        return bd_shell_prefix(self.beads_env, self.actor, self.beads_dir)
 
     async def collect(self) -> dict:
-        issue = availability_issue(self.bd_bin)
+        issue = availability_issue(self.bd_bin, self.beads_dir)
         if issue is not None:
             raise issue
 

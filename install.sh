@@ -21,8 +21,8 @@
 #                 one-shot smoke test or a non-systemd environment. PID file:
 #                 server/data/critdash.pid.
 #   --doctor      Print configured vs. detected tool/data paths (bd_bin,
-#                 herdr_bin, beads_env, claude_projects_dir, kimi_dir,
-#                 overlord_dir, the quota auth paths, plus ssh/git/uv/curl)
+#                 herdr_bin, beads_env, beads_dir, claude_projects_dir,
+#                 kimi_dir, overlord_dir, the quota auth paths, ssh/git/uv/curl)
 #                 and exit. Non-zero exit means a configured path is missing
 #                 while critdash.detect found a working one elsewhere --
 #                 the "I have bd installed but the dashboard disagrees" bug.
@@ -562,6 +562,7 @@ else
         BD_OVERRIDE="$BD_OVERRIDE" HERDR_OVERRIDE="$HERDR_OVERRIDE" "${PY_RUNNER[@]}" - <<'PYEOF'
 import json
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.environ["PYTHONPATH"])
@@ -598,6 +599,30 @@ for key, name, override_env in (
     else:
         not_found.append(key)
 
+# beads_dir (briefing Task 1): if bd resolved above, ask it directly which
+# workspace it would use right now via `bd where --json` (the documented
+# way to find the active one) and write that as beads_dir -- this is what
+# fixes the collector running `bd` from CritBoard's own directory instead
+# of the user's shell, without the user ever having to figure out the
+# BEADS_DIR value themselves. Left empty (the example's default) if bd
+# isn't resolved, or if `bd where` fails/finds nothing -- both are normal
+# "no workspace yet" states, not failures; `make doctor` surfaces beads_dir
+# too, for a later fix.
+bd_bin_resolved = doc.get("bd_bin")
+if bd_bin_resolved and not (doc.get("beads_dir") or "").strip():
+    try:
+        bd_where = subprocess.run(
+            [bd_bin_resolved, "where", "--json"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if bd_where.returncode == 0:
+            workspace = json.loads(bd_where.stdout).get("path")
+            if workspace:
+                doc["beads_dir"] = workspace
+                found.append(f"beads_dir={workspace} (from `bd where --json`)")
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError):
+        pass
+
 with open(os.environ["DST"], "w") as f:
     json.dump(doc, f, indent=2)
     f.write("\n")
@@ -609,6 +634,12 @@ if not_found:
         "install.sh: not found on this machine (their panels stay inactive -- fine "
         "if you don't use them): " + ", ".join(not_found)
     )
+print(
+    "install.sh: update settings from the example (edit config/sources.json to change): "
+    f"update_repo={doc.get('update_repo')!r}, update_check_enabled={doc.get('update_check_enabled')!r}, "
+    f"update_check_interval_s={doc.get('update_check_interval_s')!r}, "
+    f"update_auto_apply={doc.get('update_auto_apply')!r}"
+)
 PYEOF
     then
         fail "failed to write config/sources.json -- see the Python error above."
