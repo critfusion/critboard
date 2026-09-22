@@ -489,7 +489,9 @@ In `config/sources.json`:
      the key proves nothing on its own -- `bd` itself has the final word.
      Restart the dashboard, then check the `beads` entry directly:
      ```sh
-     systemctl --user restart critdash.service   # or your non-systemd equivalent
+     systemctl --user restart critdash.service   # --service (systemd) install
+     # -- or, no systemd (e.g. macOS), a --start (PID-file) install:
+     kill "$(cat server/data/critdash.pid)" && ./install.sh --start
      curl -s http://127.0.0.1:9999/api/healthz | python3 -c \
        'import json,sys; d=json.load(sys.stdin)["collectors"]["beads"]; print(d["ok"], d["reason_code"])'
      # -> True None
@@ -525,7 +527,8 @@ fix by guessing.
 | Command | What it does |
 |---|---|
 | `make run` | Foreground process on `$PORT`/`$BIND` (defaults 9999 / 127.0.0.1). Ctrl-C to stop. |
-| `./install.sh --service` | systemd --user unit, survives logout/reboot. `systemctl --user status critdash.service` / `journalctl --user -u critdash.service -f`. |
+| `./install.sh --service` | systemd --user unit, survives logout/reboot (Linux only -- skipped with a message if systemd --user isn't available). `systemctl --user status critdash.service` / `journalctl --user -u critdash.service -f`. |
+| `./install.sh --start` | Background process, no systemd required -- the macOS/non-systemd path. PID file: `server/data/critdash.pid`. To restart it: `kill "$(cat server/data/critdash.pid)" && ./install.sh --start` (re-running `--start` alone is a no-op while the old process is still alive). |
 | `make test` | Backend test suite (uses `server/.venv` if set up -- the common case after `make install` -- else falls back to `uv`). |
 | `make doctor` / `./install.sh --doctor` | Configured vs. detected tool/data paths, one table. Exits non-zero on a `MISMATCH`. See "Tool & data path detection" below. |
 | `./install.sh --probe --json` | Same data as `--doctor`, as one JSON object for a script/agent -- no side effects. See "Probe schema" above. |
@@ -549,6 +552,8 @@ memory (`systemctl --user restart critdash.service`).
 systemctl --user disable --now critdash.service   # if installed with --service
 rm -f ~/.config/systemd/user/critdash.service
 systemctl --user daemon-reload
+
+kill "$(cat server/data/critdash.pid)" 2>/dev/null   # if installed with --start (no systemd, e.g. macOS)
 
 rm -rf server/.venv server/data server/uv.lock
 rm -f config/sources.json   # only if you want to discard your local config too

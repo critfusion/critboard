@@ -47,8 +47,10 @@ Periodic background check (periodic_update_check, briefing Task 2):
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -409,29 +411,224 @@ def _refuse_if_wrong_origin(root: Path, repo: str) -> None:
         )
 
 
-def _restart_service(unit: str = "critdash.service") -> bool:
-    """Best-effort `systemctl --user restart`, fired and detached. This
-    deliberately does not wait: the response to this very POST has to reach
-    the client before the process sending it gets killed by the restart."""
-    if not shutil.which("systemctl"):
-        return False
+DEFAULT_SYSTEMD_UNIT = "critdash.service"
+
+# Self-restart (PID-file / install.sh --start path -- see _restart_via_pidfile):
+# how long the detached helper waits before touching the old process (lets
+# this very POST's HTTP response finish flushing to the client first), how
+# long it gives the old process to exit after SIGTERM before escalating to
+# SIGKILL, and how long it then waits for the port to be released.
+SELF_RESTART_FLUSH_DELAY_S = 1.0
+SELF_RESTART_GRACEFUL_TIMEOUT_S = 5.0
+SELF_RESTART_PORT_RELEASE_TIMEOUT_S = 2.0
+
+
+def _unit_name_from_cgroup_text(text: str) -> str | None:
+    """The deepest (leaf-most) `*.service` path segment in `text` (the
+    contents of /proc/self/cgroup), or None if there isn't one.
+
+    A systemd --user process's cgroup path looks like
+    .../user@1000.service/app.slice/critdash.service -- there can be more
+    than one `.service` segment (user@1000.service is systemd's own
+    per-user manager, an ANCESTOR, not us), so this deliberately takes the
+    last one in the path, which is always the unit directly containing
+    this process, never an ancestor slice/service."""
+    for line in text.splitlines():
+        path = line.rsplit(":", 1)[-1]
+        segments = [s for s in path.split("/") if s]
+        for segment in reversed(segments):
+            if segment.endswith(".service"):
+                return segment
+    return None
+
+
+def _read_own_cgroup() -> str:
     try:
-        subprocess.Popen(  # noqa: S603 -- fixed argv, no shell, no caller-supplied input
-            ["systemctl", "--user", "restart", unit], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        return Path("/proc/self/cgroup").read_text()
+    except OSError:
+        return ""
+
+
+def _detect_own_systemd_unit(config) -> tuple[str | None, bool]:
+    """(unit_name_or_None, clearly_under_systemd). `clearly_under_systemd`
+    is True only when INVOCATION_ID is set in our own environment --
+    systemd sets this for every unit it starts (systemd.exec(5)), and
+    nothing else does, so its absence means this process is definitely NOT
+    supervised by systemd and must never be restarted via systemctl no
+    matter what a stale/misread cgroup path might suggest.
+
+    When under systemd, the unit name comes from THIS process's own
+    /proc/self/cgroup (see _unit_name_from_cgroup_text) -- never a
+    hardcoded name, so a restart can never target some other unit (real
+    incident: an earlier hardcoded "critdash.service" bounced a live
+    dashboard while testing against an unrelated throwaway clone). The
+    configured/default name is used only as a last resort, and only once
+    INVOCATION_ID has already confirmed systemd is genuinely involved."""
+    if not os.environ.get("INVOCATION_ID"):
+        return None, False
+    detected = _unit_name_from_cgroup_text(_read_own_cgroup())
+    if detected:
+        return detected, True
+    configured = config.sources.get("systemd_unit") if config is not None else None
+    fallback = configured if isinstance(configured, str) and configured else DEFAULT_SYSTEMD_UNIT
+    return fallback, True
+
+
+def _pidfile_path(config) -> Path:
+    return Path(config.server_dir) / "data" / "critdash.pid"
+
+
+def _pidfile_names_us(config) -> bool:
+    """True iff the PID file exists and names exactly THIS process. A
+    missing file, an unreadable/non-numeric file, or a file naming any
+    other PID (stale, or another install's process) all return False --
+    the self-restart path must never act on a PID file it doesn't own."""
+    try:
+        pid = int(_pidfile_path(config).read_text().strip())
+    except (OSError, ValueError):
+        return False
+    return pid == os.getpid()
+
+
+# Runs as a fully detached child (start_new_session=True) so it survives
+# the old process going away. Args: old_pid, uvicorn_bin, server_dir, host,
+# port, pidfile, logfile, config_dir, flush_delay_s, graceful_timeout_s,
+# port_release_timeout_s. Mirrors install.sh's --start step exactly:
+# same uvicorn binary, same --app-dir/--host/--port invocation, same
+# CRITDASH_CONFIG_DIR env var, same log file, same PID file.
+_SELF_RESTART_HELPER_SRC = r"""
+import os, subprocess, sys, time
+
+(old_pid, uvicorn_bin, server_dir, host, port, pidfile, logfile, config_dir,
+ flush_delay_s, graceful_timeout_s, port_release_timeout_s) = sys.argv[1:12]
+old_pid = int(old_pid)
+flush_delay_s = float(flush_delay_s)
+graceful_timeout_s = float(graceful_timeout_s)
+port_release_timeout_s = float(port_release_timeout_s)
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def wait_while_alive(pid, timeout_s):
+    deadline = time.monotonic() + timeout_s
+    while alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+
+# Let the HTTP response to the POST that triggered this finish flushing to
+# the client before the old process is touched.
+time.sleep(flush_delay_s)
+
+try:
+    os.kill(old_pid, 15)  # SIGTERM -- ask nicely first
+except OSError:
+    pass
+wait_while_alive(old_pid, graceful_timeout_s)
+if alive(old_pid):
+    try:
+        os.kill(old_pid, 9)  # SIGKILL -- it didn't leave in time
+    except OSError:
+        pass
+    wait_while_alive(old_pid, port_release_timeout_s)
+
+env = dict(os.environ)
+env["CRITDASH_CONFIG_DIR"] = config_dir
+with open(logfile, "ab") as log:
+    proc = subprocess.Popen(
+        [uvicorn_bin, "critdash.main:app", "--app-dir", server_dir, "--host", host, "--port", port],
+        cwd=server_dir, env=env, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+with open(pidfile, "w") as f:
+    f.write(str(proc.pid))
+"""
+
+
+def _restart_via_pidfile(config) -> bool:
+    """Self-restart for the install.sh --start (PID-file, no systemd) path
+    -- the only supervisor a macOS install has. Spawns a detached helper
+    that waits, kills the old process, and starts a new one the same way
+    install.sh --start does, writing its PID to the same PID file. Fires
+    and returns immediately for the same reason _detect_own_systemd_unit's
+    caller does: this POST's HTTP response has to reach the client before
+    the old process (the one sending it) goes away."""
+    if not _pidfile_names_us(config):
+        return False
+    server_dir = Path(config.server_dir)
+    uvicorn_bin = server_dir / ".venv" / "bin" / "uvicorn"
+    if not uvicorn_bin.exists():
+        return False
+    host = str(config.sources.get("bind_host", "127.0.0.1"))
+    port = str(config.sources.get("bind_port", 9999))
+    pidfile = _pidfile_path(config)
+    logfile = server_dir / "data" / "critdash.log"
+    try:
+        subprocess.Popen(  # noqa: S603 -- fixed argv, args are our own config values, no shell
+            [
+                sys.executable, "-c", _SELF_RESTART_HELPER_SRC,
+                str(os.getpid()), str(uvicorn_bin), str(server_dir), host, port,
+                str(pidfile), str(logfile), str(config.config_dir),
+                str(SELF_RESTART_FLUSH_DELAY_S), str(SELF_RESTART_GRACEFUL_TIMEOUT_S),
+                str(SELF_RESTART_PORT_RELEASE_TIMEOUT_S),
+            ],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         return True
     except OSError as exc:
-        logger.warning("self-update: could not launch systemctl restart: %s", exc)
+        logger.warning("self-update: could not launch self-restart helper: %s", exc)
         return False
+
+
+def _restart(config) -> tuple[bool, str, str]:
+    """Restart whatever is actually supervising THIS process, in order:
+    (a) our own systemd --user unit, detected fresh every call, never a
+        hardcoded name -- restarting the wrong unit is a real outage (see
+        _detect_own_systemd_unit's docstring); (b) the install.sh --start
+        PID-file path (the only mechanism a macOS/no-systemd install has);
+        (c) neither -- nothing here can restart the process.
+
+    Returns (restarted, method, hint): method is "systemd" | "self" |
+    "none" -- main.py's response includes this so the frontend can react
+    to what actually happened instead of assuming a restart occurred just
+    because git pull succeeded (macOS install report: previously restart
+    silently failed on macOS and the UI claimed success anyway). `hint` is
+    the command to restart manually, populated only when method == "none",
+    chosen from what this call actually observed rather than guessed."""
+    unit, under_systemd = _detect_own_systemd_unit(config)
+    if under_systemd and unit:
+        if shutil.which("systemctl"):
+            try:
+                subprocess.Popen(  # noqa: S603 -- fixed argv, no shell, no caller-supplied input
+                    ["systemctl", "--user", "restart", unit],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return True, "systemd", ""
+            except OSError as exc:
+                logger.warning("self-update: could not launch systemctl restart: %s", exc)
+        return False, "none", f"systemctl --user restart {unit}"
+
+    if _restart_via_pidfile(config):
+        return True, "self", ""
+
+    return False, "none", "./install.sh --start"
 
 
 def apply_update(config, dashboard_root: Path) -> dict:
     """POST /api/update/apply's full body. Synchronous (git/uv are blocking
     subprocess calls) -- main.py runs this via asyncio.to_thread so it
     doesn't block the event loop. Every refusal raises UpdateError before
-    anything on disk is touched. Restarting the service is the last step and
-    is best-effort: if it doesn't fire, the pulled code is already on disk
-    and `systemctl --user restart critdash.service` picks it up manually."""
+    anything on disk is touched. Restarting is the last step and is
+    best-effort -- see _restart for the systemd / PID-file / neither
+    decision. If it doesn't fire, the pulled code is already on disk but
+    the running process is still serving the OLD code; the response's
+    `restart_hint` says what to run manually to pick it up."""
     if not config.sources.get("allow_self_update", False):
         raise UpdateError(
             "self_update_disabled",
@@ -491,10 +688,11 @@ def apply_update(config, dashboard_root: Path) -> dict:
         logger.info("self-update: uv.lock changed, dependencies reinstalled")
 
     new_identity = git_identity(root)
-    restarted = _restart_service()
+    restarted, restart_method, restart_hint = _restart(config)
     logger.info(
         "self-update: applied, now at %s, restart %s",
-        new_identity.get("commit"), "requested" if restarted else "NOT requested (no systemctl)",
+        new_identity.get("commit"),
+        f"via {restart_method}" if restarted else "NOT requested (none available)",
     )
 
     return {
@@ -502,5 +700,7 @@ def apply_update(config, dashboard_root: Path) -> dict:
         "commit": new_identity.get("commit"),
         "reinstalled": reinstalled,
         "restart_requested": restarted,
+        "restart_method": restart_method,
+        "restart_hint": restart_hint,
         "applied_at": _now_iso(),
     }

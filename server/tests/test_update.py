@@ -6,14 +6,20 @@ test_productivity.py's _init_repo) with a "remote" whose local filesystem
 path is deliberately shaped .../github.com/<owner>/<repo>(.git) so
 _refuse_if_wrong_origin's real string check (never mocked) passes against a
 same-machine remote -- git treats a local path remote exactly like any other.
-_restart_service is monkeypatched in every test that reaches it, so no test
-ever calls the real `systemctl` and risks touching a real running service.
+_restart is monkeypatched in every apply_update test that reaches it, so no
+test ever calls the real `systemctl` and risks touching a real running
+service. _restart's own pieces (systemd unit detection, PID-file ownership,
+the self-restart helper) are covered directly further down.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
+import socket
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -21,14 +27,20 @@ import pytest
 from critdash import update
 from critdash.store import Store
 
+# server/tests/test_update.py -> dashboard root is three parents up
+DASHBOARD_ROOT = Path(__file__).resolve().parents[2]
+REAL_VENV = DASHBOARD_ROOT / "server" / ".venv"
+
 
 def mock_client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
 class _Cfg:
-    def __init__(self, **sources):
+    def __init__(self, *, server_dir=None, config_dir=None, **sources):
         self.sources = sources
+        self.server_dir = server_dir
+        self.config_dir = config_dir
 
 
 def _run(args, cwd):
@@ -377,7 +389,7 @@ def test_apply_update_success_pulls_ff_and_skips_reinstall_when_lock_unchanged(t
     _run(["push", "-q", str(remote_dir), "HEAD:main"], seed)
     new_head = _head(seed)
 
-    monkeypatch.setattr(update, "_restart_service", lambda unit="critdash.service": True)
+    monkeypatch.setattr(update, "_restart", lambda config: (True, "systemd", ""))
     cfg = _Cfg(allow_self_update=True, update_repo="testowner/testrepo", update_branch="main")
     result = update.apply_update(cfg, clone_dir)
 
@@ -385,6 +397,8 @@ def test_apply_update_success_pulls_ff_and_skips_reinstall_when_lock_unchanged(t
     assert result["commit"] == new_head
     assert result["reinstalled"] is False
     assert result["restart_requested"] is True
+    assert result["restart_method"] == "systemd"
+    assert result["restart_hint"] == ""
     assert _head(clone_dir) == new_head
 
 
@@ -401,7 +415,7 @@ def test_apply_update_reinstalls_when_lockfile_changed(tmp_path, monkeypatch):
     _run(["commit", "-qam", "bump lockfile"], seed)
     _run(["push", "-q", str(remote_dir), "HEAD:main"], seed)
 
-    monkeypatch.setattr(update, "_restart_service", lambda unit="critdash.service": False)
+    monkeypatch.setattr(update, "_restart", lambda config: (False, "none", "./install.sh --start"))
     reinstall_calls = []
     real_run = subprocess.run
 
@@ -421,6 +435,9 @@ def test_apply_update_reinstalls_when_lockfile_changed(tmp_path, monkeypatch):
     assert result["reinstalled"] is True
     assert len(reinstall_calls) == 1
     assert reinstall_calls[0][1] == clone_dir / "server"
+    assert result["restart_requested"] is False
+    assert result["restart_method"] == "none"
+    assert result["restart_hint"] == "./install.sh --start"
 
 
 def test_apply_update_refuses_non_fast_forward_on_diverged_history(tmp_path, monkeypatch):
@@ -437,7 +454,7 @@ def test_apply_update_refuses_non_fast_forward_on_diverged_history(tmp_path, mon
     _run(["add", "b.txt"], clone_dir)
     _run(["commit", "-qm", "local change"], clone_dir)
 
-    monkeypatch.setattr(update, "_restart_service", lambda unit="critdash.service": True)
+    monkeypatch.setattr(update, "_restart", lambda config: (True, "systemd", ""))
     cfg = _Cfg(allow_self_update=True, update_repo="testowner/testrepo", update_branch="main")
     with pytest.raises(update.UpdateError) as exc_info:
         update.apply_update(cfg, clone_dir)
@@ -580,3 +597,332 @@ async def test_periodic_check_auto_apply_false_by_default(tmp_path):
     result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
     assert result["auto_apply"] is False
     store.close()
+
+
+# -- systemd unit detection (macOS install report: restart must target OUR
+#    OWN unit, never a hardcoded name -- a hardcoded "critdash.service"
+#    once bounced an unrelated live dashboard during a throwaway-clone test)
+# ------------------------------------------------------------------------
+
+
+def test_unit_name_from_cgroup_text_picks_the_leaf_service():
+    """Real-world cgroup v2 path for a systemd --user unit: multiple
+    .service segments (user@1000.service is systemd's own per-user
+    manager, an ANCESTOR, not us) -- the deepest one is always ours."""
+    text = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/critdash.service\n"
+    assert update._unit_name_from_cgroup_text(text) == "critdash.service"
+
+
+def test_unit_name_from_cgroup_text_returns_the_actual_unit_not_a_hardcoded_name():
+    """A process running under some OTHER unit must report that unit's
+    real name, never the hardcoded default -- this is the exact bug that
+    caused the real incident (see module docstring)."""
+    text = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/some-other-app.service\n"
+    name = update._unit_name_from_cgroup_text(text)
+    assert name == "some-other-app.service"
+    assert name != update.DEFAULT_SYSTEMD_UNIT
+
+
+def test_unit_name_from_cgroup_text_no_service_segment_returns_none():
+    text = "0::/user.slice/user-1000.slice/session-260.scope\n"
+    assert update._unit_name_from_cgroup_text(text) is None
+
+
+def test_detect_own_systemd_unit_without_invocation_id_is_never_under_systemd(monkeypatch):
+    """Even if /proc/self/cgroup LOOKS like a systemd unit path, without
+    INVOCATION_ID in our own env we are definitely not running under
+    systemd (systemd sets this for every unit it starts, nothing else
+    does) -- detection must refuse to guess a unit to restart at all."""
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.setattr(update, "_read_own_cgroup", lambda: "0::/user.slice/.../app.slice/critdash.service\n")
+    unit, under_systemd = update._detect_own_systemd_unit(_Cfg())
+    assert under_systemd is False
+    assert unit is None
+
+
+def test_detect_own_systemd_unit_uses_real_cgroup_when_under_systemd(monkeypatch):
+    monkeypatch.setenv("INVOCATION_ID", "deadbeefdeadbeefdeadbeefdeadbeef")
+    monkeypatch.setattr(
+        update, "_read_own_cgroup",
+        lambda: "0::/user.slice/user-1000.slice/user@1000.service/app.slice/my-actual-unit.service\n",
+    )
+    unit, under_systemd = update._detect_own_systemd_unit(_Cfg())
+    assert under_systemd is True
+    assert unit == "my-actual-unit.service"
+
+
+def test_detect_own_systemd_unit_falls_back_to_default_only_when_clearly_under_systemd(monkeypatch):
+    """cgroup parsing failed (no .service segment at all) but INVOCATION_ID
+    confirms systemd IS involved -- only then is the configured/default
+    name used."""
+    monkeypatch.setenv("INVOCATION_ID", "deadbeefdeadbeefdeadbeefdeadbeef")
+    monkeypatch.setattr(update, "_read_own_cgroup", lambda: "0::/user.slice/session-1.scope\n")
+    unit, under_systemd = update._detect_own_systemd_unit(_Cfg())
+    assert under_systemd is True
+    assert unit == update.DEFAULT_SYSTEMD_UNIT
+
+    unit2, _ = update._detect_own_systemd_unit(_Cfg(systemd_unit="configured-unit.service"))
+    assert unit2 == "configured-unit.service"
+
+
+# -- PID-file ownership (install.sh --start / macOS path): must refuse to
+#    act on a PID file that doesn't name THIS process ------------------
+
+
+def test_pidfile_names_us_true_for_own_pid(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "critdash.pid").write_text(str(os.getpid()))
+    assert update._pidfile_names_us(_Cfg(server_dir=tmp_path)) is True
+
+
+def test_pidfile_names_us_false_when_missing(tmp_path):
+    assert update._pidfile_names_us(_Cfg(server_dir=tmp_path)) is False
+
+
+def test_pidfile_names_us_false_for_someone_elses_pid(tmp_path):
+    (tmp_path / "data").mkdir()
+    # PID 1 (init/systemd) is essentially guaranteed to not be us
+    (tmp_path / "data" / "critdash.pid").write_text("1")
+    assert update._pidfile_names_us(_Cfg(server_dir=tmp_path)) is False
+
+
+def test_pidfile_names_us_false_for_garbage_content(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "critdash.pid").write_text("not-a-pid")
+    assert update._pidfile_names_us(_Cfg(server_dir=tmp_path)) is False
+
+
+def test_restart_via_pidfile_refuses_and_spawns_nothing_when_pidfile_is_not_ours(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "critdash.pid").write_text("1")
+    spawned = []
+    monkeypatch.setattr(update.subprocess, "Popen", lambda *a, **k: spawned.append((a, k)))
+    assert update._restart_via_pidfile(_Cfg(server_dir=tmp_path, config_dir=tmp_path)) is False
+    assert spawned == []
+
+
+# -- _restart dispatch order: systemd, then PID-file self-restart, then
+#    neither -- and the systemd branch must never fire when we are not
+#    clearly running under systemd -------------------------------------
+
+
+def test_restart_prefers_systemd_when_detected(monkeypatch):
+    monkeypatch.setattr(update, "_detect_own_systemd_unit", lambda config: ("my-unit.service", True))
+    monkeypatch.setattr(
+        update.shutil, "which", lambda name: "/usr/bin/systemctl" if name == "systemctl" else None
+    )
+    calls = []
+    monkeypatch.setattr(update.subprocess, "Popen", lambda argv, **k: calls.append(argv))
+    monkeypatch.setattr(update, "_restart_via_pidfile", lambda config: pytest.fail("must not try pidfile"))
+
+    restarted, method, hint = update._restart(_Cfg())
+    assert (restarted, method, hint) == (True, "systemd", "")
+    assert calls == [["systemctl", "--user", "restart", "my-unit.service"]]
+
+
+def test_restart_does_not_use_systemd_when_not_clearly_under_it(monkeypatch):
+    """Even if systemctl happens to be on PATH (e.g. a Linux dev box with
+    systemd installed but this particular process wasn't started by it),
+    detection reporting under_systemd=False must skip the systemd branch
+    entirely -- this is what stops the real incident's class of bug."""
+    monkeypatch.setattr(update, "_detect_own_systemd_unit", lambda config: (None, False))
+    monkeypatch.setattr(update.shutil, "which", lambda name: "/usr/bin/systemctl")
+    monkeypatch.setattr(update.subprocess, "Popen", lambda *a, **k: pytest.fail("must not call systemctl"))
+    monkeypatch.setattr(update, "_restart_via_pidfile", lambda config: True)
+
+    restarted, method, hint = update._restart(_Cfg())
+    assert (restarted, method, hint) == (True, "self", "")
+
+
+def test_restart_falls_back_to_pidfile_when_no_systemd(monkeypatch):
+    monkeypatch.setattr(update, "_detect_own_systemd_unit", lambda config: (None, False))
+    monkeypatch.setattr(update, "_restart_via_pidfile", lambda config: True)
+    restarted, method, hint = update._restart(_Cfg())
+    assert (restarted, method, hint) == (True, "self", "")
+
+
+def test_restart_reports_none_with_a_usable_hint_when_nothing_available(monkeypatch):
+    monkeypatch.setattr(update, "_detect_own_systemd_unit", lambda config: (None, False))
+    monkeypatch.setattr(update, "_restart_via_pidfile", lambda config: False)
+    restarted, method, hint = update._restart(_Cfg())
+    assert restarted is False
+    assert method == "none"
+    assert hint == "./install.sh --start"
+
+
+def test_restart_hint_uses_systemctl_command_when_under_systemd_but_restart_failed(monkeypatch):
+    monkeypatch.setattr(update, "_detect_own_systemd_unit", lambda config: ("my-unit.service", True))
+    monkeypatch.setattr(update.shutil, "which", lambda name: None)  # systemctl "vanished"
+    restarted, method, hint = update._restart(_Cfg())
+    assert restarted is False
+    assert method == "none"
+    assert hint == "systemctl --user restart my-unit.service"
+
+
+# -- end-to-end self-restart (install.sh --start / macOS path), real
+#    processes: a throwaway clone one commit behind a local origin, served
+#    by a test instance with NO systemctl reachable on PATH. Proves the
+#    actual restart mechanism, not just the HTTP response shape.
+#
+#    ABSOLUTE SAFETY RULE: the child server's PATH is built from scratch
+#    (symlinks to just nohup/curl/git) so `shutil.which("systemctl")`
+#    inside it can only ever return None -- this test can NEVER reach the
+#    systemd branch, let alone a real systemctl. ------------------------
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _ignore_for_seed(dirpath, names):
+    ignored = {".git", ".venv", "data", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules"}
+    result = {n for n in names if n in ignored}
+    if os.path.basename(dirpath) == "config":
+        result |= {n for n in names if n in {"sources.json", "layout.json"}}
+    return result
+
+
+@pytest.mark.skipif(
+    not REAL_VENV.exists(), reason="server/.venv not built -- nothing to reuse for the real server"
+)
+def test_apply_update_self_restart_end_to_end_swaps_the_process(tmp_path):
+    seed = tmp_path / "origin_seed"
+    shutil.copytree(DASHBOARD_ROOT, seed, ignore=_ignore_for_seed)
+
+    remote_dir = tmp_path / "origin" / "github.com" / "testowner" / "testrepo.git"
+    remote_dir.parent.mkdir(parents=True)
+    _run(["init", "-q", "--bare", str(remote_dir)], tmp_path)
+
+    _run(["init", "-q", "-b", "main"], seed)
+    _run(["config", "user.email", "t@example.com"], seed)
+    _run(["config", "user.name", "t"], seed)
+    _run(["add", "-A"], seed)
+    _run(["commit", "-qm", "v1"], seed)
+    _run(["push", "-q", str(remote_dir), "HEAD:main"], seed)
+    subprocess.run(["git", "symbolic-ref", "HEAD", "refs/heads/main"], cwd=remote_dir, check=True)
+
+    workdir = tmp_path / "workdir"
+    _run(["clone", "-q", str(remote_dir), str(workdir)], tmp_path)
+    v1_head = _head(workdir)
+
+    (workdir / "server" / ".venv").symlink_to(REAL_VENV)
+    (workdir / ".git" / "info" / "exclude").write_text("server/.venv\n")
+    (workdir / "server" / "data").mkdir()
+    (workdir / "config").mkdir(exist_ok=True)
+    port = _free_port()
+    (workdir / "config" / "sources.json").write_text(
+        '{"allow_self_update": true, "update_repo": "testowner/testrepo", '
+        f'"update_branch": "main", "bind_host": "127.0.0.1", "bind_port": {port}}}'
+    )
+    (workdir / "config" / "layout.json").write_text("{}")
+    assert subprocess.run(["git", "status", "--porcelain"], cwd=workdir, capture_output=True, text=True,
+                           check=True).stdout == ""
+
+    # advance the remote by one commit -- workdir is now "one commit behind"
+    (seed / "README.md").write_text("e2e marker\n")
+    _run(["commit", "-qam", "v2"], seed)
+    _run(["push", "-q", str(remote_dir), "HEAD:main"], seed)
+    v2_head = _head(seed)
+    assert v2_head != v1_head
+
+    # PATH for the child server: symlinks to real nohup/curl/git ONLY --
+    # shutil.which("systemctl") inside it is guaranteed to return None.
+    safe_bin = tmp_path / "safe_bin"
+    safe_bin.mkdir()
+    for tool in ("nohup", "curl", "git"):
+        found = shutil.which(tool)
+        assert found, f"{tool} required on the host running this test"
+        (safe_bin / tool).symlink_to(found)
+    assert shutil.which("systemctl", path=str(safe_bin)) is None
+
+    server_dir = workdir / "server"
+    pidfile = server_dir / "data" / "critdash.pid"
+    logfile = server_dir / "data" / "critdash.log"
+    env = {
+        "PATH": str(safe_bin),
+        "CRITDASH_CONFIG_DIR": str(workdir / "config"),
+        "HOME": os.environ.get("HOME", ""),
+    }
+    with logfile.open("wb") as log:
+        proc = subprocess.Popen(
+            [str(server_dir / ".venv" / "bin" / "uvicorn"), "critdash.main:app",
+             "--app-dir", str(server_dir), "--host", "127.0.0.1", "--port", str(port)],
+            cwd=server_dir, env=env, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+        )
+    pidfile.write_text(str(proc.pid))
+    new_pid = None
+
+    try:
+        base = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 20
+        healthy = False
+        while time.monotonic() < deadline:
+            try:
+                if httpx.get(f"{base}/api/healthz", timeout=1).status_code == 200:
+                    healthy = True
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.25)
+        assert healthy, f"server never answered healthz; log:\n{logfile.read_text()}"
+
+        before = httpx.get(f"{base}/api/version", timeout=5).json()
+        assert before["commit"] == v1_head
+
+        resp = httpx.post(f"{base}/api/update/apply", timeout=15)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["applied"] is True
+        assert body["commit"] == v2_head
+        assert body["restart_requested"] is True
+        assert body["restart_method"] == "self"
+        assert body["restart_hint"] == ""
+
+        # the OLD process must actually go away, a NEW one must come up,
+        # and it must be serving the NEW commit -- not just "some process
+        # exists at that pidfile".
+        deadline = time.monotonic() + 20
+        new_pid = None
+        while time.monotonic() < deadline:
+            try:
+                candidate = int(pidfile.read_text().strip())
+            except (OSError, ValueError):
+                candidate = None
+            if candidate and candidate != proc.pid:
+                new_pid = candidate
+                break
+            time.sleep(0.2)
+        assert new_pid is not None, "pidfile was never rewritten to a new PID"
+
+        # `proc` is pytest's own subprocess.Popen child -- once the helper
+        # kills it, it is a zombie (still "alive" to kill(pid, 0)) until
+        # reaped here. wait() both reaps it and confirms it actually died;
+        # it raises TimeoutExpired (failing this test) if it somehow didn't.
+        proc.wait(timeout=10)
+
+        deadline = time.monotonic() + 20
+        after = None
+        while time.monotonic() < deadline:
+            try:
+                r = httpx.get(f"{base}/api/version", timeout=1)
+                if r.status_code == 200:
+                    after = r.json()
+                    if after.get("commit") == v2_head:
+                        break
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.25)
+        assert after is not None, "new server never answered"
+        assert after["commit"] == v2_head, f"new process is still serving the old commit: {after}"
+
+        assert _head(workdir) == v2_head
+    finally:
+        for candidate_pid in {proc.pid, new_pid}:
+            if not candidate_pid:
+                continue
+            try:
+                os.kill(candidate_pid, 9)
+            except OSError:
+                pass

@@ -214,11 +214,18 @@ timer or on startup -- both are meant to be triggered by a person, `check` at mo
   server-side for `update_check_min_interval_s` (default 300s) -- calling this endpoint often is safe, but the
   frontend should still poll it rarely, not on every snapshot tick. On a GitHub API failure, returns `502
   {"detail": {"reason": "github_error"|"github_unreachable"|"github_bad_response", "message": "…"}}`, never a bare 500.
-- `POST /api/update/apply` -> on success, `200 {"applied": true, "commit": "<new sha>", "reinstalled": true|false, "restart_requested": true|false, "applied_at": "…"}`.
+- `POST /api/update/apply` -> on success, `200 {"applied": true, "commit": "<new sha>", "reinstalled": true|false, "restart_requested": true|false, "restart_method": "systemd"|"self"|"none", "restart_hint": "<command>"|"", "applied_at": "…"}`.
   Performs `git fetch` + `git pull --ff-only` from the checkout's own `origin` remote (refuses if it doesn't
-  point at `github.com/<update_repo>`), reinstalls dependencies only if `server/uv.lock` changed, then fires a
-  best-effort `systemctl --user restart critdash.service` and returns immediately (the response is sent before
-  the restart kills the process). Every refusal is a specific 4xx/5xx with `{"detail": {"reason": "<code>",
+  point at `github.com/<update_repo>`), reinstalls dependencies only if `server/uv.lock` changed, then restarts
+  whatever is actually supervising this process and returns immediately (the response is sent before the
+  restart kills the process): a systemd --user unit if one is detected (by THIS process's own cgroup/
+  `INVOCATION_ID`, never a hardcoded unit name -- `restart_method: "systemd"`), else the PID-file process
+  install.sh `--start` manages -- the only mechanism on a host with no systemd, e.g. macOS -- restarted via a
+  detached helper (`restart_method: "self"`), else nothing (`restart_method: "none"`). `restart_requested` is
+  `true` only when a restart actually fired; `restart_method: "none"` means the pulled code is on disk but this
+  process is still running the OLD code, and `restart_hint` is the command to restart it manually (e.g.
+  `./install.sh --start`, or `systemctl --user restart <unit>` if systemd was detected but the restart itself
+  failed). Every refusal is a specific 4xx/5xx with `{"detail": {"reason": "<code>",
   "message": "<human string>"}}`, never a generic 500 -- reason codes: `self_update_disabled` (403),
   `not_a_git_checkout` (409), `dirty_working_tree` (409), `no_origin_remote` (409), `origin_mismatch` (403),
   `fetch_failed` (502), `not_fast_forward` (409), `reinstall_failed` (500). The frontend should surface

@@ -529,12 +529,37 @@ async function applyUpdate() {
     }
     if (res.ok && data && data.applied) {
       applied = true;
-      if (textEl) {
-        textEl.textContent = data.restart_requested
-          ? "Update applied — the dashboard is restarting, this page will reload shortly…"
-          : "Update applied — reloading…";
+      if (data.restart_requested) {
+        if (textEl) {
+          textEl.textContent = "Update applied — the dashboard is restarting, this page will reload shortly…";
+        }
+        waitForServerThenReload();
+      } else {
+        // Nothing restarted the running process (e.g. no systemd unit and
+        // no PID-file install detected -- see update.py's _restart). The
+        // new code is on disk, but THIS process is still the old one, so
+        // reloading now would hit that same old process and look like
+        // nothing happened (macOS install report: "Update now doesn't
+        // update"). Say so plainly instead of reloading into a no-op.
+        // state.updateApplying stays true (deliberately NOT reset to
+        // false here) so renderUpdateBanner's normal snapshot-driven
+        // render doesn't immediately overwrite this message -- the repo
+        // is no longer "behind" post-pull, so the next snapshot would
+        // otherwise hide the banner entirely. hideUpdateBanner (Dismiss)
+        // still works: it toggles the banner's class directly, it doesn't
+        // go through renderUpdateBanner.
+        if (goBtn) {
+          goBtn.disabled = true;
+          goBtn.textContent = "Applied — restart needed";
+        }
+        if (dismissBtn) dismissBtn.disabled = false;
+        if (textEl) {
+          const hint = (data.restart_hint && String(data.restart_hint)) || "restart the dashboard manually";
+          textEl.textContent =
+            `Update applied — the new code is on disk, but the running dashboard has not restarted ` +
+            `and is still on the old version. Run \`${hint}\` to restart it, then reload this page.`;
+        }
       }
-      waitForServerThenReload();
     } else {
       // On refusal, show the server's message verbatim -- see AGENTS.md
       // briefing: a dirty working tree and a disabled self-update need
