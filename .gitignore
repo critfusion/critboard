@@ -25,3 +25,6 @@ config/layout.json
 # machine-local: scan overrides for check-public.sh -- extra patterns for this machine
 # that should never be published. See scripts/check-public.local.example for format.
 scripts/check-public.local
+
+# config .bak files written by the settings API - machine-local, never shipped
+*.bak
