@@ -51,10 +51,6 @@ def empty_snapshot(host: str) -> dict[str, Any]:
                 "projected_month_usd": 0.0, "tokens_per_min_5m": 0.0,
             },
             "cache_hit_ratio_today": 0.0,
-            "block": {
-                "started_at": None, "ends_at": None, "tokens": 0,
-                "cost_usd": 0.0, "pct_elapsed": 0.0,
-            },
             "budget": {
                 "monthly_usd": 0.0, "spent_mtd_usd": 0.0, "pct": 0.0,
                 "projected_month_usd": 0.0,

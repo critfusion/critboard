@@ -727,7 +727,7 @@ def build_app() -> FastAPI:
 
     @app.post("/api/quota/refresh")
     async def post_quota_refresh():
-        block = (snap.snapshot.get("usage") or {}).get("block") or {}
+        block = quota.current_local_block(store)
         try:
             result = await quota.do_refresh(config, store, block, quota_refresh_state)
         except quota.RateLimited as exc:

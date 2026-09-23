@@ -182,6 +182,7 @@ if [ "$ground_truth_mode" -eq 1 ]; then
             needs-codex needs-grok needs-claude needs-opencode
             grok-review waiting-review
             bryan
+            security
         )
 
         declare -a repo_roots

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -266,6 +267,73 @@ async def test_claude_block_active_maps_pct_elapsed_to_minutes():
     assert result["unit"] == "minutes"
     assert result["resets_at"] == "2026-09-21T15:00:00Z"
     assert result["extra"]["tokens"] == 12345
+
+
+# -- current_local_block (feeds check_claude_block; moved here from the old
+# usage.block collector rollup when that was removed from /api/snapshot) ----
+
+
+def _usage_row(mid, dt, session="s1", cost_usd=0.01):
+    return dict(
+        message_id=mid, ts=dt.strftime("%Y-%m-%dT%H:%M:%SZ"), session_id=session,
+        project="p", project_path="/p", model="claude-opus-5", input=1, output=1,
+        cache_read=0, cache_write_5m=0, cache_write_1h=0, speed=None, is_sidechain=0,
+        web_searches=0, cost_usd=cost_usd,
+    )
+
+
+def test_current_local_block_pct_elapsed_never_exceeds_one_and_ends_at_is_future(tmp_store):
+    base = datetime(2026, 9, 18, 12, 0, 0, tzinfo=UTC)
+    fake_now = base + timedelta(hours=4, minutes=59)  # 1 minute before block end
+
+    tmp_store.insert_usage_events([_usage_row("m1", base)])
+    block = quota.current_local_block(tmp_store, now=fake_now)
+    assert block["active"] is True
+    assert block["pct_elapsed"] <= 1.0
+    ends_at = datetime.fromisoformat(block["ends_at"].replace("Z", "+00:00"))
+    assert ends_at > fake_now
+    assert block["started_at"] == base.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_current_local_block_reports_idle_state_not_stale_expired_block(tmp_store):
+    # Reproduces the exact live symptom: a block that expired hours ago with
+    # no further activity must never be reported as active with pct clamped
+    # at 1.0 -- it must honestly report "no active block".
+    base = datetime(2026, 9, 18, 12, 19, 52, tzinfo=UTC)
+    fake_now = base + timedelta(hours=7)  # ~2h past the block's 5h expiry
+
+    tmp_store.insert_usage_events([_usage_row("m1", base)])
+    block = quota.current_local_block(tmp_store, now=fake_now)
+    assert block == {
+        "started_at": None, "ends_at": None, "tokens": 0, "cost_usd": 0.0,
+        "pct_elapsed": 0.0, "active": False,
+    }
+
+
+def test_current_local_block_tokens_and_cost_count_only_current_block(tmp_store):
+    # A continuously-busy fleet: an earlier block's spend must not bleed into
+    # the current block's tokens/cost_usd after rollover.
+    base = datetime(2026, 9, 18, 0, 0, 0, tzinfo=UTC)
+    old_row = dict(
+        message_id="old1", ts=base.strftime("%Y-%m-%dT%H:%M:%SZ"), session_id="s1",
+        project="p", project_path="/p", model="claude-opus-5", input=100, output=100,
+        cache_read=0, cache_write_5m=0, cache_write_1h=0, speed=None, is_sidechain=0,
+        web_searches=0, cost_usd=9.99,
+    )
+    new_start = base + timedelta(hours=5)  # exactly the old block's end -> new block
+    new_row = dict(
+        message_id="new1", ts=new_start.strftime("%Y-%m-%dT%H:%M:%SZ"), session_id="s1",
+        project="p", project_path="/p", model="claude-opus-5", input=1, output=1,
+        cache_read=0, cache_write_5m=0, cache_write_1h=0, speed=None, is_sidechain=0,
+        web_searches=0, cost_usd=0.01,
+    )
+    tmp_store.insert_usage_events([old_row, new_row])
+    fake_now = new_start + timedelta(minutes=1)
+
+    block = quota.current_local_block(tmp_store, now=fake_now)
+    assert block["started_at"] == new_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert block["cost_usd"] == pytest.approx(0.01, abs=1e-9)
+    assert block["tokens"] == 2  # new_row's input(1) + output(1) only
 
 
 # -- check_kimi ---------------------------------------------------------

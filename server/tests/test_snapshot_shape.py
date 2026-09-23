@@ -100,7 +100,7 @@ def test_default_shapes_survive_total_outage(failing_client):
     assert doc["usage"]["totals"] == {}
     assert doc["usage"]["by_model"] == []
     assert doc["usage"]["by_host"] == []
-    assert "block" in doc["usage"]
+    assert "block" not in doc["usage"]
     assert doc["hosts"] == []
     assert doc["dispatch"]["routes"] == []
     assert isinstance(doc["system"], dict)

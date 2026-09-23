@@ -69,6 +69,7 @@ from datetime import UTC, datetime
 import httpx
 
 from .state import now_iso as _now_iso
+from .store import BLOCK_DURATION
 
 PROVIDER_NAMES: tuple[str, ...] = (
     "openrouter", "opencode_zen", "google", "claude", "kimi", "xai", "openai",
@@ -299,11 +300,45 @@ async def check_google(key: str | None) -> dict:
     return _result("google", ok=False, error=reason)
 
 
+def current_local_block(store, now: datetime | None = None) -> dict:
+    """Construct the currently-active 5h rate-limit block dict (started_at/
+    ends_at/tokens/cost_usd/pct_elapsed/active) from
+    store.current_usage_block_start(), for check_claude_block below. This is
+    the ccusage-style local reconstruction -- a block starts at the first
+    message after the previous one ended -- not a real value read from any
+    provider. It used to also feed the burn_gauge widget via /api/snapshot,
+    but that surfaced it as if it were the account's real rate-limit window,
+    which it cannot be (usage_events mixes every provider/host together);
+    the burn_gauge feature was removed, and check_claude_block is now this
+    function's only caller. `now` is overridable for tests; defaults to the
+    real current time."""
+    now = now or datetime.now(UTC)
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    block_start = store.current_usage_block_start(now_iso)
+    if not block_start:
+        return {
+            "started_at": None, "ends_at": None, "tokens": 0, "cost_usd": 0.0,
+            "pct_elapsed": 0.0, "active": False,
+        }
+    start_dt = datetime.fromisoformat(block_start.replace("Z", "+00:00"))
+    end_dt = start_dt + BLOCK_DURATION
+    block_totals = store.usage_totals(block_start)
+    elapsed = (now - start_dt).total_seconds()
+    pct = max(0.0, min(1.0, elapsed / BLOCK_DURATION.total_seconds()))
+    return {
+        "started_at": block_start,
+        "ends_at": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tokens": block_totals["total"],
+        "cost_usd": block_totals["cost_usd"],
+        "pct_elapsed": round(pct, 4),
+        "active": True,
+    }
+
+
 async def check_claude_block(block: dict | None) -> dict:
-    """Purely local: derived from store.current_usage_block_start(), the
-    same 5h rate-limit block the dashboard already tracks for the burn_gauge
-    widget (see collectors/usage.py). Never a network call, so this can
-    never fail -- ok is always True."""
+    """Purely local: derived from store.current_usage_block_start() via
+    current_local_block() above. Never a network call, so this can never
+    fail -- ok is always True."""
     block = block or {}
     if not block.get("active"):
         return _result(
@@ -669,6 +704,7 @@ __all__ = [
     "build_quota_response",
     "provider_availability_buckets",
     "check_claude_block",
+    "current_local_block",
     "check_google",
     "check_kimi",
     "check_opencode_zen",

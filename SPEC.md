@@ -158,10 +158,7 @@ Notes on real shapes observed on this host:
     "by_agent":   [{"agent_id":"…","window":"today","total":0,"cost_usd":0.0}],
     "timeline":   [{"t":"2026-09-18T12:00:00Z","input":0,"output":0,"cache_read":0,"cache_write":0,"cost_usd":0.0}], // hourly, last 48h
     "burn": {"usd_per_hour_1h": 0.0, "usd_per_hour_24h": 0.0, "projected_month_usd": 0.0, "tokens_per_min_5m": 0.0},
-    "cache_hit_ratio_today": 0.87,
-    "block": {                          // current 5-hour rate-limit block
-      "started_at":"…","ends_at":"…","tokens":0,"cost_usd":0.0,"pct_elapsed":0.4
-    }
+    "cache_hit_ratio_today": 0.87
   },
   "dispatch": {
     "routes": [{"label":"needs-codex","kind":"codex","paused":false,"precheck":null}],

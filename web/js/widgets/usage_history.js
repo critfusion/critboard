@@ -46,7 +46,7 @@ function storageKey(panelId) {
 
 function loadState(panelId) {
   const saved = loadJSON(storageKey(panelId), null);
-  const state = { window: "today", groupBy: "model", metric: "tokens" };
+  const state = { window: "today", groupBy: "model", metric: "spend" };
   if (saved && typeof saved === "object") {
     if (WINDOWS.some(([k]) => k === saved.window)) state.window = saved.window;
     if (GROUP_BYS.some(([k]) => k === saved.groupBy)) state.groupBy = saved.groupBy;
@@ -231,6 +231,16 @@ function drawChart(container, refs, json, state, hiddenKeys) {
   const buckets = json.buckets || [];
   const allSeries = json.series || [];
   const metric = state.metric;
+
+  if (metric === "tokens") {
+    noticeHost.appendChild(
+      el(
+        "div",
+        { style: "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;" },
+        "Token counts are dominated by cheap cache reads, so they do not track spend -- switch to SPEND to compare cost."
+      )
+    );
+  }
 
   if (!window.uPlot) {
     chartHost.appendChild(el("div", { class: "empty-state" }, "uPlot failed to load (web/vendor/uplot.js)."));

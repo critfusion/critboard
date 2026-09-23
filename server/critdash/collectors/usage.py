@@ -22,7 +22,7 @@ import os
 from datetime import UTC, datetime, timedelta
 
 from ..pricing import compute_cost_usd
-from ..store import BLOCK_DURATION, zero_fill_hourly
+from ..store import zero_fill_hourly
 from . import BaseCollector
 
 _PROJECT_DIR_CACHE: dict[str, str] = {}
@@ -347,10 +347,6 @@ class UsageCollector(BaseCollector):
     def _compute_rollups(self) -> dict:
         pricing = self._current_pricing()
         if self.store is None:
-            empty_block = {
-                "started_at": None, "ends_at": None, "tokens": 0,
-                "cost_usd": 0.0, "pct_elapsed": 0.0, "active": False,
-            }
             empty_budget = {
                 "monthly_usd": pricing.get("monthly_budget_usd", 0.0),
                 "spent_mtd_usd": 0.0, "pct": 0.0, "projected_month_usd": 0.0,
@@ -360,7 +356,7 @@ class UsageCollector(BaseCollector):
                 "by_provider": [],
                 "timeline": zero_fill_hourly([], datetime.now(UTC), 48),
                 "burn": {}, "cache_hit_ratio_today": 0.0,
-                "block": empty_block, "budget": empty_budget,
+                "budget": empty_budget,
             }
 
         windows = self._windows()
@@ -373,12 +369,12 @@ class UsageCollector(BaseCollector):
         # combine this host's usage_events (per-message, cost already stored)
         # with every other host's remote_usage_buckets (pre-aggregated token
         # counts, costed here from the live pricing table -- see module
-        # docstring). burn/cache_hit_ratio_today/block/budget stay LOCAL ONLY
-        # by design: a 5h rate-limit block and a monthly budget are properties
-        # of whichever Anthropic account plan a given host's Claude Code
-        # session uses, so summing them across hosts that may be on different
-        # accounts would conflate numbers that don't actually add up to one
-        # thing. Reported explicitly in the delivery report.
+        # docstring). burn/cache_hit_ratio_today/budget stay LOCAL ONLY by
+        # design: a monthly budget is a property of whichever Anthropic
+        # account plan a given host's Claude Code session uses, so summing it
+        # across hosts that may be on different accounts would conflate
+        # numbers that don't actually add up to one thing. Reported
+        # explicitly in the delivery report.
         for wname, since in windows.items():
             local_totals_row = self.store.usage_totals(since)
             remote_model_rows = self.store.remote_usage_grouped(("model",), since_iso=since)
@@ -435,27 +431,6 @@ class UsageCollector(BaseCollector):
         denom = today_totals_row["input"] + today_totals_row["cache_read"]
         cache_hit_ratio_today = round(today_totals_row["cache_read"] / denom, 4) if denom else 0.0
 
-        now_iso_s = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        block_start = self.store.current_usage_block_start(now_iso_s)
-        block = {
-            "started_at": None, "ends_at": None, "tokens": 0, "cost_usd": 0.0,
-            "pct_elapsed": 0.0, "active": False,
-        }
-        if block_start:
-            start_dt = datetime.fromisoformat(block_start.replace("Z", "+00:00"))
-            end_dt = start_dt + BLOCK_DURATION
-            block_totals = self.store.usage_totals(block_start)
-            elapsed = (now - start_dt).total_seconds()
-            pct = max(0.0, min(1.0, elapsed / BLOCK_DURATION.total_seconds()))
-            block = {
-                "started_at": block_start,
-                "ends_at": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "tokens": block_totals["total"],
-                "cost_usd": block_totals["cost_usd"],
-                "pct_elapsed": round(pct, 4),
-                "active": True,
-            }
-
         monthly_usd = pricing.get("monthly_budget_usd", 0.0)
         month_start = now.strftime("%Y-%m-01T00:00:00Z")
         spent_mtd_usd = round(self.store.usage_totals(month_start)["cost_usd"], 6)
@@ -497,7 +472,6 @@ class UsageCollector(BaseCollector):
             "timeline": timeline,
             "burn": burn,
             "cache_hit_ratio_today": cache_hit_ratio_today,
-            "block": block,
             "budget": budget,
         }
 
