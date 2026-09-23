@@ -534,8 +534,13 @@ it).
 **This writes to your beads database.** It is off by default
 (`bead_reply.enabled: false` in `config/sources.json`) precisely because of
 that -- turn it on only once you're sure which `beads_dir`/`beads_env` this
-install is pointed at (step 7 above). To enable it, set in
-`config/sources.json`:
+install is pointed at (step 7 above).
+
+Turn it on from the settings panel (gear icon, top right) -- the "Beads"
+section has an "Allow replying to beads" checkbox, plus read-only lines
+showing the actor and default route this install would use. Hand-editing
+`config/sources.json` is not required. If you'd rather edit the file
+directly, set:
 
 ```json
 "bead_reply": { "enabled": true }
@@ -543,11 +548,11 @@ install is pointed at (step 7 above). To enable it, set in
 
 (everything else -- `actor`, `routes`, `default_route` -- keeps its
 default; see `config/sources.example.json`'s `_readme` or `SPEC.md`'s
-"Bead reply" section for what each one does.) A hand edit here is picked up
-on the very next reply request, no restart needed. It also still requires
-`allow_config_writes` (default `true`) -- set that `false` instead, or in
-addition, if this dashboard is reachable by more than just you and you want
-it fully read-only from the browser.
+"Bead reply" section for what each one does.) Either way -- panel or hand
+edit -- the change is picked up on the very next reply request, no restart
+needed. It also still requires `allow_config_writes` (default `true`) --
+set that `false` instead, or in addition, if this dashboard is reachable by
+more than just you and you want it fully read-only from the browser.
 
 ## Running it day to day
 
@@ -650,8 +655,12 @@ if a key is missing entirely. Notable ones for a fresh install:
 
 - `bead_reply` -- off by default (`{"enabled": false, ...}`). Turns on a
   reply/send-back/close form in the bead popup for beads carrying a human
-  label. See "Replying to beads from the popup (optional)" below before
-  turning this on -- it writes to your beads database.
+  label. `GET /api/settings/bead-reply` / `POST /api/settings/bead-reply`
+  is the settings-panel-facing way to flip `enabled` without touching
+  `sources.json` by hand -- see `SPEC.md`. A hand edit is still picked up
+  on the very next request, no restart needed. See "Replying to beads from
+  the popup (optional)" below before turning this on -- it writes to your
+  beads database.
 
 `config/layout.json` is gitignored and personal by the same design -- see
 `config/layout.example.json` for the shipped panel layout. It is created on

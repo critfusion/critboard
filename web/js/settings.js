@@ -23,6 +23,7 @@ const LAYOUT_URL = "/api/config/layout";
 const THEME_URL = "/api/config/theme";
 const SUGGEST_URL = "/api/settings/suggest";
 const UPDATES_URL = "/api/settings/updates";
+const BEAD_REPLY_URL = "/api/settings/bead-reply";
 
 // Bumped on every openSettings() call. Async fetches started by an earlier
 // open (e.g. the user closed the dialog before a GET resolved, then
@@ -139,6 +140,10 @@ function freshState() {
     updatesDraft: null, // { check_enabled, check_interval_s, auto_apply } -- the only shape POST accepts
     updatesDraftOriginal: null,
     updatesStatus: null, // "ok" | "unavailable"
+    beadReplyInfo: null, // raw GET /api/settings/bead-reply response (actor/default_route/beads_configured + the 1 editable field)
+    beadReplyDraft: null, // { enabled } -- the only shape POST accepts
+    beadReplyDraftOriginal: null,
+    beadReplyStatus: null, // "ok" | "unavailable"
     snapshotSettings: null,
     saving: false,
     saveErrors: [], // strings shown in the shared error box
@@ -154,7 +159,8 @@ function isDirty() {
   return (
     JSON.stringify(S.layout) !== JSON.stringify(S.layoutOriginal) ||
     JSON.stringify(S.theme) !== JSON.stringify(S.themeOriginal) ||
-    (S.updatesDraft !== null && JSON.stringify(S.updatesDraft) !== JSON.stringify(S.updatesDraftOriginal))
+    (S.updatesDraft !== null && JSON.stringify(S.updatesDraft) !== JSON.stringify(S.updatesDraftOriginal)) ||
+    (S.beadReplyDraft !== null && JSON.stringify(S.beadReplyDraft) !== JSON.stringify(S.beadReplyDraftOriginal))
   );
 }
 
@@ -215,11 +221,12 @@ function handleDialogClose() {
 // ---------------- data loading ----------------
 
 async function loadAll(mySession) {
-  const [layoutRes, themeRes, suggestRes, updatesRes] = await Promise.all([
+  const [layoutRes, themeRes, suggestRes, updatesRes, beadReplyRes] = await Promise.all([
     fetchJSONSafe(LAYOUT_URL),
     fetchJSONSafe(THEME_URL),
     fetchJSONSafe(SUGGEST_URL),
     fetchJSONSafe(UPDATES_URL),
+    fetchJSONSafe(BEAD_REPLY_URL),
   ]);
   if (mySession !== session) return; // dialog closed/reopened while we were fetching
 
@@ -262,6 +269,18 @@ async function loadAll(mySession) {
     S.updatesDraft = null;
     S.updatesDraftOriginal = null;
     S.updatesStatus = "unavailable";
+  }
+
+  if (beadReplyRes.ok && beadReplyRes.data) {
+    S.beadReplyInfo = beadReplyRes.data;
+    S.beadReplyDraft = { enabled: !!beadReplyRes.data.enabled };
+    S.beadReplyDraftOriginal = deepClone(S.beadReplyDraft);
+    S.beadReplyStatus = "ok";
+  } else {
+    S.beadReplyInfo = null;
+    S.beadReplyDraft = null;
+    S.beadReplyDraftOriginal = null;
+    S.beadReplyStatus = "unavailable";
   }
 
   S.snapshotSettings = (window.__critdashData && window.__critdashData.settings) || null;
@@ -336,6 +355,7 @@ function renderShell(bodyEl) {
   const cadence = renderRefreshCadenceSection();
   if (cadence) form.appendChild(cadence);
   form.appendChild(renderUpdatesSection());
+  form.appendChild(renderBeadReplySection());
   form.appendChild(renderFooter());
   bodyEl.appendChild(form);
 }
@@ -779,6 +799,67 @@ function renderUpdatesSection() {
   return section("Updates", ...children);
 }
 
+// ---- 9. beads (bead popup reply: GET+POST /api/settings/bead-reply) ----
+// routes/actor/default_route stay hand-edit-JSON-only in config/sources.json
+// (this is a public repo -- a fork's route labels and actor name are
+// site-specific) -- this section only ever sends "enabled", same narrow
+// contract as the endpoint. Actor/default_route are shown read-only below
+// so the panel says what the popup will actually do.
+
+function renderBeadReplySection() {
+  if (S.beadReplyStatus === "unavailable" || !S.beadReplyDraft) {
+    return section(
+      "Beads",
+      degraded("Bead reply settings are not available yet (the /api/settings/bead-reply endpoint isn't live yet -- backend still landing it).")
+    );
+  }
+
+  const draft = S.beadReplyDraft;
+  const info = S.beadReplyInfo || {};
+  const children = [];
+
+  if (!info.beads_configured) {
+    children.push(degraded("beads is not configured on this host (no bd, or no workspace) -- this toggle has no effect until it is."));
+  }
+
+  // Allow replying to beads -> enabled. Styled the same warn box as the
+  // update checkboxes above: this is what lets the dashboard write to a
+  // shared beads database, not just an ordinary display preference, and
+  // anyone who can open this dashboard in a browser gets the same access
+  // while it's on.
+  const cb = el("input", { type: "checkbox", id: "settings-bead-reply-enabled" });
+  cb.checked = !!draft.enabled;
+  cb.addEventListener("change", () => {
+    draft.enabled = cb.checked;
+    updateFooter();
+  });
+  children.push(
+    el("div", { class: "settings-warn-box" }, [
+      el("div", { class: "settings-warn-box-icon", "aria-hidden": "true" }, "⚠"),
+      el("div", { class: "settings-warn-box-body" }, [
+        el("label", { class: "settings-checkbox-row settings-warn-label", for: "settings-bead-reply-enabled" }, [
+          cb,
+          el("span", {}, "Allow replying to beads"),
+        ]),
+        el(
+          "div",
+          { class: "settings-hint" },
+          "Lets this dashboard add a comment to a bead, send it back to an agent, or close it -- it writes to your beads database. Off by default. Anyone who can open this dashboard in a browser can do the same while this is on."
+        ),
+      ]),
+    ])
+  );
+
+  children.push(
+    el("div", { class: "table-card-fields", style: "margin-top: 4px;" }, [
+      statusRow("Actor", info.actor || "--"),
+      statusRow("Default route", info.default_route || "--"),
+    ])
+  );
+
+  return section("Beads", ...children);
+}
+
 // ---- footer: dirty indicator, error box, cancel/save ----
 
 function renderFooter() {
@@ -829,6 +910,7 @@ async function doSave(saveBtn, errorBox, confirmBox) {
   const layoutChanged = JSON.stringify(S.layout) !== JSON.stringify(S.layoutOriginal);
   const themeChanged = S.theme && JSON.stringify(S.theme) !== JSON.stringify(S.themeOriginal);
   const updatesChanged = S.updatesDraft && JSON.stringify(S.updatesDraft) !== JSON.stringify(S.updatesDraftOriginal);
+  const beadReplyChanged = S.beadReplyDraft && JSON.stringify(S.beadReplyDraft) !== JSON.stringify(S.beadReplyDraftOriginal);
 
   if (layoutChanged) {
     const res = await postJSONSafe(LAYOUT_URL, S.layout);
@@ -871,6 +953,22 @@ async function doSave(saveBtn, errorBox, confirmBox) {
       S.updatesDraftOriginal = deepClone(S.updatesDraft);
     } else {
       messages.push(`Updates: ${res.message}`);
+    }
+  }
+  if (beadReplyChanged) {
+    // The endpoint accepts exactly one key ("enabled") -- routes/actor/
+    // default_route stay hand-edit-JSON-only, even though they live in the
+    // same S.beadReplyInfo object for rendering.
+    const res = await postJSONSafe(BEAD_REPLY_URL, S.beadReplyDraft);
+    if (mySession !== session) return;
+    if (res.ok) {
+      if (res.data) {
+        S.beadReplyInfo = { ...(S.beadReplyInfo || {}), ...res.data };
+        if (typeof res.data.enabled === "boolean") S.beadReplyDraft.enabled = res.data.enabled;
+      }
+      S.beadReplyDraftOriginal = deepClone(S.beadReplyDraft);
+    } else {
+      messages.push(`Beads: ${res.message}`);
     }
   }
 

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from critdash import bead_reply as bead_reply_mod
 from critdash import config as config_mod
+from critdash import detect as detect_mod
 from critdash import main as main_mod
 from critdash.collectors.beads import validate_label
 
@@ -560,3 +561,146 @@ def test_reply_text_starting_with_dash_is_never_parsed_as_a_bd_flag(
     close_call = next(c for c in calls if c[:1] == ["close"])
     assert f"--reason={text}" in close_call
     assert text not in close_call  # never a standalone argv element
+
+
+# ---------------- GET/POST /api/settings/bead-reply -------------------------
+# The settings-panel toggle: "enabled" is the ONLY settable key here.
+# routes/actor/default_route stay hand-edit-JSON-only, but are reported back
+# read-only so the panel can show what the popup will actually do.
+
+
+def test_get_settings_bead_reply_shape(tmp_path, monkeypatch, fake_bd):
+    client, _ = _build_client(tmp_path, monkeypatch, fake_bd)  # bead_reply defaults to disabled
+    resp = client.get("/api/settings/bead-reply")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is False
+    assert body["actor"] == "critboard-human"  # no configured actor -> fixed fallback
+    assert body["default_route"] == "needs-claude"
+    assert body["beads_configured"] is True  # fake_bd resolves fine, beads_dir unset
+
+
+def test_post_settings_bead_reply_enabled_true_persists_to_disk_and_memory(tmp_path, monkeypatch, fake_bd):
+    client, config_dir = _build_client(tmp_path, monkeypatch, fake_bd)
+    resp = client.post("/api/settings/bead-reply", json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True
+
+    on_disk = json.loads((config_dir / "sources.json").read_text())
+    assert on_disk["bead_reply"]["enabled"] is True
+
+    # In-memory update: reflected on the very next request, no restart, no
+    # separate config.reload_sources() call needed.
+    assert client.get("/api/settings/bead-reply").json()["enabled"] is True
+    assert client.get("/api/snapshot").json()["settings"]["bead_reply_enabled"] is True
+
+
+def test_post_settings_bead_reply_enabled_false_persists(tmp_path, monkeypatch, fake_bd):
+    client, config_dir = _build_client(tmp_path, monkeypatch, fake_bd, extra_sources=_enabled_sources())
+    resp = client.post("/api/settings/bead-reply", json={"enabled": False})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+    on_disk = json.loads((config_dir / "sources.json").read_text())
+    assert on_disk["bead_reply"]["enabled"] is False
+    assert client.get("/api/snapshot").json()["settings"]["bead_reply_enabled"] is False
+
+
+def test_post_settings_bead_reply_rejects_non_boolean(tmp_path, monkeypatch, fake_bd):
+    client, config_dir = _build_client(tmp_path, monkeypatch, fake_bd)
+    before = (config_dir / "sources.json").read_bytes()
+    resp = client.post("/api/settings/bead-reply", json={"enabled": "yes"})
+    assert resp.status_code == 400
+    assert "errors" in resp.json()["detail"]
+    assert (config_dir / "sources.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("bad_body", [{"routes": []}, {"actor": "x"}, {"default_route": "y"}])
+def test_post_settings_bead_reply_rejects_unknown_keys_and_writes_nothing(
+    tmp_path, monkeypatch, fake_bd, bad_body
+):
+    client, config_dir = _build_client(tmp_path, monkeypatch, fake_bd)
+    before = (config_dir / "sources.json").read_bytes()
+    resp = client.post("/api/settings/bead-reply", json=bad_body)
+    assert resp.status_code == 400
+    assert "unknown key" in resp.json()["detail"]
+    assert (config_dir / "sources.json").read_bytes() == before
+
+
+def test_post_settings_bead_reply_refused_when_writes_disabled(tmp_path, monkeypatch, fake_bd):
+    client, config_dir = _build_client(
+        tmp_path, monkeypatch, fake_bd, extra_sources={"allow_config_writes": False}
+    )
+    before = (config_dir / "sources.json").read_bytes()
+    resp = client.post("/api/settings/bead-reply", json={"enabled": True})
+    assert resp.status_code == 403
+    assert "allow_config_writes" in resp.json()["detail"]
+    assert (config_dir / "sources.json").read_bytes() == before
+
+
+def test_post_settings_bead_reply_toggle_preserves_custom_routes_and_actor(tmp_path, monkeypatch, fake_bd):
+    # CRITICAL: bead_reply is an object that also holds actor/routes/
+    # default_route -- a naive `doc["bead_reply"] = {"enabled": ...}` would
+    # silently wipe these. Prove they survive a toggle both on disk and in
+    # what the endpoint itself reports back.
+    custom = {
+        "enabled": False,
+        "actor": "custom-actor",
+        "routes": [["mycompany", "needs-mycompany"]],
+        "default_route": "needs-mycompany",
+    }
+    client, config_dir = _build_client(tmp_path, monkeypatch, fake_bd, extra_sources={"bead_reply": custom})
+
+    resp = client.post("/api/settings/bead-reply", json={"enabled": True})
+    assert resp.status_code == 200
+
+    on_disk = json.loads((config_dir / "sources.json").read_text())
+    assert on_disk["bead_reply"] == {**custom, "enabled": True}
+
+    get_resp = client.get("/api/settings/bead-reply").json()
+    assert get_resp["actor"] == "custom-actor"
+    assert get_resp["default_route"] == "needs-mycompany"
+
+    # Toggle back off -- routes/actor/default_route still intact.
+    client.post("/api/settings/bead-reply", json={"enabled": False})
+    on_disk2 = json.loads((config_dir / "sources.json").read_text())
+    assert on_disk2["bead_reply"] == custom
+
+
+def test_post_settings_bead_reply_works_when_bead_reply_key_absent(tmp_path, monkeypatch, fake_bd):
+    config_dir = _write_isolated_config(tmp_path, fake_bd)
+    sources = json.loads((config_dir / "sources.json").read_text())
+    del sources["bead_reply"]
+    (config_dir / "sources.json").write_text(json.dumps(sources))
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    client = TestClient(main_mod.build_app())
+
+    resp = client.post("/api/settings/bead-reply", json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True
+    on_disk = json.loads((config_dir / "sources.json").read_text())
+    assert on_disk["bead_reply"] == {"enabled": True}
+
+
+def test_snapshot_bead_reply_enabled_flips_without_restart_via_settings_post(tmp_path, monkeypatch, fake_bd):
+    client, _ = _build_client(tmp_path, monkeypatch, fake_bd)
+    assert client.get("/api/snapshot").json()["settings"]["bead_reply_enabled"] is False
+    resp = client.post("/api/settings/bead-reply", json={"enabled": True})
+    assert resp.status_code == 200
+    assert client.get("/api/snapshot").json()["settings"]["bead_reply_enabled"] is True
+
+
+def test_get_settings_bead_reply_reports_beads_not_configured_when_bd_missing(tmp_path, monkeypatch):
+    # Neutralize detect.py's PATH/candidate-dir fallback scan -- without
+    # this, a dev host that genuinely has `bd` installed (this repo's own
+    # dev host does, at ~/.local/bin) would find it regardless of the
+    # nonsense bd_bin path below. See test_main_helpers.py's
+    # _no_binaries_anywhere for the same pattern.
+    monkeypatch.setattr(detect_mod, "BINARY_CANDIDATE_DIRS", [])
+    monkeypatch.setattr(detect_mod.shutil, "which", lambda name: None)
+    missing_bd = tmp_path / "no-such-bd-binary"
+    client, _ = _build_client(tmp_path, monkeypatch, missing_bd)
+    resp = client.get("/api/settings/bead-reply")
+    assert resp.status_code == 200
+    assert resp.json()["beads_configured"] is False

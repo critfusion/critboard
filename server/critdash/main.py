@@ -891,6 +891,106 @@ def build_app() -> FastAPI:
 
         return JSONResponse(result)
 
+    # Narrow settings-panel endpoint for bead_reply.enabled -- same pattern
+    # as /api/settings/updates above: the browser can only ever flip the one
+    # allow-listed boolean key, never routes/actor/default_route. Those stay
+    # hand-edit-JSON-only (this is a public repo -- a fork's route labels
+    # and actor name are site-specific, unlike a plain on/off switch) but
+    # are reported back here read-only so the settings panel can show what
+    # the popup will actually do.
+    _BEAD_REPLY_SETTINGS_KEYS = {"enabled"}
+
+    def _bead_reply_settings_view() -> dict:
+        cfg = bead_reply_mod.resolve_config(config.sources)
+        # Same availability check _apply_enablement used to decide whether
+        # to register the beads collector at all (not the scheduler's
+        # health_snapshot -- under a plain TestClient, and for a few
+        # seconds after a real startup, a healthy-but-never-polled
+        # collector still reports ok=False there, which would misreport a
+        # perfectly configured host as "beads not configured").
+        beads_issue = beads_availability_issue(_resolve_bd_bin(), beads_dir)
+        return {
+            "enabled": cfg["enabled"],
+            # No specific bead's human labels apply here -- resolve_actor's
+            # first-human-label branch never fires, so this reports exactly
+            # "configured actor, else the fixed fallback".
+            "actor": bead_reply_mod.resolve_actor(cfg, []),
+            "default_route": cfg["default_route"],
+            "beads_configured": beads_issue is None,
+        }
+
+    @app.get("/api/settings/bead-reply")
+    async def get_settings_bead_reply():
+        # Defect-1-style reload (see GET /api/settings/updates): a hand
+        # edit to bead_reply must show up here immediately, since this is
+        # what the settings panel reads to decide what to display.
+        config.reload_sources()
+        return JSONResponse(_bead_reply_settings_view())
+
+    @app.post("/api/settings/bead-reply")
+    async def post_settings_bead_reply(request: Request):
+        _check_config_writes_allowed(config)
+        body = await _read_config_body(request)
+
+        unknown = sorted(set(body) - _BEAD_REPLY_SETTINGS_KEYS)
+        if unknown:
+            raise HTTPException(
+                status_code=400, detail=f"unknown key(s) (not settable here): {', '.join(unknown)}"
+            )
+
+        errors = []
+        if "enabled" in body and not isinstance(body["enabled"], bool):
+            errors.append("'enabled' must be a boolean")
+        if errors:
+            raise HTTPException(status_code=400, detail={"errors": errors})
+
+        try:
+            with config.sources_path.open() as f:
+                doc = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            doc = dict(config.sources)
+
+        # Nested merge -- bead_reply is an object that also holds actor/
+        # routes/default_route. `doc["bead_reply"] = {"enabled": ...}` would
+        # silently wipe a hand-configured routes list; instead copy whatever
+        # is already there (or start from {} if the block is absent/not a
+        # dict) and only touch "enabled".
+        existing = doc.get("bead_reply")
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        if "enabled" in body:
+            merged["enabled"] = body["enabled"]
+        doc["bead_reply"] = merged
+
+        path = _safe_config_path(config.sources_path, config.config_dir)
+        try:
+            _atomic_write_json(path, doc)
+        except OSError:
+            logger.exception("failed to write config/sources.json")
+            raise HTTPException(status_code=500, detail="failed to write bead reply settings") from None
+
+        # Keep the running process in sync immediately, same reasoning as
+        # POST /api/settings/updates -- GET /api/bead/{id}/comments, POST
+        # /api/bead/{id}/reply, and the snapshot's settings.bead_reply_enabled
+        # (see _settings_block above) all call bead_reply_mod.resolve_config
+        # fresh on every request, so mutating config.sources in place here
+        # means the very next request picks up the change, no restart. Same
+        # existing-value-preserving merge as the on-disk write above.
+        in_memory = config.sources.get("bead_reply")
+        in_memory = dict(in_memory) if isinstance(in_memory, dict) else {}
+        if "enabled" in body:
+            in_memory["enabled"] = body["enabled"]
+        config.sources["bead_reply"] = in_memory
+
+        # Keep the running process in sync immediately, same reasoning as
+        # POST /api/settings/updates -- GET /api/bead/{id}/comments, POST
+        # /api/bead/{id}/reply, and the snapshot's settings.bead_reply_enabled
+        # (see _settings_block above) all call bead_reply_mod.resolve_config
+        # fresh on every request, so mutating config.sources in place here
+        # means the very next request picks up the change, no restart. Same
+        # existing-value-preserving merge as the on-disk write above.
+
+        return JSONResponse(_bead_reply_settings_view())
+
     # AI-provider "remaining quota" check (critdash/quota.py) -- manually
     # triggered only, per the hard rule in that module's docstring. GET never
     # makes a network call; POST does, at most once every

@@ -255,6 +255,21 @@ actor-naming convention (this repo ships no fleet-specific defaults).
     collector's `bd_shell_prefix` path. On success, triggers an immediate re-collect of the beads
     collector so the card updates without waiting for its normal 30s tick.
 
+- `GET`/`POST /api/settings/bead-reply` — the gear-menu Settings panel's toggle for
+  `bead_reply.enabled`, so turning this on/off never requires hand-editing `config/sources.json`.
+  `GET` -> `200 {"enabled": true|false, "actor": "...", "default_route": "...", "beads_configured":
+  true|false}`. `actor`/`default_route` are the EFFECTIVE values (`bead_reply.resolve_config` /
+  `resolve_actor`), reported read-only — `routes`/`actor`/`default_route` stay hand-edit-JSON-only
+  (this is a public repo; a fork's route labels and actor name are site-specific). `beads_configured`
+  is `false` when `bd` isn't installed or no workspace is set up on this host, so the panel can say so
+  instead of silently no-opping. `POST` accepts only `{"enabled": bool}` — any other key, or a
+  non-boolean `enabled`, is a `400`. The write is a nested merge into the `bead_reply` object (never
+  `doc["bead_reply"] = {...}`), so an existing `actor`/`routes`/`default_route` survive a toggle even
+  when `bead_reply` was previously absent from `config/sources.json` entirely. `403` while
+  `allow_config_writes` is false, same as the config POSTs above. Mutates `config.sources` in place on
+  success, so `GET /api/bead/{id}/comments`, `POST /api/bead/{id}/reply`, and `GET /api/snapshot`'s
+  `settings.bead_reply_enabled` all see the change on the very next request, no restart.
+
 ### Self-update (briefing Task 4 — frontend owns the UI, backend owns these two endpoints)
 
 Off by default: `POST /api/update/apply` always 403s with `reason: "self_update_disabled"` unless
