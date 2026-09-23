@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -99,6 +100,16 @@ class SnapshotStore:
         self.start_time = time.monotonic()
         self.snapshot: dict[str, Any] = empty_snapshot(host)
         self._subscribers: set[asyncio.Queue] = set()
+        self._settings_provider: Callable[[], dict] | None = None
+
+    def set_settings_provider(self, provider: Callable[[], dict]) -> None:
+        """Register the callable main.py uses to compute the "settings"
+        block (timezone, bead_reply_enabled, etc. -- derived from config,
+        which this store knows nothing about). Every "snapshot" SSE event
+        this store publishes -- the initial frame AND every periodic resync
+        frame -- must carry settings, so publish_resync() calls this too;
+        see main.py's _snapshot_with_settings/_settings_block."""
+        self._settings_provider = provider
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=100)
@@ -157,7 +168,17 @@ class SnapshotStore:
         return self.snapshot
 
     def publish_resync(self) -> None:
-        self._publish("snapshot", self.full_snapshot())
+        """Periodic (every 60s) re-broadcast of the full snapshot as a fresh
+        "snapshot" SSE event -- same event name and shape as the initial
+        stream frame. The frontend replaces state.data wholesale on this
+        event (see app.js), so it must carry "settings" too, or a running
+        page silently loses bead_reply_enabled/timezone/etc. a minute after
+        load. Copy the snapshot dict (as main.py's _snapshot_with_settings
+        does) so "settings" is never written into the stored snapshot."""
+        body = dict(self.full_snapshot())
+        if self._settings_provider is not None:
+            body["settings"] = self._settings_provider()
+        self._publish("snapshot", body)
 
     def publish_ping(self) -> None:
         self._publish("ping", {})

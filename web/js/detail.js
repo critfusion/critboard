@@ -89,7 +89,7 @@ function fetchBeadDetail(id, updatedAt) {
     })
     .then((body) => {
       beadDetailCache.set(id, { status: "ok", body, error: null, forUpdatedAt: updatedAt });
-      modal.refreshOpen();
+      modal.refreshOpen({ force: true }); // FORCED: this fetch resolving is new data for THIS modal
     })
     .catch((err) => {
       beadDetailCache.set(id, {
@@ -98,7 +98,7 @@ function fetchBeadDetail(id, updatedAt) {
         error: String((err && err.message) || err),
         forUpdatedAt: updatedAt,
       });
-      modal.refreshOpen();
+      modal.refreshOpen({ force: true }); // FORCED -- see the .then() above
     });
 }
 
@@ -251,7 +251,7 @@ function fetchBeadComments(id, updatedAt) {
     })
     .then((body) => {
       beadCommentsCache.set(id, { status: "ok", body, error: null, forUpdatedAt: updatedAt });
-      modal.refreshOpen();
+      modal.refreshOpen({ force: true }); // FORCED: this fetch resolving is new data for THIS modal
     })
     .catch((err) => {
       beadCommentsCache.set(id, {
@@ -260,7 +260,7 @@ function fetchBeadComments(id, updatedAt) {
         error: String((err && err.message) || err),
         forUpdatedAt: updatedAt,
       });
-      modal.refreshOpen();
+      modal.refreshOpen({ force: true }); // FORCED -- see the .then() above
     });
 }
 
@@ -347,6 +347,10 @@ function renderReplySection(bodyEl, id, data) {
     class: "settings-input bead-reply-textarea",
     rows: "4",
     placeholder: "Write a reply…",
+    // Stable key modal.js uses to reattach focus/caret to the equivalent
+    // new textarea after a FORCED rebuild (e.g. the "sending" state change
+    // just below) -- the old DOM node is gone every time renderBody() runs.
+    "data-focus-key": "bead-reply-textarea",
   });
   textarea.value = beadReplyDraft.get(id) || "";
   textarea.addEventListener("input", () => beadReplyDraft.set(id, textarea.value));
@@ -375,7 +379,10 @@ function renderReplySection(bodyEl, id, data) {
     s.sending = true;
     s.error = null;
     beadReplyState.set(id, s);
-    modal.refreshOpen();
+    // FORCED: the click that got us here already ended engagement with the
+    // textarea, and this reply-flow state change (disabling the buttons)
+    // must show up right away, not wait for the next passive tick.
+    modal.refreshOpen({ force: true });
 
     fetch(`/api/bead/${encodeURIComponent(id)}/reply`, {
       method: "POST",
@@ -402,12 +409,12 @@ function renderReplySection(bodyEl, id, data) {
           }
           const next = findNextHumanBead(window.__critdashData || data, id, humanLabels);
           beadReplyState.set(id, { sending: false, result: { message, next: next ? next.id : null }, error: null });
-          modal.refreshOpen();
+          modal.refreshOpen({ force: true }); // FORCED: send/close result must show immediately
         })
       )
       .catch((err) => {
         beadReplyState.set(id, { sending: false, result: null, error: String((err && err.message) || err) });
-        modal.refreshOpen();
+        modal.refreshOpen({ force: true }); // FORCED: error result must show immediately
       });
   }
 

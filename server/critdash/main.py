@@ -525,6 +525,7 @@ def build_app() -> FastAPI:
         store.close()
 
     app = FastAPI(title="CritBoard", lifespan=lifespan)
+    app.state.snap = snap  # exposed for tests: driving snap.publish_resync() directly
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:9999", "http://127.0.0.1:9999", "*"],
@@ -570,6 +571,16 @@ def build_app() -> FastAPI:
         body["settings"] = _settings_block()
         return body
 
+    # state.py doesn't know about config-derived settings, so hand it the
+    # callable: every "snapshot" SSE event the store publishes -- the
+    # initial /api/stream frame (still built via _snapshot_with_settings
+    # above) AND every periodic resync_loop frame (snap.publish_resync(),
+    # every 60s) -- then carries "settings" too. See BUG 1 in the fix
+    # history: resync frames used to replace the whole snapshot WITHOUT
+    # settings, so the frontend's reply box (and timezone) silently vanished
+    # about a minute after the page loaded.
+    snap.set_settings_provider(_settings_block)
+
     @app.get("/api/snapshot")
     async def get_snapshot():
         return JSONResponse(_snapshot_with_settings())
@@ -580,13 +591,13 @@ def build_app() -> FastAPI:
 
         async def event_gen():
             try:
-                # Only the initial frame on a fresh connection carries
-                # "settings" -- periodic resync frames (resync_loop, every
-                # 60s) call snap.publish_resync() directly and only patch
-                # collector-owned data, not config-file-derived state. A
-                # client picks up a settings change on its next reconnect or
-                # GET /api/snapshot, which is the same cadence a
-                # POST /api/config/* response already gives it.
+                # Every "snapshot" event -- this initial frame AND every
+                # periodic resync frame (resync_loop, every 60s, via
+                # snap.publish_resync()) -- replaces state.data wholesale on
+                # the frontend, so both must carry "settings". This frame is
+                # built directly via _snapshot_with_settings(); resync frames
+                # get "settings" from the provider registered above with
+                # snap.set_settings_provider(_settings_block).
                 yield _sse_format("snapshot", _snapshot_with_settings())
                 while True:
                     if await request.is_disconnected():

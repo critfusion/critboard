@@ -467,6 +467,26 @@ def test_snapshot_settings_exposes_bead_reply_enabled(tmp_path, monkeypatch, fak
     assert client2.get("/api/snapshot").json()["settings"]["bead_reply_enabled"] is True
 
 
+def test_resync_published_snapshot_event_includes_settings(tmp_path, monkeypatch, fake_bd):
+    # Regression for the vanishing reply box: resync_loop (main.py) calls
+    # snap.publish_resync() every 60s, publishing a fresh "snapshot" SSE
+    # event that the frontend uses to replace state.data wholesale (see
+    # app.js). That event must carry "settings" -- including
+    # bead_reply_enabled -- just like the initial /api/stream frame and
+    # GET /api/snapshot, or a page open for over a minute silently loses the
+    # reply box (renderReplySection bails on !data.settings.bead_reply_enabled).
+    client, _ = _build_client(tmp_path, monkeypatch, fake_bd, extra_sources=_enabled_sources())
+    snap = client.app.state.snap
+    queue = snap.subscribe()
+    try:
+        snap.publish_resync()
+        event, data = queue.get_nowait()
+        assert event == "snapshot"
+        assert data["settings"]["bead_reply_enabled"] is True
+    finally:
+        snap.unsubscribe(queue)
+
+
 # ---------------- required injection proof ---------------------------------
 
 

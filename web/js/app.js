@@ -307,6 +307,9 @@ function renderPanel(id, { useUpdate = false } = {}) {
 
 function renderAllPanels() {
   for (const id of Object.keys(state.panelEls)) renderPanel(id);
+  // PASSIVE: a periodic render pass, not the modal's own content changing --
+  // modal.js defers this while the user is engaged with the modal (typing,
+  // or a button held down) instead of rebuilding out from under them.
   modal.refreshOpen();
 }
 
@@ -317,7 +320,7 @@ function renderPanelsForKeys(keys) {
       renderPanel(id, { useUpdate: true });
     }
   }
-  modal.refreshOpen();
+  modal.refreshOpen(); // PASSIVE -- see renderAllPanels above
 }
 
 // ---------------- reload banner ----------------
