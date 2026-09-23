@@ -95,18 +95,30 @@ GitHub's unauthenticated rate limit is 60/hour, and an unchanged (304)
 response doesn't count against it, so this costs nothing. `update_repo`
 defaults to `"critfusion/critboard"` (public, so this works out of the box);
 if you forked this repo, point it at your own `"owner/repo"`, or set it to
-`""` to disable checking entirely. The settings panel (gear icon) can toggle
-checking on/off and the interval without editing `config/sources.json`
-directly (`GET`/`POST /api/settings/updates`).
+`""` to disable checking entirely.
 
 Applying an update is separate and **disabled by default**: it refuses a
 dirty working tree, refuses anything that is not a fast-forward, and only
-pulls from the configured origin. Enable manual apply (a button in the
-update banner) with `"allow_self_update": true` in `config/sources.json`.
-Enable fully automatic apply -- the periodic check pulls a fast-forward
-update on its own, no click -- with `"update_auto_apply": true` as well
-(still requires `allow_self_update: true`; every safety check above still
-applies).
+pulls from the configured origin.
+
+All four update settings are toggles in the settings panel (gear icon), so
+none of them need `config/sources.json` edited by hand
+(`GET`/`POST /api/settings/updates`):
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Check for updates automatically | `update_check_enabled` | on | The background check described above. Read-only and safe on its own. |
+| Check interval | `update_check_interval_s` | 900s | Clamped to a 300s floor. |
+| Allow self-update | `allow_self_update` | off | Lets the "Update now" button in the update banner pull and run new code. |
+| Apply updates automatically | `update_auto_apply` | off | The periodic check pulls a fast-forward update with no click. Requires "Allow self-update"; its checkbox stays disabled until that is on. |
+
+Editing `config/sources.json` by hand also works, and the running dashboard
+picks the change up on its next settings read -- no restart needed.
+
+After a successful pull the dashboard restarts itself: its systemd unit if
+it is running under one, otherwise the `install.sh --start` process. Where
+neither applies it says so plainly and prints the command to restart it --
+it will not claim an update took effect while still running the old code.
 
 ## Privacy
 

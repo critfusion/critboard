@@ -589,7 +589,10 @@ if a key is missing entirely. Notable ones for a fresh install:
   `collector_redetect_interval_s` (default 60s) -- installing `bd` later
   brings that panel alive with no restart. Force one on or off regardless of
   detection with e.g. `{"beads": {"enabled": false}}`.
-- `allow_self_update` -- `false` by default. See `SPEC.md` for the
+- `allow_self_update` -- `false` by default. Gates the "Update now" button
+  in the update banner, which pulls and runs new code from `update_repo`.
+  Settable from the settings panel (gear icon) as "Allow self-update" --
+  hand-editing this file is not required. See `SPEC.md` for the
   `/api/update/check` and `/api/update/apply` contract before turning this
   on. `update_auto_apply` (below) still requires this to be `true` -- it's
   an additional opt-in, not a replacement.
@@ -602,8 +605,10 @@ if a key is missing entirely. Notable ones for a fresh install:
   every `update_check_interval_s` seconds; it's read-only (a conditional
   GET, ETag-cached across restarts) and safe on its own. `GET
   /api/settings/updates` / `POST /api/settings/updates` is the
-  settings-panel-facing way to change this plus `check_interval_s` and
-  `auto_apply` without touching `sources.json` by hand -- see `SPEC.md`.
+  settings-panel-facing way to change this plus `check_interval_s`,
+  `allow_self_update` and `auto_apply` without touching `sources.json` by
+  hand -- see `SPEC.md`. A hand edit to `sources.json` is picked up on the
+  next settings read, so it does not need a restart either.
 - `update_check_interval_s` -- `900` (15 minutes) by default. GitHub's
   unauthenticated rate limit is 60 requests/hour; a 304 (unchanged) response
   doesn't count against it, which is what makes this interval free. The
@@ -612,6 +617,9 @@ if a key is missing entirely. Notable ones for a fresh install:
   pull a fast-forward update on its own, no click -- but only when
   `allow_self_update` is also `true`, and every existing apply safety check
   (clean tree, fast-forward only, configured origin only) still applies.
+  Settable from the settings panel as "Apply updates automatically"; that
+  checkbox stays disabled until "Allow self-update" is on, because on its
+  own this setting does nothing.
 
 `config/layout.json` is gitignored and personal by the same design -- see
 `config/layout.example.json` for the shipped panel layout. It is created on
