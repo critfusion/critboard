@@ -194,6 +194,227 @@ function renderBeadBody(bodyEl, id, data) {
       bodyEl.appendChild(el("div", { class: "detail-note" }, "No description, notes, design, or acceptance text on this bead."));
     }
   }
+
+  renderReplySection(bodyEl, id, data);
+}
+
+// ---------------- bead reply (send back / close, briefing feature) --------
+// Off by default (data.settings.bead_reply_enabled, see main.py's
+// _settings_block) -- only rendered at all when that flag is true AND the
+// server says the bead currently carries at least one configured human
+// label (GET /api/bead/{id}/comments' human_labels_present -- the server
+// owns the label-matching/route logic so this module never duplicates it).
+
+const beadCommentsCache = new Map(); // id -> { status, body, error, forUpdatedAt }
+const beadReplyDraft = new Map(); // id -> in-progress reply text, survives modal rebuilds
+const beadReplyState = new Map(); // id -> { sending, result: {message,next}|null, error }
+
+let humanLabelsCache = null;
+let humanLabelsPromise = null;
+
+// Only needed for the post-success "Next" button (which open-labelled bead
+// to jump to) -- config/layout.json's human_labels isn't part of the
+// snapshot, so this is its own small, cached fetch (same pattern as
+// fetchBeadDetail/fetchBeadComments below), not a duplication of anything
+// already loaded elsewhere.
+function ensureHumanLabels() {
+  if (humanLabelsCache !== null) return Promise.resolve(humanLabelsCache);
+  if (!humanLabelsPromise) {
+    humanLabelsPromise = fetch("/api/config/layout", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((doc) => {
+        humanLabelsCache = Array.isArray(doc?.human_labels) ? doc.human_labels : [];
+        return humanLabelsCache;
+      })
+      .catch(() => {
+        humanLabelsCache = [];
+        return humanLabelsCache;
+      });
+  }
+  return humanLabelsPromise;
+}
+
+function fetchBeadComments(id, updatedAt) {
+  const entry = beadCommentsCache.get(id);
+  if (entry && entry.status === "loading") return;
+  if (entry && (entry.status === "ok" || entry.status === "error") && entry.forUpdatedAt === updatedAt) return;
+
+  beadCommentsCache.set(id, { status: "loading", body: null, error: null, forUpdatedAt: updatedAt });
+  fetch(`/api/bead/${encodeURIComponent(id)}/comments`, { cache: "no-store" })
+    .then(async (res) => {
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg = payload?.detail?.message || payload?.detail || `HTTP ${res.status}`;
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      }
+      return payload;
+    })
+    .then((body) => {
+      beadCommentsCache.set(id, { status: "ok", body, error: null, forUpdatedAt: updatedAt });
+      modal.refreshOpen();
+    })
+    .catch((err) => {
+      beadCommentsCache.set(id, {
+        status: "error",
+        body: null,
+        error: String((err && err.message) || err),
+        forUpdatedAt: updatedAt,
+      });
+      modal.refreshOpen();
+    });
+}
+
+// "Next" jumps to the next OPEN, human-labelled bead after this one, in the
+// order the snapshot's beads.items array already lists them (top to bottom
+// -- the owner works the queue one item at a time), wrapping around once.
+function findNextHumanBead(data, currentId, humanLabels) {
+  const items = data?.beads?.items || [];
+  const isHumanOpen = (b) => b.status === "open" && (b.labels || []).some((l) => humanLabels.includes(l));
+  const idx = items.findIndex((b) => b.id === currentId);
+  const ordered = idx >= 0 ? items.slice(idx + 1).concat(items.slice(0, idx + 1)) : items;
+  return ordered.find((b) => b.id !== currentId && isHumanOpen(b)) || null;
+}
+
+function commentNode(c) {
+  const row = el("div", { class: "bead-reply-comment" });
+  row.appendChild(
+    el("div", { class: "bead-reply-comment-meta" }, [
+      el("span", { class: "mono" }, c.author || "?"),
+      el("span", { class: "faint" }, ` · ${fmtRelTime(c.created_at)}`),
+    ])
+  );
+  // Plain text node (via el()'s string-child path, never innerHTML) -- a
+  // comment body is arbitrary text, not markdown.
+  row.appendChild(el("div", { class: "bead-reply-comment-body" }, c.text || ""));
+  return row;
+}
+
+function renderReplySection(bodyEl, id, data) {
+  if (!data?.settings?.bead_reply_enabled) return;
+
+  const state = beadReplyState.get(id) || { sending: false, result: null, error: null };
+  beadReplyState.set(id, state);
+
+  // Once a send-back/close has succeeded, always show the confirmation --
+  // even though the very write we just made may have removed the human
+  // label the section below normally gates on (send_back's whole job is to
+  // remove it), and a live SSE patch can re-render this modal seconds
+  // later with that now-changed bead. Skip re-fetching comments too, since
+  // the confirmation replaces that view entirely.
+  if (state.result) {
+    const wrap = el("div", { class: "bead-reply" });
+    wrap.appendChild(el("div", { class: "bead-reply-result" }, state.result.message));
+    if (state.result.next) {
+      const nextBtn = el("button", { type: "button", class: "settings-btn-secondary" }, "Next");
+      nextBtn.addEventListener("click", () => openBeadModal(state.result.next, window.__critdashData || data, null));
+      wrap.appendChild(nextBtn);
+    }
+    bodyEl.appendChild(section("Reply", wrap));
+    return;
+  }
+
+  const bead = (data?.beads?.items || []).find((b) => b.id === id) || null;
+  fetchBeadComments(id, bead?.updated_at);
+  const entry = beadCommentsCache.get(id);
+  if (!entry) return;
+
+  if (entry.status === "loading") {
+    bodyEl.appendChild(section("Comments", el("div", { class: "detail-loading" }, "Loading comments…")));
+    return;
+  }
+  if (entry.status === "error") {
+    bodyEl.appendChild(
+      section("Comments", el("div", { class: "detail-note-warn" }, `Could not load comments: ${entry.error}`))
+    );
+    return;
+  }
+
+  const info = entry.body || {};
+  const humanPresent = info.human_labels_present || [];
+  if (humanPresent.length === 0) return; // not human-owned -- no reply UI
+
+  const wrap = el("div", { class: "bead-reply" });
+  const comments = info.comments || [];
+  wrap.appendChild(
+    el(
+      "div",
+      { class: "bead-reply-comments" },
+      comments.length ? comments.map(commentNode) : [el("div", { class: "detail-note" }, "No comments yet.")]
+    )
+  );
+
+  const textarea = el("textarea", {
+    class: "settings-input bead-reply-textarea",
+    rows: "4",
+    placeholder: "Write a reply…",
+  });
+  textarea.value = beadReplyDraft.get(id) || "";
+  textarea.addEventListener("input", () => beadReplyDraft.set(id, textarea.value));
+  wrap.appendChild(textarea);
+
+  wrap.appendChild(
+    el("div", { class: "detail-note bead-reply-route" }, `Send back will route to: ${info.route_preview || "?"}`)
+  );
+
+  if (state.error) wrap.appendChild(el("div", { class: "detail-note-warn" }, state.error));
+
+  const sendBtn = el(
+    "button",
+    { type: "button", class: "settings-btn-primary", disabled: state.sending ? "" : null },
+    "Send back"
+  );
+  const closeBtn = el(
+    "button",
+    { type: "button", class: "settings-btn-secondary", disabled: state.sending ? "" : null },
+    "Close bead"
+  );
+  wrap.appendChild(el("div", { class: "bead-reply-actions" }, [sendBtn, closeBtn]));
+
+  function submit(action) {
+    const s = beadReplyState.get(id) || {};
+    s.sending = true;
+    s.error = null;
+    beadReplyState.set(id, s);
+    modal.refreshOpen();
+
+    fetch(`/api/bead/${encodeURIComponent(id)}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, text: beadReplyDraft.get(id) || "" }),
+    })
+      .then(async (res) => {
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          const msg = payload?.detail?.message || payload?.detail || `HTTP ${res.status}`;
+          throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+        }
+        return payload;
+      })
+      .then((payload) =>
+        ensureHumanLabels().then((humanLabels) => {
+          beadReplyDraft.delete(id);
+          let message;
+          if (action === "send_back") {
+            const removed = payload.removed_labels || [];
+            message = `Sent back as ${payload.route} — removed label${removed.length === 1 ? "" : "s"} ${removed.join(", ") || "(none)"}.`;
+          } else {
+            message = `Closed${payload.comment_added ? " — your reply was added as a comment" : ""}.`;
+          }
+          const next = findNextHumanBead(window.__critdashData || data, id, humanLabels);
+          beadReplyState.set(id, { sending: false, result: { message, next: next ? next.id : null }, error: null });
+          modal.refreshOpen();
+        })
+      )
+      .catch((err) => {
+        beadReplyState.set(id, { sending: false, result: null, error: String((err && err.message) || err) });
+        modal.refreshOpen();
+      });
+  }
+
+  sendBtn.addEventListener("click", () => submit("send_back"));
+  closeBtn.addEventListener("click", () => submit("close"));
+
+  bodyEl.appendChild(section("Reply", wrap));
 }
 
 export function openBeadModal(idOrBead, data, triggerEl) {

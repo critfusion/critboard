@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import bead_reply as bead_reply_mod
 from . import detect, quota
 from . import settings as settings_mod
 from . import update as update_mod
@@ -29,6 +30,7 @@ from .collectors.beads import (
     BeadsCollector,
     fetch_bead_detail,
     validate_bead_id,
+    validate_label,
 )
 from .collectors.beads import availability_issue as beads_availability_issue
 from .collectors.dispatch import DispatchCollector
@@ -85,6 +87,27 @@ def _read_layout_timezone(config: Config) -> str:
     if isinstance(tz, str) and is_valid_timezone(tz):
         return tz
     return DEFAULT_TZ
+
+
+def _read_human_labels(config: Config) -> list[str]:
+    """config/layout.json's "human_labels" (the bead labels that mean "a
+    person owns this, not the fleet") -- read fresh on every call, same
+    reasoning as _read_layout_timezone: a hand edit or a settings-panel save
+    must take effect on the very next bead-reply request, no restart. Any
+    problem reading/parsing the file, or a malformed value, is treated as
+    "no human labels configured" (empty list) rather than 500ing -- this
+    gates a feature that is off by default anyway (see bead_reply.py)."""
+    try:
+        with config.layout_path.open() as f:
+            doc = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(doc, dict):
+        return []
+    labels = doc.get("human_labels")
+    if not isinstance(labels, list):
+        return []
+    return [label.strip() for label in labels if isinstance(label, str) and label.strip()]
 
 
 async def _read_config_body(request: Request) -> dict:
@@ -532,6 +555,14 @@ def build_app() -> FastAPI:
             "timezone": _read_layout_timezone(config),
             "allow_config_writes": bool(config.sources.get("allow_config_writes", True)),
             "refresh_preset": config.sources.get("refresh_preset", "normal"),
+            # bead_reply (bead popup reply/send-back/close, off by default --
+            # see bead_reply.py): the frontend needs this one flag to decide
+            # whether to fetch comments / show the reply form at all, so it
+            # doesn't hit a 403 on every bead popup open on an install that
+            # never enabled the feature.
+            "bead_reply_enabled": bool(
+                bead_reply_mod.resolve_config(config.sources)["enabled"]
+            ),
         }
 
     def _snapshot_with_settings() -> dict:
@@ -712,6 +743,153 @@ def build_app() -> FastAPI:
 
         _bead_detail_cache[bead_id] = (now + _BEAD_DETAIL_TTL_S, detail, 200)
         return JSONResponse(detail)
+
+    # bead reply (bead popup: read comments, send back to an agent, or
+    # close -- see bead_reply.py's module docstring for the full contract).
+    # Off by default (config/sources.json "bead_reply": {"enabled": false}),
+    # and every write additionally requires allow_config_writes -- same
+    # reasoning as POST /api/config/layout|theme.
+
+    def _bead_reply_disabled_error() -> HTTPException:
+        return HTTPException(
+            status_code=403,
+            detail={
+                "reason": "bead_reply_disabled",
+                "message": "bead_reply is disabled (set bead_reply.enabled=true in config/sources.json)",
+            },
+        )
+
+    def _bead_reply_error(exc: bead_reply_mod.BeadReplyError) -> HTTPException:
+        return HTTPException(
+            status_code=exc.status_code, detail={"reason": exc.reason, "message": exc.message}
+        )
+
+    @app.get("/api/bead/{bead_id}/comments")
+    async def get_bead_comments(bead_id: str):
+        # Defect-1-style reload (see POST /api/update/apply): a hand edit to
+        # bead_reply.enabled must take effect on the very next request.
+        config.reload_sources()
+        cfg = bead_reply_mod.resolve_config(config.sources)
+        if not cfg["enabled"]:
+            raise _bead_reply_disabled_error()
+        if not validate_bead_id(bead_id):
+            raise HTTPException(status_code=400, detail=f"invalid bead id: {bead_id!r}")
+
+        human_labels = _read_human_labels(config)
+        actor = bead_reply_mod.resolve_actor(cfg, human_labels)
+        beads_env = config.expand("beads_env")
+        beads_dir = config.expand("beads_dir")
+        bd_bin = _resolve_bd_bin()
+
+        try:
+            raw = await bead_reply_mod.fetch_bead_raw(bd_bin, beads_env, actor, beads_dir, bead_id)
+            comments = await bead_reply_mod.fetch_bead_comments(
+                bd_bin, beads_env, actor, beads_dir, bead_id
+            )
+        except bead_reply_mod.BeadReplyError as exc:
+            raise _bead_reply_error(exc) from exc
+
+        labels = raw.get("labels") or []
+        present = [label for label in human_labels if label in labels]
+        route = bead_reply_mod.choose_route(
+            raw.get("created_by") or "", cfg["routes"], cfg["default_route"]
+        )
+        return JSONResponse(
+            {
+                "comments": comments,
+                "status": raw.get("status"),
+                "labels": labels,
+                "human_labels_present": present,
+                "route_preview": route,
+            }
+        )
+
+    @app.post("/api/bead/{bead_id}/reply")
+    async def post_bead_reply(bead_id: str, request: Request):
+        _check_config_writes_allowed(config)
+        # Same reload-before-write as every other config-gated POST.
+        config.reload_sources()
+        cfg = bead_reply_mod.resolve_config(config.sources)
+        if not cfg["enabled"]:
+            raise _bead_reply_disabled_error()
+        if not validate_bead_id(bead_id):
+            raise HTTPException(status_code=400, detail=f"invalid bead id: {bead_id!r}")
+
+        body = await _read_config_body(request)
+        action = body.get("action")
+        if action not in ("send_back", "close"):
+            raise HTTPException(
+                status_code=400, detail="'action' must be 'send_back' or 'close'"
+            )
+        text = body.get("text", "")
+        if not isinstance(text, str):
+            raise HTTPException(status_code=400, detail="'text' must be a string")
+        if len(text) > bead_reply_mod.MAX_TEXT_LEN:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'text' too long (max {bead_reply_mod.MAX_TEXT_LEN} characters)",
+            )
+        text = text.strip()
+        if action == "send_back" and not text:
+            raise HTTPException(
+                status_code=400, detail="'text' is required (non-empty) to send a bead back"
+            )
+
+        human_labels = _read_human_labels(config)
+        actor = bead_reply_mod.resolve_actor(cfg, human_labels)
+        beads_env = config.expand("beads_env")
+        beads_dir = config.expand("beads_dir")
+        bd_bin = _resolve_bd_bin()
+
+        try:
+            raw = await bead_reply_mod.fetch_bead_raw(bd_bin, beads_env, actor, beads_dir, bead_id)
+        except bead_reply_mod.BeadReplyError as exc:
+            raise _bead_reply_error(exc) from exc
+
+        labels = raw.get("labels") or []
+        present = [label for label in human_labels if label in labels]
+        if raw.get("status") != "open" or not present:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "reason": "not_actionable",
+                    "message": (
+                        "bead is not open, or carries no human label -- refusing to avoid "
+                        "reopening or relabelling a bead an agent already took"
+                    ),
+                },
+            )
+
+        try:
+            if action == "send_back":
+                route = bead_reply_mod.choose_route(
+                    raw.get("created_by") or "", cfg["routes"], cfg["default_route"]
+                )
+                for label in [*present, route]:
+                    if not validate_label(label):
+                        raise HTTPException(
+                            status_code=400, detail=f"invalid label: {label!r}"
+                        )
+                result = await bead_reply_mod.do_send_back(
+                    bd_bin, beads_env, actor, beads_dir, bead_id, text, present, route
+                )
+            else:
+                result = await bead_reply_mod.do_close(
+                    bd_bin, beads_env, actor, beads_dir, bead_id, text
+                )
+        except bead_reply_mod.BeadReplyError as exc:
+            raise _bead_reply_error(exc) from exc
+
+        # Immediate re-collect so the bead card reflects the write right
+        # away, instead of waiting for the beads collector's own 30s tick.
+        try:
+            await scheduler.run_once("beads")
+        except Exception:  # noqa: BLE001 - the write already succeeded; a
+            # failed/inactive beads collector must not turn a successful
+            # bd write into a 500. The card still updates on the next tick.
+            logger.warning("bead reply: post-write beads re-collect failed", exc_info=True)
+
+        return JSONResponse(result)
 
     # AI-provider "remaining quota" check (critdash/quota.py) -- manually
     # triggered only, per the hard rule in that module's docstring. GET never

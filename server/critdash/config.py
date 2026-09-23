@@ -56,6 +56,28 @@ DEFAULT_SOURCES = {
     # bd_shell_prefix/validate_beads_dir.
     "beads_dir": "",
     "beads_actor": "critdash",
+    # Bead popup reply/send-back/close (server/critdash/bead_reply.py). Off
+    # by default: "enabled" must be set true to turn on GET
+    # /api/bead/{id}/comments and POST /api/bead/{id}/reply at all. "actor"
+    # is the BEADS_ACTOR a reply write runs as -- empty means "use the first
+    # entry of config/layout.json's human_labels, else 'critboard-human'".
+    # "routes" is an ordered list of [substring, route_label] pairs matched
+    # case-insensitively against a bead's `created_by`, first match wins;
+    # "default_route" is used when nothing matches. See
+    # config/sources.example.json's _readme for the full contract.
+    "bead_reply": {
+        "enabled": False,
+        "actor": "",
+        "routes": [
+            ["claude", "needs-claude"],
+            ["codex", "needs-codex"],
+            ["grok", "needs-grok"],
+            ["cursor", "needs-cursor"],
+            ["kimi", "needs-kimi"],
+            ["opencode", "needs-opencode"],
+        ],
+        "default_route": "needs-claude",
+    },
     "bd_bin": "~/.local/bin/bd",
     "herdr_bin": "herdr",
     "claude_projects_dir": "~/.claude/projects",

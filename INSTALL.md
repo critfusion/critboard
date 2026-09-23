@@ -522,6 +522,33 @@ leaves `beads_dir` unset and the `beads` panel inactive, and every other
 panel is unaffected. That is a normal, valid outcome -- not a failure to
 fix by guessing.
 
+### 8. Replying to beads from the popup (optional)
+
+With beads set up, the bead detail popup can optionally grow a reply form
+for beads carrying a "human" label (`config/layout.json`'s `human_labels`):
+read its comments, then **Send back** (adds your reply as a comment,
+relabels the bead so a fleet dispatcher picks it up again, leaves it open
+and unassigned) or **Close** (adds your reply as a comment, then closes
+it).
+
+**This writes to your beads database.** It is off by default
+(`bead_reply.enabled: false` in `config/sources.json`) precisely because of
+that -- turn it on only once you're sure which `beads_dir`/`beads_env` this
+install is pointed at (step 7 above). To enable it, set in
+`config/sources.json`:
+
+```json
+"bead_reply": { "enabled": true }
+```
+
+(everything else -- `actor`, `routes`, `default_route` -- keeps its
+default; see `config/sources.example.json`'s `_readme` or `SPEC.md`'s
+"Bead reply" section for what each one does.) A hand edit here is picked up
+on the very next reply request, no restart needed. It also still requires
+`allow_config_writes` (default `true`) -- set that `false` instead, or in
+addition, if this dashboard is reachable by more than just you and you want
+it fully read-only from the browser.
+
 ## Running it day to day
 
 | Command | What it does |
@@ -620,6 +647,11 @@ if a key is missing entirely. Notable ones for a fresh install:
   Settable from the settings panel as "Apply updates automatically"; that
   checkbox stays disabled until "Allow self-update" is on, because on its
   own this setting does nothing.
+
+- `bead_reply` -- off by default (`{"enabled": false, ...}`). Turns on a
+  reply/send-back/close form in the bead popup for beads carrying a human
+  label. See "Replying to beads from the popup (optional)" below before
+  turning this on -- it writes to your beads database.
 
 `config/layout.json` is gitignored and personal by the same design -- see
 `config/layout.example.json` for the shipped panel layout. It is created on

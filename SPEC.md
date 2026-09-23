@@ -8,7 +8,10 @@ served at http://<host>:9999/ (127.0.0.1 by default — see config/sources.json:
 1. **Zero token cost at runtime.** The dashboard makes NO LLM API calls, ever. It is pure
    subprocess + file parsing + SQLite. No `claude`, no `anthropic`, no network to any model API.
 2. **Read-only by default.** Collectors never mutate beads, git state, or agent panes.
-   Any future write action goes behind an explicit opt-in flag (not in v1).
+   Any write action goes behind an explicit opt-in flag. The one exception is the bead-reply
+   feature (`POST /api/bead/{id}/reply` — see below): off by default (`bead_reply.enabled: false`
+   in `config/sources.json`), and even when enabled it only ever runs when a person clicks
+   Send back/Close in the bead popup — nothing in this codebase calls it on its own.
 3. **Layout is data, not code.** Panels are declared in `config/layout.json`. Changing the
    dashboard shape must require editing JSON only — no JS edits, no rebuild.
 4. **Degrade gracefully.** Any collector that fails marks itself `stale` with an error string
@@ -196,6 +199,61 @@ Notes on real shapes observed on this host:
   `build` is a content hash of `web/`+`config/` (existing "new version, reload" banner signal, unrelated to git).
   `commit`/`branch`/`dirty` are this checkout's git identity, all `null` outside a git checkout (e.g. a tarball
   install) -- never an error for that case.
+
+### Bead reply — send back / close (off by default)
+
+Lets the bead popup add a reply comment to a human-labelled bead and either **send it back** (wake
+an agent) or **close it**. Off by default: `config/sources.json`'s `bead_reply.enabled` (default
+`false`) gates both endpoints below with a `403 {"detail": {"reason": "bead_reply_disabled", ...}}`
+— when disabled, neither endpoint ever runs a `bd` command. The write endpoint additionally
+requires `allow_config_writes` (same flag POST `/api/config/layout|theme` use) — same reasoning:
+a dashboard bound beyond 127.0.0.1 must be able to be made fully read-only. `GET /api/snapshot`'s
+`settings.bead_reply_enabled` tells the frontend whether to show the reply UI at all.
+
+Config shape (`config/sources.json`, see `config/sources.example.json`'s `_readme` for the prose):
+
+```json
+"bead_reply": {
+  "enabled": false,
+  "actor": "",
+  "routes": [["claude", "needs-claude"], ["codex", "needs-codex"], ["grok", "needs-grok"]],
+  "default_route": "needs-claude"
+}
+```
+
+`actor` is the `BEADS_ACTOR` a write runs as (empty → first entry of `config/layout.json`'s
+`human_labels`, else `"critboard-human"`). `routes` is an ordered `[substring, route_label]` list
+matched case-insensitively against a bead's `created_by`, first match wins; `default_route` is used
+when nothing matches — this is how SEND BACK decides which `needs-*` label to add for a fleet's own
+actor-naming convention (this repo ships no fleet-specific defaults).
+
+- `GET /api/bead/{id}/comments` -> `200 {"comments": [{"id","author","text","created_at"}], "status": "open", "labels": [...], "human_labels_present": [...], "route_preview": "needs-claude"}`.
+  `human_labels_present` is the subset of `config/layout.json`'s `human_labels` that this bead
+  currently carries (empty means "not human-owned" — the frontend hides the reply form).
+  `route_preview` is the label SEND BACK would add right now, computed server-side so the frontend
+  never duplicates the routing logic. `400` on a malformed bead id, `403` while disabled.
+
+- `POST /api/bead/{id}/reply` — body `{"action": "send_back"|"close", "text": "..."}`.
+  Before acting, the bead is always re-fetched fresh via `bd show` (never the cached snapshot) and
+  the write is refused with `409 {"detail": {"reason": "not_actionable", ...}}` unless it is
+  currently `open` and carries at least one human label — this stops a stale popup from
+  reopening/relabelling a bead an agent already took.
+  - `send_back`: `text` is required (400 if empty after stripping). Adds `text` as a comment, then
+    removes every human label present, adds the chosen route label, clears the assignee, and sets
+    status to `open` — all in one `bd update` call. Returns
+    `{"action":"send_back","route":"needs-claude","removed_labels":[...],"assignee_cleared":true,"status":"open"}`.
+  - `close`: `text` is optional — added as a comment first if non-empty, then `bd close -r <text or
+    a fixed default reason>`. Returns
+    `{"action":"close","comment_added":true|false,"reason":"...","status":"closed"}`.
+  - `400` on a malformed bead id, empty `text` on `send_back`, or an unknown `action`. `403` while
+    disabled or while `allow_config_writes` is false. `409` per the not-open/no-human-label rule
+    above. `502` if the underlying `bd` command fails.
+  - Security: the reply text, bead id, and every label are validated (id/label against a strict
+    `[A-Za-z0-9_.-]` pattern) and travel to `bd` as an argv list via
+    `asyncio.create_subprocess_exec` (`server/critdash/collectors/beads.py`'s `bd_exec_argv`/
+    `bd_exec_env`/`run_bd_exec`) — never interpolated into a shell string, unlike the read-only
+    collector's `bd_shell_prefix` path. On success, triggers an immediate re-collect of the beads
+    collector so the card updates without waiting for its normal 30s tick.
 
 ### Self-update (briefing Task 4 — frontend owns the UI, backend owns these two endpoints)
 

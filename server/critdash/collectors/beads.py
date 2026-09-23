@@ -95,6 +95,83 @@ def bd_shell_prefix(beads_env: str, actor: str, beads_dir: str = "") -> str:
         parts.append(f"export BEADS_DIR={shlex.quote(os.path.expanduser(beads_dir))};")
     return " ".join(parts)
 
+_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def validate_label(label: str) -> bool:
+    """Same strict allow-list as validate_bead_id (alnum plus `_.-`, must
+    not start with `-`) -- used before a bead label (a human label being
+    removed, or a route label being added) ever reaches a subprocess argv.
+    See bd_exec_argv's docstring for why labels never reach a shell string
+    at all, so this is defense-in-depth (a bad label is a config mistake or
+    a hostile route/human_labels value, not a shell-escaping concern), not
+    the only thing standing between user input and `bd`."""
+    return bool(label) and bool(_LABEL_RE.match(label))
+
+
+def bd_exec_argv(beads_env: str, bd_bin: str, args: list[str]) -> list[str]:
+    """Build an argv list for a `bd` write call (POST /api/bead/{id}/reply)
+    run via asyncio.create_subprocess_exec -- NEVER through a shell string
+    the way the read-only collector paths do (bd_shell_prefix + _run/
+    _run_capture, both create_subprocess_shell). `args` may contain
+    arbitrary user-typed reply text, so none of it can ever be interpolated
+    into shell syntax.
+
+    When `beads_env` names a file that exists (same optional-env-file
+    convention as bd_shell_prefix), it still needs to be sourced before `bd`
+    runs -- but the file's path and every element of `args` travel as
+    POSITIONAL PARAMETERS ($1, $2, ...) to a short, fixed script whose text
+    never changes: '. "$1" 2>/dev/null; shift; exec "$@"'. Nothing
+    user-controlled is ever concatenated into that script string, so a
+    reply containing shell metacharacters (;, $(...), `...`, quotes, ...)
+    is inert -- it is just one argv element `bd` (or its env-file-sourcing
+    wrapper) receives verbatim. BEADS_ACTOR/BEADS_DIR are set via the
+    `env=` mapping passed to create_subprocess_exec (see bd_exec_env), not
+    via `export` in any script text, for the same reason.
+
+    When beads_env is unset or the file doesn't exist, `bd` is exec'd
+    directly with no shell at all."""
+    env_path = Path(os.path.expanduser(beads_env)) if beads_env else None
+    if env_path is not None and env_path.is_file():
+        return [
+            "bash", "-c", '. "$1" 2>/dev/null; shift; exec "$@"', "_",
+            str(env_path), bd_bin, *args,
+        ]
+    return [bd_bin, *args]
+
+
+def bd_exec_env(actor: str, beads_dir: str = "") -> dict[str, str]:
+    """Env mapping for a bd_exec_argv() subprocess: BEADS_ACTOR always,
+    BEADS_DIR only when beads_dir is set -- same precedence as
+    bd_shell_prefix, just carried through create_subprocess_exec's `env=`
+    kwarg instead of `export` statements in a shell string."""
+    env = dict(os.environ)
+    env["BEADS_ACTOR"] = actor
+    if beads_dir:
+        env["BEADS_DIR"] = os.path.expanduser(beads_dir)
+    return env
+
+
+async def run_bd_exec(
+    argv: list[str], env: dict[str, str], timeout: float = 20.0
+) -> tuple[int, str, str]:
+    """Run a bd_exec_argv() argv list via create_subprocess_exec (no shell)
+    and return (returncode, stdout, stderr) -- the exec-based counterpart to
+    _run_capture (which runs a shell string). Used by the bead-reply write
+    path (server/critdash/bead_reply.py); every read-only collector call
+    keeps using bd_shell_prefix/_run/_run_capture unchanged."""
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"bd command timed out after {timeout}s: {argv[:3]}...") from None
+    return proc.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+
 # Labels that describe agent routing intent, not a repo. Used to skip them
 # when guessing a bead's repo from its labels.
 _INTENT_LABEL_RE = (

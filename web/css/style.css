@@ -1028,6 +1028,51 @@ table.dtable th .sort-indicator {
 
 .detail-event-text { white-space: pre-wrap; }
 
+/* bead popup reply/send-back/close (off by default -- bead_reply feature) */
+.bead-reply-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.bead-reply-comment {
+  border: 1px solid var(--color-grid-line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--color-bg-elevated);
+}
+.bead-reply-comment-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-faint);
+  margin-bottom: 4px;
+}
+.bead-reply-comment-body {
+  font-size: 13px;
+  white-space: pre-wrap;
+  color: var(--color-text);
+}
+.bead-reply-textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+.bead-reply-route {
+  padding-top: 6px;
+}
+.bead-reply-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.bead-reply-result {
+  font-size: 13px;
+  color: var(--color-status-idle);
+  padding: 8px 0;
+}
+
 /* simple markdown rendering for bead description/notes/design/acceptance */
 .detail-markdown {
   font-size: 15px;
