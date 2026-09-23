@@ -31,10 +31,12 @@ report for the full evidence trail):
     token for the Cloud Code CLI, not a generative-language API key):
     Gemini/Cloud quota lives in Cloud Console / Cloud Monitoring, not a
     per-key balance endpoint -- no live call attempted.
-  - claude: no metered API billing (Claude Code is a subscription). The
-    dashboard already derives a real 5h rate-limit block from local usage
-    events (store.current_usage_block_start) -- surfaced here as
-    source="local_derived", never source="provider_api".
+  - claude: no metered API billing (Claude Code is a subscription) and no
+    provider-reported quota endpoint exists. A prior version of this module
+    derived a fake "5h rate-limit block" from local usage_events, but that
+    was a locally-invented window (mixes every provider/host together and
+    does not match Claude Code's real reset clock) -- removed entirely, not
+    just marked unavailable. There is no "claude" entry in this card.
   - kimi: GET https://api.kimi.ai/coding/v1/usages (base_url straight from
     ~/.kimi-code/config.toml's own provider config), Bearer <access_token
     from the newest file under ~/.kimi-code/credentials/*.json>. Endpoint is
@@ -69,16 +71,14 @@ from datetime import UTC, datetime
 import httpx
 
 from .state import now_iso as _now_iso
-from .store import BLOCK_DURATION
 
 PROVIDER_NAMES: tuple[str, ...] = (
-    "openrouter", "opencode_zen", "google", "claude", "kimi", "xai", "openai",
+    "openrouter", "opencode_zen", "google", "kimi", "xai", "openai",
 )
 
 QUOTA_TIMEOUT_S = 10.0
 REFRESH_MIN_INTERVAL_S = 30.0
 DEFAULT_KIMI_USAGE_URL = "https://api.kimi.ai/coding/v1/usages"
-BLOCK_DURATION_MIN = 300.0  # 5h, minutes -- matches store.BLOCK_DURATION
 
 # Defense-in-depth only (see module docstring): redacts anything long and
 # token-shaped out of a raw provider error body before it can reach a log
@@ -300,66 +300,6 @@ async def check_google(key: str | None) -> dict:
     return _result("google", ok=False, error=reason)
 
 
-def current_local_block(store, now: datetime | None = None) -> dict:
-    """Construct the currently-active 5h rate-limit block dict (started_at/
-    ends_at/tokens/cost_usd/pct_elapsed/active) from
-    store.current_usage_block_start(), for check_claude_block below. This is
-    the ccusage-style local reconstruction -- a block starts at the first
-    message after the previous one ended -- not a real value read from any
-    provider. It used to also feed the burn_gauge widget via /api/snapshot,
-    but that surfaced it as if it were the account's real rate-limit window,
-    which it cannot be (usage_events mixes every provider/host together);
-    the burn_gauge feature was removed, and check_claude_block is now this
-    function's only caller. `now` is overridable for tests; defaults to the
-    real current time."""
-    now = now or datetime.now(UTC)
-    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    block_start = store.current_usage_block_start(now_iso)
-    if not block_start:
-        return {
-            "started_at": None, "ends_at": None, "tokens": 0, "cost_usd": 0.0,
-            "pct_elapsed": 0.0, "active": False,
-        }
-    start_dt = datetime.fromisoformat(block_start.replace("Z", "+00:00"))
-    end_dt = start_dt + BLOCK_DURATION
-    block_totals = store.usage_totals(block_start)
-    elapsed = (now - start_dt).total_seconds()
-    pct = max(0.0, min(1.0, elapsed / BLOCK_DURATION.total_seconds()))
-    return {
-        "started_at": block_start,
-        "ends_at": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "tokens": block_totals["total"],
-        "cost_usd": block_totals["cost_usd"],
-        "pct_elapsed": round(pct, 4),
-        "active": True,
-    }
-
-
-async def check_claude_block(block: dict | None) -> dict:
-    """Purely local: derived from store.current_usage_block_start() via
-    current_local_block() above. Never a network call, so this can never
-    fail -- ok is always True."""
-    block = block or {}
-    if not block.get("active"):
-        return _result(
-            "claude", ok=True, source="local_derived", unit="minutes", period="5h_block",
-            extra={"active": False, "note": "no active 5h rate-limit block right now"},
-        )
-    pct = block.get("pct_elapsed") or 0.0
-    used_min = round(pct * BLOCK_DURATION_MIN, 1)
-    remaining_min = round(BLOCK_DURATION_MIN - used_min, 1)
-    return _result(
-        "claude", ok=True, source="local_derived",
-        limit=BLOCK_DURATION_MIN, remaining=remaining_min, used=used_min,
-        unit="minutes", period="5h_block", resets_at=block.get("ends_at"),
-        extra={
-            "active": True, "started_at": block.get("started_at"),
-            "tokens": block.get("tokens"), "cost_usd": block.get("cost_usd"),
-            "pct_elapsed": pct,
-        },
-    )
-
-
 def _parse_kimi_usage(payload) -> dict | None:
     """Defensive parse: two response shapes were found in independent
     third-party documentation (no live 200 was reachable to confirm one --
@@ -570,7 +510,7 @@ async def _guard(provider: str, coro, timeout_s: float) -> dict:
         )
 
 
-async def refresh_all(config, block: dict, *, client: httpx.AsyncClient | None = None) -> dict[str, dict]:
+async def refresh_all(config, *, client: httpx.AsyncClient | None = None) -> dict[str, dict]:
     """Runs every provider's live check concurrently. Never called on a
     timer or on page load -- see module docstring -- only from
     POST /api/quota/refresh."""
@@ -590,7 +530,6 @@ async def refresh_all(config, block: dict, *, client: httpx.AsyncClient | None =
             _guard("openrouter", check_openrouter(client, opencode_keys.get("openrouter")), guard_timeout),
             _guard("opencode_zen", check_opencode_zen(opencode_keys.get("opencode")), guard_timeout),
             _guard("google", check_google(opencode_keys.get("google")), guard_timeout),
-            _guard("claude", check_claude_block(block), guard_timeout),
             _guard("kimi", check_kimi(client, kimi_dir, kimi_usage_url), guard_timeout),
             _guard("xai", check_xai(client, grok_key), guard_timeout),
             _guard("openai", check_openai(client, openai_key), guard_timeout),
@@ -643,7 +582,7 @@ def build_quota_response(cache: dict[str, dict], stale_after_s: float) -> dict:
 # providers succeed with what's on disk today.
 NEVER_AVAILABLE_PROVIDERS: tuple[str, ...] = ("opencode_zen", "google")
 NEEDS_CREDENTIAL_PROVIDERS: tuple[str, ...] = ("kimi", "xai", "openai")
-WORKING_PROVIDERS: tuple[str, ...] = ("openrouter", "claude")
+WORKING_PROVIDERS: tuple[str, ...] = ("openrouter",)
 
 
 def provider_availability_buckets() -> dict[str, list[str]]:
@@ -678,7 +617,7 @@ def check_refresh_rate_limit(state: RefreshState, now_monotonic: float, min_inte
 
 
 async def do_refresh(
-    config, store, block: dict, state: RefreshState, *, client: httpx.AsyncClient | None = None,
+    config, store, state: RefreshState, *, client: httpx.AsyncClient | None = None,
 ) -> dict:
     """POST /api/quota/refresh's full body: rate-limit gate, live checks,
     persist to the store, return the fresh result. Raises RateLimited (the
@@ -688,7 +627,7 @@ async def do_refresh(
     check_refresh_rate_limit(state, time.monotonic(), min_interval_s)
     state.last_refresh_monotonic = time.monotonic()
 
-    results = await refresh_all(config, block, client=client)
+    results = await refresh_all(config, client=client)
     for name, entry in results.items():
         store.set_quota_cache(name, entry)
     return {"providers": [results[name] for name in PROVIDER_NAMES], "generated_at": _now_iso()}
@@ -703,8 +642,6 @@ __all__ = [
     "RefreshState",
     "build_quota_response",
     "provider_availability_buckets",
-    "check_claude_block",
-    "current_local_block",
     "check_google",
     "check_kimi",
     "check_opencode_zen",

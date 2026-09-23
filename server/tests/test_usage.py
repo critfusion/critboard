@@ -152,89 +152,11 @@ def test_dedupe_by_message_id(tmp_store):
     assert totals["messages"] == 1
 
 
-def _usage_row(mid, dt, session="s1"):
-    return dict(
-        message_id=mid, ts=dt.strftime("%Y-%m-%dT%H:%M:%SZ"), session_id=session,
-        project="p", project_path="/p", model="claude-opus-5", input=1, output=1,
-        cache_read=0, cache_write_5m=0, cache_write_1h=0, speed=None, is_sidechain=0,
-        web_searches=0, cost_usd=0.01,
-    )
-
-
-def test_block_window_boundary_logic(tmp_store):
-    base = datetime(2026, 9, 18, 8, 0, 0, tzinfo=UTC)
-
-    # message 1 at 08:00, message 2 at 08:10 (same block), message 3 at 14:00
-    # (>5h gap from message 2, and past message 1's block end at 13:00) ->
-    # new block starts at message 3.
-    tmp_store.insert_usage_events([
-        _usage_row("m1", base),
-        _usage_row("m2", base + timedelta(minutes=10)),
-        _usage_row("m3", base + timedelta(hours=6)),
-    ])
-    now_iso = (base + timedelta(hours=6, minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    block_start = tmp_store.current_usage_block_start(now_iso)
-    assert block_start == (base + timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def test_block_window_no_gap_keeps_first_message(tmp_store):
-    base = datetime(2026, 9, 18, 8, 0, 0, tzinfo=UTC)
-
-    tmp_store.insert_usage_events([_usage_row("m1", base), _usage_row("m2", base + timedelta(hours=1))])
-    now_iso = (base + timedelta(hours=1, minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    block_start = tmp_store.current_usage_block_start(now_iso)
-    assert block_start == base.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def test_block_boundary_exactly_5h_starts_new_block(tmp_store):
-    # Bug fix: a block also ends exactly BLOCK_DURATION after it starts (not
-    # only on an activity gap), and the next message at or after that instant
-    # begins a new block -- so a message landing exactly on the 5h boundary
-    # starts a new block rather than extending the old one.
-    base = datetime(2026, 9, 18, 8, 0, 0, tzinfo=UTC)
-
-    tmp_store.insert_usage_events([_usage_row("m1", base), _usage_row("m2", base + timedelta(hours=5))])
-    now_iso = (base + timedelta(hours=5, minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    block_start = tmp_store.current_usage_block_start(now_iso)
-    assert block_start == (base + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def test_block_rolls_forward_across_multiple_boundaries_when_continuously_busy(tmp_store):
-    # A fleet active every 10 minutes for 12+ hours, with no gap ever >5h,
-    # must still roll the block forward every 5h -- this is the exact bug
-    # a real user hit: last_usage_gap_start() never advanced because there was
-    # never a gap, so the card kept showing an expired block forever.
-    base = datetime(2026, 9, 18, 0, 0, 0, tzinfo=UTC)
-    rows = [_usage_row(f"m{i}", base + timedelta(minutes=10 * i)) for i in range(80)]  # 0:00 .. 13:10
-    tmp_store.insert_usage_events(rows)
-
-    # at 12:05 we're in the third block: block1 [0:00,5:00), block2
-    # [5:00,10:00) anchored at the first msg >= 5:00 (msg at 5:00 exactly),
-    # block3 anchored at the first msg >= 10:00 (msg at 10:00 exactly).
-    now_iso = "2026-09-18T12:05:00Z"
-    block_start = tmp_store.current_usage_block_start(now_iso)
-    assert block_start == "2026-09-18T10:00:00Z"
-
-
-def test_block_idle_after_expiry_reports_no_active_block(tmp_store):
-    # The exact live symptom a real user reported: a block that ended hours ago
-    # with no new activity since must be reported as "no active block", not
-    # as a stale block clamped at pct_elapsed=1.0.
-    base = datetime(2026, 9, 18, 12, 19, 52, tzinfo=UTC)
-    tmp_store.insert_usage_events([_usage_row("m1", base)])
-    now_iso = (base + timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%SZ")  # 2h past the 5h block end
-    assert tmp_store.current_usage_block_start(now_iso) is None
-
-
-# Note: the collector-level "5h rate-limit block" object (usage.block) that
-# used to live in _compute_rollups() was removed from /api/snapshot -- it
-# was a local ccusage-style reconstruction across every provider/host mixed
-# together, presented as if it were the account's real rate-limit window,
-# which it cannot be. See quota.py's current_local_block() and
-# test_quota.py for the block-construction regression coverage (pct_elapsed
-# clamping, idle-expiry honesty, tokens/cost isolation across a rollover) --
-# that function is now the sole consumer, feeding the manually-triggered
-# "Claude (5h block)" quota check instead of the burn_gauge widget.
+# Note: the collector-level "5h rate-limit block" reconstruction (formerly
+# store.current_usage_block_start()/BLOCK_DURATION, and the quota.py card row
+# it fed) was removed entirely -- it was a local ccusage-style reconstruction
+# across every provider/host mixed together, presented as if it were the
+# account's real rate-limit window, which it cannot be.
 
 
 # -- usage.budget -------------------------------------------------------

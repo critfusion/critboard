@@ -12,7 +12,6 @@ export const PROVIDER_LABELS = {
   openrouter: "OpenRouter",
   opencode_zen: "OpenCode Zen",
   google: "Google / Gemini",
-  claude: "Claude (5h block)",
   kimi: "Kimi Code",
   xai: "xAI / Grok",
   openai: "OpenAI / Codex",
@@ -58,24 +57,10 @@ function progressColor(pct) {
 function renderRow(entry) {
   const provider = entry.provider || "?";
   const label = PROVIDER_LABELS[provider] || provider;
-  const isLocal = entry.source === "local_derived";
 
-  const row = el("div", { class: "quota-row" + (isLocal ? " quota-row-local" : "") });
+  const row = el("div", { class: "quota-row" });
 
-  const headChildren = [el("span", { class: "quota-row-label mono" }, label)];
-  if (isLocal) {
-    headChildren.push(
-      el(
-        "span",
-        {
-          class: "pill quota-local-pill",
-          title: "derived locally from usage history -- not reported by the provider",
-        },
-        "LOCAL ESTIMATE"
-      )
-    );
-  }
-  headChildren.push(statusPill(entry));
+  const headChildren = [el("span", { class: "quota-row-label mono" }, label), statusPill(entry)];
   row.appendChild(el("div", { class: "quota-row-head" }, headChildren));
 
   if (entry.ok === false) {

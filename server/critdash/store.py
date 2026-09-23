@@ -58,10 +58,6 @@ def fold_hour_rows_to_local_day(
             entry[col] += r[col]
     return list(acc.values())
 
-# The Anthropic rate-limit block duration. A block starts at some message and
-# ends exactly this long after -- see current_usage_block_start() below.
-BLOCK_DURATION = timedelta(hours=5)
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -828,49 +824,6 @@ class Store:
             return self._conn.execute(
                 "SELECT * FROM usage_events WHERE ts >= ? ORDER BY ts ASC", (since_iso,)
             ).fetchall()
-
-    def current_usage_block_start(self, now_iso: str) -> str | None:
-        """Anchor of the currently active 5h rate-limit block, or None if no
-        block is active right now (ccusage's model, not a pure activity-gap
-        detector -- see collectors/usage.py's Bug 1 fix notes).
-
-        A block starts at the first message after the previous block ended.
-        A block ends the earlier of: (a) BLOCK_DURATION after it started, or
-        (b) never, if activity continues -- but (a) always fires first,
-        because a >=BLOCK_DURATION gap between two messages inside a block
-        implies the later message is already >=BLOCK_DURATION past the
-        block's start (the block's start is always <= every message inside
-        it), so a bare "did 5h elapse since this block started" check on each
-        message, scanned in order, captures both a gap-triggered rollover and
-        a continuously-busy-fleet rollover with one rule. The next message at
-        or after a block's end begins a new block (>=, matching "the next
-        message... begins a new block").
-
-        If the most recently observed block has already ended and no message
-        has arrived since, there is no active block: returns None rather than
-        a stale started_at/ends_at pair, so a caller never reports pct_elapsed
-        clamped at a past-due window as if it were still counting up.
-        """
-        with self._lock:
-            rows = self._conn.execute("SELECT ts FROM usage_events ORDER BY ts ASC").fetchall()
-        if not rows:
-            return None
-
-        def parse(t: str) -> datetime:
-            return datetime.fromisoformat(t.replace("Z", "+00:00"))
-
-        block_start = parse(rows[0]["ts"])
-        block_end = block_start + BLOCK_DURATION
-        for r in rows[1:]:
-            cur = parse(r["ts"])
-            if cur >= block_end:
-                block_start = cur
-                block_end = block_start + BLOCK_DURATION
-
-        now = parse(now_iso)
-        if now >= block_end:
-            return None
-        return block_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # -- wave-2 analytics: tool/error ingestion ------------------------------
     def insert_tool_call_events(self, rows: Iterable[dict]) -> int:

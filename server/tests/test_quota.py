@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -234,106 +233,6 @@ async def test_google_always_unavailable_no_network():
     assert result["source"] is None
     assert "Cloud Console" in result["error"] or "Cloud Monitoring" in result["error"]
     assert_no_secrets(result)
-
-
-# -- check_claude_block (local_derived) --------------------------------------
-
-
-async def test_claude_block_inactive():
-    result = await quota.check_claude_block({"active": False})
-    assert result["ok"] is True
-    assert result["source"] == "local_derived"
-    assert result["limit"] is None
-    assert result["extra"]["active"] is False
-
-
-async def test_claude_block_none_treated_as_inactive():
-    result = await quota.check_claude_block(None)
-    assert result["ok"] is True
-    assert result["extra"]["active"] is False
-
-
-async def test_claude_block_active_maps_pct_elapsed_to_minutes():
-    block = {
-        "active": True, "pct_elapsed": 0.5, "started_at": "2026-09-21T10:00:00Z",
-        "ends_at": "2026-09-21T15:00:00Z", "tokens": 12345, "cost_usd": 3.21,
-    }
-    result = await quota.check_claude_block(block)
-    assert result["ok"] is True
-    assert result["source"] == "local_derived"
-    assert result["limit"] == 300.0
-    assert result["used"] == 150.0
-    assert result["remaining"] == 150.0
-    assert result["unit"] == "minutes"
-    assert result["resets_at"] == "2026-09-21T15:00:00Z"
-    assert result["extra"]["tokens"] == 12345
-
-
-# -- current_local_block (feeds check_claude_block; moved here from the old
-# usage.block collector rollup when that was removed from /api/snapshot) ----
-
-
-def _usage_row(mid, dt, session="s1", cost_usd=0.01):
-    return dict(
-        message_id=mid, ts=dt.strftime("%Y-%m-%dT%H:%M:%SZ"), session_id=session,
-        project="p", project_path="/p", model="claude-opus-5", input=1, output=1,
-        cache_read=0, cache_write_5m=0, cache_write_1h=0, speed=None, is_sidechain=0,
-        web_searches=0, cost_usd=cost_usd,
-    )
-
-
-def test_current_local_block_pct_elapsed_never_exceeds_one_and_ends_at_is_future(tmp_store):
-    base = datetime(2026, 9, 18, 12, 0, 0, tzinfo=UTC)
-    fake_now = base + timedelta(hours=4, minutes=59)  # 1 minute before block end
-
-    tmp_store.insert_usage_events([_usage_row("m1", base)])
-    block = quota.current_local_block(tmp_store, now=fake_now)
-    assert block["active"] is True
-    assert block["pct_elapsed"] <= 1.0
-    ends_at = datetime.fromisoformat(block["ends_at"].replace("Z", "+00:00"))
-    assert ends_at > fake_now
-    assert block["started_at"] == base.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def test_current_local_block_reports_idle_state_not_stale_expired_block(tmp_store):
-    # Reproduces the exact live symptom: a block that expired hours ago with
-    # no further activity must never be reported as active with pct clamped
-    # at 1.0 -- it must honestly report "no active block".
-    base = datetime(2026, 9, 18, 12, 19, 52, tzinfo=UTC)
-    fake_now = base + timedelta(hours=7)  # ~2h past the block's 5h expiry
-
-    tmp_store.insert_usage_events([_usage_row("m1", base)])
-    block = quota.current_local_block(tmp_store, now=fake_now)
-    assert block == {
-        "started_at": None, "ends_at": None, "tokens": 0, "cost_usd": 0.0,
-        "pct_elapsed": 0.0, "active": False,
-    }
-
-
-def test_current_local_block_tokens_and_cost_count_only_current_block(tmp_store):
-    # A continuously-busy fleet: an earlier block's spend must not bleed into
-    # the current block's tokens/cost_usd after rollover.
-    base = datetime(2026, 9, 18, 0, 0, 0, tzinfo=UTC)
-    old_row = dict(
-        message_id="old1", ts=base.strftime("%Y-%m-%dT%H:%M:%SZ"), session_id="s1",
-        project="p", project_path="/p", model="claude-opus-5", input=100, output=100,
-        cache_read=0, cache_write_5m=0, cache_write_1h=0, speed=None, is_sidechain=0,
-        web_searches=0, cost_usd=9.99,
-    )
-    new_start = base + timedelta(hours=5)  # exactly the old block's end -> new block
-    new_row = dict(
-        message_id="new1", ts=new_start.strftime("%Y-%m-%dT%H:%M:%SZ"), session_id="s1",
-        project="p", project_path="/p", model="claude-opus-5", input=1, output=1,
-        cache_read=0, cache_write_5m=0, cache_write_1h=0, speed=None, is_sidechain=0,
-        web_searches=0, cost_usd=0.01,
-    )
-    tmp_store.insert_usage_events([old_row, new_row])
-    fake_now = new_start + timedelta(minutes=1)
-
-    block = quota.current_local_block(tmp_store, now=fake_now)
-    assert block["started_at"] == new_start.strftime("%Y-%m-%dT%H:%M:%SZ")
-    assert block["cost_usd"] == pytest.approx(0.01, abs=1e-9)
-    assert block["tokens"] == 2  # new_row's input(1) + output(1) only
 
 
 # -- check_kimi ---------------------------------------------------------
@@ -609,15 +508,14 @@ async def test_refresh_all_returns_every_provider(tmp_path):
         return httpx.Response(500)
 
     async with mock_client(handler) as client:
-        results = await quota.refresh_all(config, {"active": False}, client=client)
+        results = await quota.refresh_all(config, client=client)
 
     assert set(results.keys()) == set(quota.PROVIDER_NAMES)
+    assert "claude" not in results
     assert results["openrouter"]["ok"] is True
     assert results["opencode_zen"]["ok"] is False
     assert results["opencode_zen"]["source"] is None
     assert results["google"]["ok"] is False
-    assert results["claude"]["ok"] is True
-    assert results["claude"]["source"] == "local_derived"
     assert results["kimi"]["ok"] is False
     assert results["xai"]["ok"] is False
     assert results["openai"]["ok"] is False
@@ -635,13 +533,14 @@ async def test_refresh_all_one_provider_hanging_past_timeout_does_not_block_othe
 
     transport = httpx.MockTransport(slow_handler)
     async with httpx.AsyncClient(transport=transport, timeout=0.2) as client:
-        results = await quota.refresh_all(config, {"active": False}, client=client)
+        results = await quota.refresh_all(config, client=client)
 
     assert set(results.keys()) == set(quota.PROVIDER_NAMES)
     assert results["openrouter"]["ok"] is False
     assert "timed out" in results["openrouter"]["error"]
     # every other provider still completed despite openrouter hanging
-    assert results["claude"]["ok"] is True
+    assert results["opencode_zen"]["ok"] is False
+    assert results["opencode_zen"]["source"] is None
 
 
 async def test_refresh_all_provider_exception_does_not_crash_the_batch(tmp_path, monkeypatch):
@@ -656,11 +555,11 @@ async def test_refresh_all_provider_exception_does_not_crash_the_batch(tmp_path,
         return httpx.Response(401, json={"error": "x"})
 
     async with mock_client(handler) as client:
-        results = await quota.refresh_all(config, {"active": False}, client=client)
+        results = await quota.refresh_all(config, client=client)
 
     assert results["openrouter"]["ok"] is False
     assert "unexpected error" in results["openrouter"]["error"]
-    assert results["claude"]["ok"] is True  # unaffected by openrouter's crash
+    assert results["opencode_zen"]["ok"] is False  # unaffected by openrouter's crash
 
 
 # -- build_quota_response / do_refresh / rate limiting -----------------------
@@ -685,7 +584,7 @@ def test_build_quota_response_fresh_entry_not_stale():
     assert openrouter_entry["ok"] is True
     others_never_checked = [p for p in resp["providers"] if p["provider"] != "openrouter"]
     assert all(p["ok"] is None for p in others_never_checked)
-    assert resp["stale"] is True  # other 6 providers are still never-checked
+    assert resp["stale"] is True  # other 5 providers are still never-checked
 
 
 def test_build_quota_response_old_entry_is_stale():
@@ -708,7 +607,7 @@ def test_provider_availability_buckets_matches_documented_findings():
     buckets = quota.provider_availability_buckets()
     assert set(buckets["never_available"]) == {"opencode_zen", "google"}
     assert set(buckets["needs_credential"]) == {"kimi", "xai", "openai"}
-    assert set(buckets["working"]) == {"openrouter", "claude"}
+    assert set(buckets["working"]) == {"openrouter"}
 
 
 def test_check_refresh_rate_limit_allows_first_call():
@@ -741,7 +640,7 @@ async def test_do_refresh_persists_to_store_and_returns_result(tmp_path):
         return httpx.Response(401, json={"error": "x"})
 
     async with mock_client(handler) as client:
-        result = await quota.do_refresh(config, store, {"active": False}, state, client=client)
+        result = await quota.do_refresh(config, store, state, client=client)
 
     assert len(result["providers"]) == len(quota.PROVIDER_NAMES)
     cached = store.get_quota_cache()
@@ -762,7 +661,7 @@ async def test_do_refresh_raises_rate_limited_on_immediate_repeat(tmp_path):
         return httpx.Response(401, json={"error": "x"})
 
     async with mock_client(handler) as client:
-        await quota.do_refresh(config, store, {"active": False}, state, client=client)
+        await quota.do_refresh(config, store, state, client=client)
         with pytest.raises(quota.RateLimited):
-            await quota.do_refresh(config, store, {"active": False}, state, client=client)
+            await quota.do_refresh(config, store, state, client=client)
     store.close()

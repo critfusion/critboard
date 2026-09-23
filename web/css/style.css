@@ -1413,13 +1413,6 @@ table.dtable th .sort-indicator {
   padding: 6px 8px;
   flex: none;
 }
-/* Local-derived entries (Claude's 5h block) get a visually distinct dashed
-   cyan border + a LOCAL ESTIMATE pill so nobody reads a locally-inferred
-   number as a provider-reported balance. */
-.quota-row-local {
-  border-style: dashed;
-  border-color: var(--color-accent-cyan-dim);
-}
 .quota-row-head {
   display: flex;
   align-items: center;
@@ -1431,11 +1424,6 @@ table.dtable th .sort-indicator {
   font-weight: 700;
   flex: 1;
   min-width: 0;
-}
-.quota-local-pill {
-  color: var(--color-accent-cyan);
-  border-color: var(--color-accent-cyan-dim);
-  font-size: 8px;
 }
 .quota-row-info {
   font-size: 11px;
