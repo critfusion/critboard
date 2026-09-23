@@ -526,6 +526,7 @@ def build_app() -> FastAPI:
 
     app = FastAPI(title="CritBoard", lifespan=lifespan)
     app.state.snap = snap  # exposed for tests: driving snap.publish_resync() directly
+    app.state.store = store  # exposed for tests: inspecting persisted update-check state etc.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:9999", "http://127.0.0.1:9999", "*"],
@@ -1040,6 +1041,46 @@ def build_app() -> FastAPI:
     # clicking a button -- nothing in this codebase calls it on its own.
     update_check_state = update_mod.CheckState()
 
+    def _sync_update_state_from_manual_check(result: dict) -> None:
+        """One source of truth (briefing fix C): GET /api/update/check used
+        to keep its own cache entirely separate from the periodic check's
+        persisted state that /api/snapshot's `update` object (and so the
+        banner) reads -- a manual check right after a push would correctly
+        say "up to date" while the banner, still driven by the last
+        periodic tick, kept showing "update available" for up to
+        `update_check_interval_s`. Write this check's result into both the
+        live snapshot (so the banner updates on the very next render, no
+        restart/tick needed) and the periodic check's persisted cache (so a
+        restart doesn't lose it either). Skipped entirely when no
+        update_repo is configured -- there is nothing to reconcile."""
+        if result.get("repo_configured") is False:
+            return
+        prior_stored = store.get_update_check_state() or {}
+        # Keep the persisted ETag only if this check confirms `latest`
+        # hasn't moved since it was captured -- it's still valid then, and
+        # keeping it lets the next periodic tick get a free 304. If `latest`
+        # DID move, that ETag is for the old sha and would be wrong to keep.
+        etag = prior_stored.get("etag") if prior_stored.get("latest") == result.get("latest") else None
+        merged = {
+            "repo": update_mod.resolve_repo(config) or None,
+            "branch": config.sources.get("update_branch") or update_mod.DEFAULT_UPDATE_BRANCH,
+            "current": result.get("current"),
+            "latest": result.get("latest"),
+            "behind": result.get("behind"),
+            "relation": result.get("relation", "unknown"),
+            "update_available": result.get("update_available", False),
+            "checked_at": result.get("checked_at"),
+            "last_error": None,
+            "enabled": bool(config.sources.get("update_check_enabled", True)),
+            "auto_apply": bool(config.sources.get("update_auto_apply", False)),
+        }
+        snap.update_path("update", merged)
+        store.set_update_check_state({
+            "etag": etag, "latest": merged["latest"], "behind": merged["behind"],
+            "relation": merged["relation"], "current": merged["current"],
+            "checked_at": merged["checked_at"], "last_error": None,
+        })
+
     @app.get("/api/update/check")
     async def get_update_check():
         try:
@@ -1047,6 +1088,7 @@ def build_app() -> FastAPI:
         except update_mod.UpdateError as exc:
             detail = {"reason": exc.reason, "message": exc.message}
             raise HTTPException(status_code=502, detail=detail) from exc
+        _sync_update_state_from_manual_check(result)
         return JSONResponse(result)
 
     _UPDATE_APPLY_STATUS = {

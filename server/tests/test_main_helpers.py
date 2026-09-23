@@ -648,6 +648,95 @@ def test_snapshot_settings_timezone_reflects_saved_layout(isolated_app):
 # empty_snapshot() default unless a test sets it explicitly.
 
 
+# -- fix C: GET /api/update/check is the SAME source of truth the snapshot's
+#    "update" object (and so the banner) reads, not a separate cache. A
+#    manual check right after a push must clear the banner immediately,
+#    not wait for the next periodic tick. --------------------------------
+
+
+def test_get_update_check_syncs_snapshot_state_after_a_push(isolated_app, monkeypatch):
+    # Seed a stale "update available" snapshot state, as if a periodic tick
+    # ran before the push landed (or before this manual check).
+    stale = {
+        "repo": "o/r", "branch": "main", "current": "old", "latest": "old",
+        "behind": 3, "relation": "behind", "update_available": True,
+        "checked_at": "2020-01-01T00:00:00.000Z", "last_error": None,
+        "enabled": True, "auto_apply": False,
+    }
+    isolated_app.app.state.snap.update_path("update", stale)
+    assert isolated_app.get("/api/snapshot").json()["update"]["update_available"] is True
+
+    async def fake_check_for_update(config, dashboard_root, state, *, client=None):
+        return {
+            "current": "new", "latest": "new", "behind": 0, "relation": "identical",
+            "checked_at": "2020-01-01T00:05:00.000Z", "update_available": False,
+        }
+
+    monkeypatch.setattr(main_mod.update_mod, "check_for_update", fake_check_for_update)
+
+    resp = isolated_app.get("/api/update/check")
+    assert resp.status_code == 200
+    assert resp.json()["update_available"] is False
+
+    # The banner-facing state (what /api/snapshot's "update" object holds)
+    # must already reflect the manual check's fresher result -- no waiting
+    # for the next periodic tick.
+    snap_update = isolated_app.get("/api/snapshot").json()["update"]
+    assert snap_update["update_available"] is False
+    assert snap_update["current"] == "new"
+    assert snap_update["latest"] == "new"
+    assert snap_update["relation"] == "identical"
+    assert snap_update["last_error"] is None
+
+
+def test_get_update_check_syncs_persisted_periodic_state_too(isolated_app, monkeypatch):
+    """Not just the in-memory snapshot -- the periodic check's persisted
+    store row too, so a restart right after a manual check doesn't lose it
+    and fall back to stale cached facts."""
+
+    async def fake_check_for_update(config, dashboard_root, state, *, client=None):
+        return {
+            "current": "new", "latest": "new", "behind": 0, "relation": "identical",
+            "checked_at": "2020-01-01T00:05:00.000Z", "update_available": False,
+        }
+
+    monkeypatch.setattr(main_mod.update_mod, "check_for_update", fake_check_for_update)
+
+    resp = isolated_app.get("/api/update/check")
+    assert resp.status_code == 200
+
+    persisted = isolated_app.app.state.store.get_update_check_state()
+    assert persisted["latest"] == "new"
+    assert persisted["relation"] == "identical"
+    assert persisted["current"] == "new"
+
+
+def test_get_update_check_no_repo_configured_does_not_touch_snapshot_state(isolated_app, monkeypatch):
+    """When update_repo is unconfigured, check_for_update's "not configured"
+    result must not overwrite whatever the periodic path already knows --
+    there is nothing to reconcile."""
+    stale = {
+        "repo": "o/r", "branch": "main", "current": "old", "latest": "old",
+        "behind": 3, "relation": "behind", "update_available": True,
+        "checked_at": "2020-01-01T00:00:00.000Z", "last_error": None,
+        "enabled": True, "auto_apply": False,
+    }
+    isolated_app.app.state.snap.update_path("update", stale)
+
+    async def fake_check_for_update(config, dashboard_root, state, *, client=None):
+        return {
+            "current": "old", "latest": None, "behind": None, "relation": "unknown",
+            "checked_at": "2020-01-01T00:05:00.000Z", "update_available": False,
+            "repo_configured": False, "message": "no update repo configured",
+        }
+
+    monkeypatch.setattr(main_mod.update_mod, "check_for_update", fake_check_for_update)
+    isolated_app.get("/api/update/check")
+
+    snap_update = isolated_app.get("/api/snapshot").json()["update"]
+    assert snap_update == stale
+
+
 def test_get_settings_updates_defaults(isolated_app):
     resp = isolated_app.get("/api/settings/updates")
     assert resp.status_code == 200

@@ -168,24 +168,58 @@ async def fetch_latest_commit(
     return sha
 
 
-async def fetch_commits_behind(
+# GitHub's compare API status (base=current, head=latest) -> our relation of
+# THIS CHECKOUT to `latest`. "ahead" (head/latest has commits base/current
+# lacks) means the checkout is strictly BEHIND latest -- the only case that
+# is ever an available update. "behind" (base/current has commits head/
+# latest lacks -- an unpushed local commit, exactly the incident this fixes)
+# means the checkout is AHEAD of latest, never an update. See module
+# docstring / SPEC.md for the confirmed GitHub semantics.
+_COMPARE_STATUS_TO_RELATION = {
+    "ahead": "behind",
+    "behind": "ahead",
+    "diverged": "diverged",
+    "identical": "identical",
+}
+
+
+async def fetch_compare_relation(
     client: httpx.AsyncClient, repo: str, current: str, latest: str,
     *, timeout: float = DEFAULT_CHECK_TIMEOUT_S,
-) -> int | None:
-    """Number of commits `current` is behind `latest`, via GitHub's compare
-    API. Returns None (never raises) if the compare call itself fails --
-    `behind` degrading to unknown is not worth failing the whole check over,
-    since `current`/`latest`/`update_available` are already answered."""
+) -> dict:
+    """This checkout's relation to `latest`, via GitHub's compare API:
+    {"relation": "behind"|"ahead"|"identical"|"diverged"|"unknown",
+    "behind": <int>|None}. `relation` drives `update_available` (true only
+    for "behind"); `behind` is GitHub's `ahead_by` -- the count of commits
+    `latest` has that `current` lacks -- which is the right "how far behind"
+    number in every status, including "diverged" (still informative even
+    though a ff-only pull would refuse there).
+
+    Returns {"relation": "unknown", "behind": None} -- never raises -- on
+    any failure to reach or parse GitHub, AND on a 404. A 404 here means one
+    of the two SHAs isn't reachable via GitHub's API; in practice that's
+    `current` being a commit that only exists locally and was never pushed
+    (the exact incident this function exists to fix). A checkout carrying a
+    commit GitHub doesn't know about cannot be proven strictly behind, so it
+    must never register as an update -- "unknown" (not "behind") is the only
+    relation that keeps `update_available` false for that case."""
     if current == latest:
-        return 0
+        return {"relation": "identical", "behind": 0}
     url = f"https://api.github.com/repos/{repo}/compare/{current}...{latest}"
     try:
         resp = await client.get(url, timeout=timeout, headers={"Accept": "application/vnd.github+json"})
-        if resp.status_code != 200:
-            return None
-        return int(resp.json()["ahead_by"])
-    except (httpx.HTTPError, ValueError, KeyError, TypeError):
-        return None
+    except httpx.HTTPError:
+        return {"relation": "unknown", "behind": None}
+    if resp.status_code != 200:
+        return {"relation": "unknown", "behind": None}
+    try:
+        body = resp.json()
+        status = body["status"]
+        ahead_by = int(body["ahead_by"])
+    except (ValueError, KeyError, TypeError):
+        return {"relation": "unknown", "behind": None}
+    relation = _COMPARE_STATUS_TO_RELATION.get(status, "unknown")
+    return {"relation": relation, "behind": ahead_by if relation != "unknown" else None}
 
 
 async def fetch_latest_commit_conditional(
@@ -262,6 +296,7 @@ async def check_for_update(
             "current": current,
             "latest": None,
             "behind": None,
+            "relation": "unknown",
             "checked_at": _now_iso(),
             "update_available": False,
             "repo_configured": False,
@@ -276,20 +311,26 @@ async def check_for_update(
         client = httpx.AsyncClient()
     try:
         latest = await fetch_latest_commit(client, repo, branch, timeout=timeout)
-        behind = (
-            await fetch_commits_behind(client, repo, current, latest, timeout=timeout)
-            if current
-            else None
-        )
+        if current:
+            compare = await fetch_compare_relation(client, repo, current, latest, timeout=timeout)
+        else:
+            compare = {"relation": "unknown", "behind": None}
     finally:
         if own_client:
             await client.aclose()
 
-    update_available = bool(current) and current != latest
+    relation = compare["relation"]
+    behind = compare["behind"]
+    # Strictly behind, and only strictly behind, is an "update" -- being
+    # ahead of GitHub (an unpushed local commit), identical, or diverged
+    # must never say update_available (see module docstring / the self-
+    # restart-loop incident this fixes).
+    update_available = relation == "behind"
     result = {
         "current": current,
         "latest": latest,
         "behind": behind,
+        "relation": relation,
         "checked_at": _now_iso(),
         "update_available": update_available,
     }
@@ -307,10 +348,20 @@ async def periodic_update_check(
     """One tick of the periodic background check -- main.py's
     update_check_loop calls this every `update_check_interval_s`. Returns
     the /api/snapshot "update" object shape: {repo, branch, current,
-    latest, behind, update_available, checked_at, last_error, enabled,
-    auto_apply}. Makes no network call at all when `update_check_enabled`
-    is false or `update_repo` is empty. See module docstring for the
-    ETag/persistence contract."""
+    latest, behind, relation, update_available, checked_at, last_error,
+    enabled, auto_apply}. Makes no network call at all when
+    `update_check_enabled` is false or `update_repo` is empty. See module
+    docstring for the ETag/persistence contract.
+
+    `relation` (and `behind`, and `update_available`) are only ever
+    recomputed against GitHub's compare API when they might actually be
+    stale: `latest` changed (a new commit landed on GitHub), or `current`
+    changed since the relation currently cached was computed (a *local*
+    commit landed -- see the incident in the module docstring: the ETag
+    path alone would otherwise keep serving a relation computed against a
+    `current` that no longer exists). A 304 with `current` unchanged is
+    still the true no-network-state-change case the ETag contract promises
+    -- nothing is recomputed or persisted then."""
     repo = resolve_repo(config).strip()
     branch = config.sources.get("update_branch") or DEFAULT_UPDATE_BRANCH
     enabled = bool(config.sources.get("update_check_enabled", True))
@@ -324,15 +375,26 @@ async def periodic_update_check(
         return {
             "repo": repo or None, "branch": branch, "current": current,
             "latest": prior.get("latest"), "behind": prior.get("behind"),
-            "update_available": False, "checked_at": prior.get("checked_at"),
+            "relation": "unknown", "update_available": False,
+            "checked_at": prior.get("checked_at"),
             "last_error": None, "enabled": enabled, "auto_apply": auto_apply,
         }
 
     etag = prior.get("etag")
     latest = prior.get("latest")
     behind = prior.get("behind")
+    relation = prior.get("relation", "unknown")
+    prior_current = prior.get("current")
     checked_at = prior.get("checked_at")
     last_error = None
+
+    async def _recompute(new_latest: str) -> None:
+        nonlocal relation, behind
+        if current and new_latest:
+            compare = await fetch_compare_relation(client, repo, current, new_latest, timeout=timeout)
+            relation, behind = compare["relation"], compare["behind"]
+        else:
+            relation, behind = "unknown", None
 
     own_client = client is None
     client = client or httpx.AsyncClient()
@@ -345,38 +407,50 @@ async def periodic_update_check(
             last_error = exc.message
             checked_at = _now_iso()
             store.set_update_check_state({
-                "etag": etag, "latest": latest, "behind": behind,
-                "checked_at": checked_at, "last_error": last_error,
+                "etag": etag, "latest": latest, "behind": behind, "relation": relation,
+                "current": prior_current, "checked_at": checked_at, "last_error": last_error,
             })
         else:
             if not_modified:
-                # No state change at all -- GitHub confirmed the cached ETag
-                # is still current. This is exactly what a 304 is for: it
-                # doesn't count against the unauthenticated 60/hour limit,
-                # so nothing is written and `checked_at`/`latest`/`behind`
-                # stay exactly what they were.
-                pass
+                if current != prior_current:
+                    # GitHub confirmed `latest` hasn't moved, but a LOCAL
+                    # commit has since the cached relation was computed --
+                    # that cached relation is now stale against the new
+                    # `current` (this is the exact incident: an unpushed
+                    # local commit must reclassify as "ahead"/"unknown",
+                    # never keep reporting "behind"). Recompute against the
+                    # still-valid cached `latest` -- no need to refetch it.
+                    await _recompute(latest)
+                    checked_at = _now_iso()
+                    store.set_update_check_state({
+                        "etag": etag, "latest": latest, "behind": behind, "relation": relation,
+                        "current": current, "checked_at": checked_at, "last_error": None,
+                    })
+                # else: no state change at all -- GitHub confirmed the
+                # cached ETag is still current AND current hasn't moved.
+                # This is exactly what a 304 is for: it doesn't count
+                # against the unauthenticated 60/hour limit, so nothing is
+                # written and checked_at/latest/behind/relation stay
+                # exactly what they were.
             else:
                 latest_changed = sha != latest
                 latest = sha
-                if latest_changed and current:
-                    behind = await fetch_commits_behind(client, repo, current, latest, timeout=timeout)
-                elif not current:
-                    behind = None
+                if latest_changed or current != prior_current or "relation" not in prior:
+                    await _recompute(latest)
                 checked_at = _now_iso()
                 store.set_update_check_state({
-                    "etag": resp_etag, "latest": latest, "behind": behind,
-                    "checked_at": checked_at, "last_error": None,
+                    "etag": resp_etag, "latest": latest, "behind": behind, "relation": relation,
+                    "current": current, "checked_at": checked_at, "last_error": None,
                 })
     finally:
         if own_client:
             await client.aclose()
 
-    update_available = bool(current) and bool(latest) and current != latest
+    update_available = relation == "behind"
     return {
         "repo": repo, "branch": branch, "current": current, "latest": latest,
-        "behind": behind, "update_available": update_available, "checked_at": checked_at,
-        "last_error": last_error, "enabled": enabled, "auto_apply": auto_apply,
+        "behind": behind, "relation": relation, "update_available": update_available,
+        "checked_at": checked_at, "last_error": last_error, "enabled": enabled, "auto_apply": auto_apply,
     }
 
 
@@ -652,6 +726,8 @@ def apply_update(config, dashboard_root: Path) -> dict:
     _refuse_if_dirty(root)
     _refuse_if_wrong_origin(root, repo)
 
+    head_before = _run_git(root, "rev-parse", "HEAD").stdout.strip() or None
+
     lockfile = root / "server" / "uv.lock"
     lock_before = lockfile.read_bytes() if lockfile.exists() else None
 
@@ -667,6 +743,28 @@ def apply_update(config, dashboard_root: Path) -> dict:
             f"{pull.stderr.strip()}",
         )
     logger.info("self-update: pulled origin/%s -- %s", branch, pull.stdout.strip())
+
+    head_after = _run_git(root, "rev-parse", "HEAD").stdout.strip() or None
+    if head_after == head_before:
+        # git pull --ff-only succeeded but moved nothing ("Already up to
+        # date") -- this checkout was never actually behind origin (root
+        # cause of the restart loop: the OLD "update_available" check
+        # counted being ahead/diverged as an update, so apply_update ran,
+        # pulled nothing, and still restarted -- into a process that saw
+        # the exact same false positive and did it again). Nothing on disk
+        # changed, so there is nothing to reinstall or restart for.
+        logger.info("self-update: pull moved nothing (already at %s) -- not restarting", head_after)
+        return {
+            "applied": False,
+            "commit": head_after,
+            "reinstalled": False,
+            "restart_requested": False,
+            "restart_method": "none",
+            "restart_hint": "",
+            "applied_at": _now_iso(),
+            "reason": "already_up_to_date",
+            "message": "already up to date -- nothing to apply",
+        }
 
     lock_after = lockfile.read_bytes() if lockfile.exists() else None
     reinstalled = False

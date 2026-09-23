@@ -276,20 +276,35 @@ Off by default: `POST /api/update/apply` always 403s with `reason: "self_update_
 `"allow_self_update": true` is set in `config/sources.json`. Nothing in the backend calls either endpoint on a
 timer or on startup -- both are meant to be triggered by a person, `check` at most on a long interval.
 
-- `GET /api/update/check` -> `200 {"current": "<sha>"|null, "latest": "<sha>"|null, "behind": <int>|null, "checked_at": "…", "update_available": true|false}`.
+- `GET /api/update/check` -> `200 {"current": "<sha>"|null, "latest": "<sha>"|null, "behind": <int>|null,
+  "relation": "behind"|"ahead"|"identical"|"diverged"|"unknown", "checked_at": "…", "update_available": true|false}`.
   `current` is this checkout's HEAD (`null` outside a git checkout, in which case `update_available` is always
   `false`). `latest` is the tip of `update_repo`'s `update_branch` on GitHub (defaults `critfusion/critboard` /
-  `main`, both configurable in `config/sources.json`). `behind` is the commit count `current` is behind `latest`
-  (`null` if that lookup itself failed, which does not block reporting `current`/`latest`). The result is cached
-  server-side for `update_check_min_interval_s` (default 300s) -- calling this endpoint often is safe, but the
-  frontend should still poll it rarely, not on every snapshot tick. On a GitHub API failure, returns `502
+  `main`, both configurable in `config/sources.json`). `relation` is this checkout's relation to `latest`, from
+  GitHub's compare API (`compare/{current}...{latest}`, `status` field); `update_available` is `true` **only**
+  when `relation` is `"behind"` (this checkout is strictly behind `latest`). Being ahead of GitHub (an unpushed
+  local commit), identical, or diverged is never an "update" -- see the self-restart-loop incident this fixes: a
+  local commit not yet pushed used to register as "update available" and every auto-apply cycle re-pulled
+  nothing and restarted anyway. `relation` is `"unknown"` (and `update_available` false) whenever the compare
+  can't be resolved, including a 404 -- notably when `current` only exists locally and was never pushed, GitHub's
+  compare API 404s on it, and a checkout carrying a commit GitHub doesn't know about can never be proven
+  strictly behind. `behind` is the commit count `current` is behind `latest` (GitHub's `ahead_by`; `null` if
+  `relation` is `"unknown"`, which does not block reporting `current`/`latest`). The result is cached server-side
+  for `update_check_min_interval_s` (default 300s) -- calling this endpoint often is safe, but the frontend
+  should still poll it rarely, not on every snapshot tick. Each successful check also updates the same state
+  `/api/snapshot`'s `update` object (and so the banner) reads, so a manual check right after a push clears the
+  banner immediately instead of waiting for the next periodic tick. On a GitHub API failure, returns `502
   {"detail": {"reason": "github_error"|"github_unreachable"|"github_bad_response", "message": "…"}}`, never a bare 500.
 - `POST /api/update/apply` -> on success, `200 {"applied": true, "commit": "<new sha>", "reinstalled": true|false, "restart_requested": true|false, "restart_method": "systemd"|"self"|"none", "restart_hint": "<command>"|"", "applied_at": "…"}`.
   Performs `git fetch` + `git pull --ff-only` from the checkout's own `origin` remote (refuses if it doesn't
-  point at `github.com/<update_repo>`), reinstalls dependencies only if `server/uv.lock` changed, then restarts
-  whatever is actually supervising this process and returns immediately (the response is sent before the
-  restart kills the process): a systemd --user unit if one is detected (by THIS process's own cgroup/
-  `INVOCATION_ID`, never a hardcoded unit name -- `restart_method: "systemd"`), else the PID-file process
+  point at `github.com/<update_repo>`). If the pull moves `HEAD` nowhere (checkout was already up to date --
+  e.g. `update_available` was a false positive, or two triggers raced), it returns `200 {"applied": false,
+  "commit": "<unchanged sha>", "reinstalled": false, "restart_requested": false, "restart_method": "none",
+  "restart_hint": "", "applied_at": "…", "reason": "already_up_to_date", "message": "already up to date --
+  nothing to apply"}` -- no reinstall, no restart. Otherwise it reinstalls dependencies only if `server/uv.lock`
+  changed, then restarts whatever is actually supervising this process and returns immediately (the response is
+  sent before the restart kills the process): a systemd --user unit if one is detected (by THIS process's own
+  cgroup/`INVOCATION_ID`, never a hardcoded unit name -- `restart_method: "systemd"`), else the PID-file process
   install.sh `--start` manages -- the only mechanism on a host with no systemd, e.g. macOS -- restarted via a
   detached helper (`restart_method: "self"`), else nothing (`restart_method: "none"`). `restart_requested` is
   `true` only when a restart actually fired; `restart_method: "none"` means the pulled code is on disk but this
@@ -299,7 +314,9 @@ timer or on startup -- both are meant to be triggered by a person, `check` at mo
   "message": "<human string>"}}`, never a generic 500 -- reason codes: `self_update_disabled` (403),
   `not_a_git_checkout` (409), `dirty_working_tree` (409), `no_origin_remote` (409), `origin_mismatch` (403),
   `fetch_failed` (502), `not_fast_forward` (409), `reinstall_failed` (500). The frontend should surface
-  `message` verbatim -- it is already the human-readable explanation, not a code to re-translate.
+  `message` verbatim -- it is already the human-readable explanation, not a code to re-translate. The periodic
+  auto-apply path (`update_auto_apply`) only ever calls this when its own check's `update_available` is true --
+  i.e. only when strictly behind, never when merely diverged or ahead.
 
 ## Cost model
 

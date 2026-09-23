@@ -460,8 +460,13 @@ function renderUpdateBanner() {
   const behind = typeof u.behind === "number" ? u.behind : null;
   const textEl = document.getElementById("update-banner-text");
   if (textEl) {
+    // behind > 0, not just "is a number" -- update_available is only ever
+    // true when strictly behind, but never trust that alone to keep the
+    // banner from ever reading "0 commits behind — update available".
     textEl.textContent =
-      behind !== null ? `${behind} commit${behind === 1 ? "" : "s"} behind — update available` : "Update available";
+      behind !== null && behind > 0
+        ? `${behind} commit${behind === 1 ? "" : "s"} behind — update available`
+        : "Update available";
   }
   const errEl = document.getElementById("update-banner-error");
   if (errEl) {
@@ -563,6 +568,13 @@ async function applyUpdate() {
             `and is still on the old version. Run \`${hint}\` to restart it, then reload this page.`;
         }
       }
+    } else if (res.ok && data && data.applied === false && data.reason === "already_up_to_date") {
+      // Not an error -- the pull moved nothing (the "update" was a false
+      // positive, or someone else already applied it). Say so plainly
+      // instead of either a fake success or a red error line; the button
+      // resets below (applied stays false) so "Update now" is clickable
+      // again once the banner's own next check clears it.
+      if (textEl) textEl.textContent = data.message || "Already up to date — nothing to apply.";
     } else {
       // On refusal, show the server's message verbatim -- see AGENTS.md
       // briefing: a dirty working tree and a disabled self-update need

@@ -125,26 +125,79 @@ async def test_fetch_latest_commit_network_error_raises_unreachable():
     assert exc_info.value.reason == "github_unreachable"
 
 
-async def test_fetch_commits_behind_identical_shas_is_zero():
-    n = await update.fetch_commits_behind(mock_client(lambda r: httpx.Response(200)), "o/r", "same", "same")
-    assert n == 0
+async def test_fetch_compare_relation_identical_shas_is_identical_without_a_call():
+    calls = {"n": 0}
+
+    def handler(_request):
+        calls["n"] += 1
+        return httpx.Response(200)
+
+    result = await update.fetch_compare_relation(mock_client(handler), "o/r", "same", "same")
+    assert result == {"relation": "identical", "behind": 0}
+    assert calls["n"] == 0
 
 
-async def test_fetch_commits_behind_reads_ahead_by():
+async def test_fetch_compare_relation_status_ahead_means_local_checkout_is_behind():
+    """GitHub's compare(base=current, head=latest) status "ahead" means the
+    HEAD (latest) has commits the BASE (current) lacks -- i.e. our checkout
+    is strictly behind latest. This is the only relation that is ever an
+    "update available". Confirmed against GitHub's REST API docs for GET
+    /repos/{owner}/{repo}/compare/{basehead} (Compare two commits)."""
     def handler(request):
         assert request.url.path == "/repos/o/r/compare/aaa...bbb"
-        return httpx.Response(200, json={"ahead_by": 3})
+        return httpx.Response(200, json={"status": "ahead", "ahead_by": 3, "behind_by": 0})
 
-    n = await update.fetch_commits_behind(mock_client(handler), "o/r", "aaa", "bbb")
-    assert n == 3
+    result = await update.fetch_compare_relation(mock_client(handler), "o/r", "aaa", "bbb")
+    assert result == {"relation": "behind", "behind": 3}
 
 
-async def test_fetch_commits_behind_failure_returns_none_not_raise():
+async def test_fetch_compare_relation_status_behind_means_local_checkout_is_ahead():
+    """status "behind" means the BASE (current) has commits the HEAD
+    (latest) lacks -- our checkout carries a commit GitHub's `latest`
+    doesn't have (e.g. an unpushed local commit). Never an update."""
+    def handler(_request):
+        return httpx.Response(200, json={"status": "behind", "ahead_by": 0, "behind_by": 2})
+
+    result = await update.fetch_compare_relation(mock_client(handler), "o/r", "aaa", "bbb")
+    assert result == {"relation": "ahead", "behind": 0}
+
+
+async def test_fetch_compare_relation_status_diverged():
+    def handler(_request):
+        return httpx.Response(200, json={"status": "diverged", "ahead_by": 4, "behind_by": 1})
+
+    result = await update.fetch_compare_relation(mock_client(handler), "o/r", "aaa", "bbb")
+    assert result == {"relation": "diverged", "behind": 4}
+
+
+async def test_fetch_compare_relation_404_is_unknown_not_behind():
+    """The edge case from the briefing: `current` exists only locally
+    (unpushed) -- GitHub's compare 404s because it can't resolve that SHA.
+    A checkout carrying a commit GitHub doesn't know about can never be
+    proven strictly behind, so this must come back "unknown", never
+    "behind" -- the exact incident that caused a self-update restart loop
+    from a local, unpushed commit."""
+    def handler(_request):
+        return httpx.Response(404)
+
+    result = await update.fetch_compare_relation(mock_client(handler), "o/r", "aaa", "bbb")
+    assert result == {"relation": "unknown", "behind": None}
+
+
+async def test_fetch_compare_relation_failure_returns_unknown_not_raise():
     def handler(_request):
         return httpx.Response(500)
 
-    n = await update.fetch_commits_behind(mock_client(handler), "o/r", "aaa", "bbb")
-    assert n is None
+    result = await update.fetch_compare_relation(mock_client(handler), "o/r", "aaa", "bbb")
+    assert result == {"relation": "unknown", "behind": None}
+
+
+async def test_fetch_compare_relation_network_error_returns_unknown_not_raise():
+    def handler(request):
+        raise httpx.ConnectError("boom", request=request)
+
+    result = await update.fetch_compare_relation(mock_client(handler), "o/r", "aaa", "bbb")
+    assert result == {"relation": "unknown", "behind": None}
 
 
 # -- resolve_repo (defect 4: _update_settings_view must use this, not a naive
@@ -179,7 +232,7 @@ async def test_check_for_update_shape_and_update_available(tmp_path):
         calls["n"] += 1
         if request.url.path.endswith("/commits/main"):
             return httpx.Response(200, json={"sha": "deadbeef"})
-        return httpx.Response(200, json={"ahead_by": 5})
+        return httpx.Response(200, json={"status": "ahead", "ahead_by": 5, "behind_by": 0})
 
     cfg = _Cfg(update_repo="o/r", update_branch="main")
     state = update.CheckState()
@@ -188,8 +241,85 @@ async def test_check_for_update_shape_and_update_available(tmp_path):
     assert result["current"] == current
     assert result["latest"] == "deadbeef"
     assert result["behind"] == 5
+    assert result["relation"] == "behind"
     assert result["update_available"] is True
-    assert set(result.keys()) == {"current", "latest", "behind", "checked_at", "update_available"}
+    assert set(result.keys()) == {"current", "latest", "behind", "relation", "checked_at", "update_available"}
+
+
+# -- check_for_update: update_available must mean STRICTLY behind (briefing
+#    fix A / the self-restart-loop incident) -- ahead, identical, diverged
+#    and an unresolvable compare (404, e.g. an unpushed local commit) are
+#    all NOT an update. -------------------------------------------------
+
+
+async def test_check_for_update_ahead_of_github_is_not_update_available(tmp_path):
+    """The exact incident: the local checkout carries a commit ahead of
+    GitHub. Must never report update_available."""
+    _init_repo(tmp_path)
+    current = _head(tmp_path)
+
+    def handler(request):
+        if request.url.path.endswith("/commits/main"):
+            return httpx.Response(200, json={"sha": "olderthancurrent"})
+        return httpx.Response(200, json={"status": "behind", "ahead_by": 0, "behind_by": 1})
+
+    cfg = _Cfg(update_repo="o/r", update_branch="main")
+    state = update.CheckState()
+    result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
+
+    assert result["current"] == current
+    assert result["relation"] == "ahead"
+    assert result["update_available"] is False
+
+
+async def test_check_for_update_identical_is_not_update_available(tmp_path):
+    _init_repo(tmp_path)
+    current = _head(tmp_path)
+
+    def handler(request):
+        return httpx.Response(200, json={"sha": current})
+
+    cfg = _Cfg(update_repo="o/r", update_branch="main")
+    state = update.CheckState()
+    result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
+
+    assert result["relation"] == "identical"
+    assert result["update_available"] is False
+
+
+async def test_check_for_update_diverged_is_not_update_available(tmp_path):
+    _init_repo(tmp_path)
+
+    def handler(request):
+        if request.url.path.endswith("/commits/main"):
+            return httpx.Response(200, json={"sha": "deadbeef"})
+        return httpx.Response(200, json={"status": "diverged", "ahead_by": 2, "behind_by": 3})
+
+    cfg = _Cfg(update_repo="o/r", update_branch="main")
+    state = update.CheckState()
+    result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
+
+    assert result["relation"] == "diverged"
+    assert result["update_available"] is False
+
+
+async def test_check_for_update_compare_404_is_not_update_available(tmp_path):
+    """`current` is a local, unpushed commit -- GitHub's compare API 404s on
+    it. Must come back "unknown" / not an update, never a false positive."""
+    _init_repo(tmp_path)
+
+    def handler(request):
+        if request.url.path.endswith("/commits/main"):
+            return httpx.Response(200, json={"sha": "deadbeef"})
+        return httpx.Response(404)
+
+    cfg = _Cfg(update_repo="o/r", update_branch="main")
+    state = update.CheckState()
+    result = await update.check_for_update(cfg, tmp_path, state, client=mock_client(handler))
+
+    assert result["relation"] == "unknown"
+    assert result["behind"] is None
+    assert result["update_available"] is False
 
 
 async def test_check_for_update_no_git_checkout_is_not_update_available(tmp_path):
@@ -461,6 +591,135 @@ def test_apply_update_refuses_non_fast_forward_on_diverged_history(tmp_path, mon
     assert exc_info.value.reason == "not_fast_forward"
 
 
+# -- apply_update: a pull that moves nothing must never restart (briefing
+#    fix B / the self-restart-loop incident: the OLD update_available check
+#    counted being ahead of GitHub as "an update", apply_update pulled
+#    nothing, and STILL restarted -- the restarted process saw the same
+#    false positive and did it again, every ~12s, until a dirty tree
+#    finally blocked it). -------------------------------------------------
+
+
+def test_apply_update_noop_pull_does_not_restart_and_reports_honestly(tmp_path, monkeypatch):
+    remote_dir, seed, clone_dir = _make_remote_and_clone(tmp_path)
+    # _make_remote_and_clone's own `checkout -B main` leaves an unborn
+    # branch (the bare remote's HEAD symref defaults to master, which was
+    # never pushed to) -- re-point it at the real origin/main so the clone
+    # is actually at the remote's HEAD, matching this test's "nothing to
+    # pull" premise.
+    _run(["checkout", "-q", "-B", "main", "origin/main"], clone_dir)
+    same_head = _head(clone_dir)
+    assert same_head == _head(seed)
+
+    restart_calls = []
+    monkeypatch.setattr(
+        update, "_restart", lambda config: restart_calls.append(1) or pytest.fail("must not restart")
+    )
+    cfg = _Cfg(allow_self_update=True, update_repo="testowner/testrepo", update_branch="main")
+    result = update.apply_update(cfg, clone_dir)
+
+    assert restart_calls == []
+    assert result["applied"] is False
+    assert result["commit"] == same_head
+    assert result["reinstalled"] is False
+    assert result["restart_requested"] is False
+    assert result["restart_method"] == "none"
+    assert result["restart_hint"] == ""
+    assert result["reason"] == "already_up_to_date"
+    assert "message" in result
+    assert _head(clone_dir) == same_head  # untouched
+
+
+def test_apply_update_noop_pull_skips_reinstall_even_if_lockfile_present(tmp_path, monkeypatch):
+    """A no-op pull must short-circuit before the reinstall step too -- not
+    just before the restart -- since nothing on disk changed."""
+    remote_dir, seed, clone_dir = _make_remote_and_clone(tmp_path)
+    _run(["checkout", "-q", "-B", "main", "origin/main"], clone_dir)
+    # Commit the lockfile locally in the clone (so the tree stays clean) --
+    # the clone is now strictly AHEAD of the unchanged remote, so the pull
+    # below is still a no-op ("Already up to date").
+    (clone_dir / "server").mkdir()
+    (clone_dir / "server" / "uv.lock").write_text("v1\n")
+    _run(["add", "-A"], clone_dir)
+    _run(["commit", "-qm", "add lockfile locally"], clone_dir)
+
+    reinstall_calls = []
+    real_run = subprocess.run
+
+    def fake_run(cmd, *, cwd, capture_output, text, timeout, check):
+        if cmd and cmd[0] == "git":
+            return real_run(
+                cmd, cwd=cwd, capture_output=capture_output, text=text, timeout=timeout, check=check
+            )
+        reinstall_calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+    monkeypatch.setattr(update, "_restart", lambda config: pytest.fail("must not restart"))
+
+    cfg = _Cfg(allow_self_update=True, update_repo="testowner/testrepo", update_branch="main")
+    result = update.apply_update(cfg, clone_dir)
+
+    assert result["applied"] is False
+    assert reinstall_calls == []
+
+
+# -- REGRESSION: the exact incident -- local checkout one commit AHEAD of
+#    origin, allow_self_update + update_auto_apply both on. Neither the
+#    periodic tick's own check NOR a simulated fresh-process ("startup")
+#    tick may treat this as an update, and apply_update must never be
+#    reached at all (never mind restart) -- see main.py's update_check_loop,
+#    which only calls apply_update() when its OWN tick's update_available
+#    is true. ------------------------------------------------------------
+
+
+async def test_regression_local_checkout_ahead_of_origin_never_triggers_auto_apply(tmp_path, monkeypatch):
+    _init_repo(tmp_path)  # tmp_path is the "local checkout", one commit ahead of the "origin" it reports
+    current = _head(tmp_path)
+    store = _store(tmp_path)
+
+    def handler(request):
+        if request.url.path.endswith("/commits/main"):
+            # GitHub's tip is an OLDER commit than what's checked out locally.
+            return httpx.Response(200, json={"sha": "older-than-current"})
+        # compare(current...older-than-current): current is AHEAD --
+        # GitHub reports status "behind" (base has commits head lacks).
+        return httpx.Response(200, json={"status": "behind", "ahead_by": 0, "behind_by": 1})
+
+    apply_calls = []
+    monkeypatch.setattr(
+        update, "apply_update", lambda config, root: apply_calls.append(1) or pytest.fail("must not apply")
+    )
+    restart_calls = []
+    monkeypatch.setattr(update, "_restart", lambda config: restart_calls.append(1) or (True, "systemd", ""))
+
+    cfg = _Cfg(
+        update_repo="o/r", update_branch="main", update_check_enabled=True,
+        update_auto_apply=True, allow_self_update=True,
+    )
+
+    # Tick 1 ("periodic" tick).
+    result1 = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
+    assert result1["current"] == current
+    assert result1["relation"] == "ahead"
+    assert result1["update_available"] is False
+    if result1.get("update_available") and result1.get("auto_apply"):
+        update.apply_update(cfg, tmp_path)  # would only run on a regression
+
+    # Tick 2, simulating a fresh process at "startup" -- a brand new
+    # CheckState/no in-memory cache, same persisted store, same repo state.
+    # main.py's update_check_loop runs a tick immediately on startup with
+    # exactly this call.
+    result2 = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
+    assert result2["relation"] == "ahead"
+    assert result2["update_available"] is False
+    if result2.get("update_available") and result2.get("auto_apply"):
+        update.apply_update(cfg, tmp_path)  # would only run on a regression
+
+    assert apply_calls == []
+    assert restart_calls == []
+    store.close()
+
+
 # -- periodic_update_check (briefing Task 2) -----------------------------------
 
 
@@ -512,23 +771,28 @@ async def test_periodic_check_first_run_persists_etag_and_state(tmp_path):
 
     def handler(request):
         assert "If-None-Match" not in request.headers
-        return httpx.Response(200, json={"sha": "deadbeef"}, headers={"ETag": '"abc123"'})
+        if request.url.path.endswith("/commits/main"):
+            return httpx.Response(200, json={"sha": "deadbeef"}, headers={"ETag": '"abc123"'})
+        return httpx.Response(200, json={"status": "ahead", "ahead_by": 1, "behind_by": 0})
 
     cfg = _Cfg(update_repo="o/r", update_branch="main", update_check_enabled=True)
     result = await update.periodic_update_check(cfg, tmp_path, store, client=mock_client(handler))
 
     assert result["current"] == current
     assert result["latest"] == "deadbeef"
+    assert result["relation"] == "behind"
     assert result["update_available"] is True
     assert result["last_error"] is None
     assert set(result.keys()) == {
-        "repo", "branch", "current", "latest", "behind", "update_available",
+        "repo", "branch", "current", "latest", "behind", "relation", "update_available",
         "checked_at", "last_error", "enabled", "auto_apply",
     }
 
     persisted = store.get_update_check_state()
     assert persisted["etag"] == '"abc123"'
     assert persisted["latest"] == "deadbeef"
+    assert persisted["relation"] == "behind"
+    assert persisted["current"] == current
     store.close()
 
 
