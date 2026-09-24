@@ -4,6 +4,7 @@ import pytest
 
 from critdash import remote_probe as rp
 from critdash.collectors import analytics as local_an
+from critdash.collectors import bead_sessions as local_bs
 
 
 def _assistant_line(message_id, model, ts, input_tokens=2, output_tokens=10, cache_read=0,
@@ -814,3 +815,328 @@ def test_build_result_includes_kimi_agent_with_kind_kimi(make_kimi_root, tmp_pat
     assert "kimi_usage_buckets" in result
     assert "kimi_error_buckets" in result
     json.dumps(result)  # must still be JSON-serializable with Kimi data present
+
+
+# -- session-bead extraction (resolve_remote_session_bead) -- stateless,
+# bounded-tail duplicate of bead_sessions.py's logic. Synthetic fixtures
+# only (see that module's test file for the shared fixture-building style).
+# ---------------------------------------------------------------------------
+
+_CLAIM_OK = "✓ Updated issue: demo-a — demo title"
+_CLOSE_OK = "✓ Closed demo-a — demo title"
+
+
+def _rp_claude_lines(*pairs):
+    lines = []
+    for tool_id, command, result_text, is_error in pairs:
+        lines.append(json.dumps({
+            "timestamp": "2026-09-23T00:00:00.000Z",
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": tool_id, "name": "Bash",
+                 "input": {"command": command, "description": "run"}},
+            ]},
+        }))
+        lines.append(json.dumps({
+            "timestamp": "2026-09-23T00:00:01.000Z",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tool_id, "is_error": is_error,
+                 "content": result_text},
+            ]},
+        }))
+    return "\n".join(lines) + "\n"
+
+
+def _rp_kimi_lines(*pairs):
+    lines = []
+    t = 1000
+    for tool_id, command, result_text in pairs:
+        lines.append(json.dumps({
+            "type": "agent.message.appended", "time": t,
+            "message": {"message": {"role": "assistant", "toolCalls": [
+                {"type": "function", "id": tool_id, "name": "Bash",
+                 "arguments": json.dumps({"command": command})},
+            ]}},
+        }))
+        lines.append(json.dumps({
+            "type": "agent.message.appended", "time": t + 1,
+            "message": {"message": {"role": "tool", "toolCallId": tool_id,
+                                     "content": [{"type": "text", "text": result_text}]}},
+        }))
+        t += 10
+    return "\n".join(lines) + "\n"
+
+
+def test_resolve_remote_session_bead_claude_claim(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(("t1", "bd update demo-a --claim", _CLAIM_OK, False)))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == ["demo-a"]
+
+
+def test_resolve_remote_session_bead_claude_claim_then_close_null(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(
+        ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
+        ("t2", "bd close demo-a", _CLOSE_OK, False),
+    ))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+def test_resolve_remote_session_bead_claude_failed_claim_ignored(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(
+        ("t1", "bd update demo-a --claim", "already claimed by other", False),
+    ))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+def test_resolve_remote_session_bead_kimi_claim(tmp_path):
+    p = tmp_path / "wire.jsonl"
+    p.write_text(_rp_kimi_lines(("k1", "bd update demo-a --claim", _CLAIM_OK)))
+    assert rp.resolve_remote_session_bead("kimi", [str(p)]) == ["demo-a"]
+
+
+def test_resolve_remote_session_bead_untracked_kind_returns_none(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(("t1", "bd update demo-a --claim", _CLAIM_OK, False)))
+    assert rp.resolve_remote_session_bead("codex", [str(p)]) == []
+
+
+def test_resolve_remote_session_bead_untracked_kind_not_parsed_via_kimi_fallback(tmp_path):
+    # An untracked kind must be rejected up front, not silently fall through
+    # to the Kimi scanner (the `else` branch of the kind->scanner pick) just
+    # because it isn't literally "claude".
+    p = tmp_path / "wire.jsonl"
+    p.write_text(_rp_kimi_lines(("k1", "bd update demo-a --claim", _CLAIM_OK)))
+    assert rp.resolve_remote_session_bead("notarealkind", [str(p)]) == []
+
+
+def test_resolve_remote_session_bead_multiple_unreleased_newest_first(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(
+        ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
+        ("t2", "bd update demo-b --claim", "✓ Updated issue: demo-b — t", False),
+    ))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == ["demo-b", "demo-a"]
+
+
+def test_resolve_remote_session_bead_returns_only_ids_never_command_text():
+    # Contract check: the function's return type is exactly `list[str]` --
+    # never a dict/tuple (or anything carrying a timestamp) that could
+    # smuggle command text or transcript content off the remote host.
+    import inspect
+    sig = inspect.signature(rp.resolve_remote_session_bead)
+    assert sig.return_annotation == "list[str]"
+
+
+def test_resolve_remote_session_bead_caps_at_max_claims(tmp_path):
+    p = tmp_path / "s.jsonl"
+    pairs = [
+        (f"t{i}", f"bd update demo-{i} --claim", f"✓ Updated issue: demo-{i} — t", False)
+        for i in range(15)
+    ]
+    p.write_text(_rp_claude_lines(*pairs))
+    result = rp.resolve_remote_session_bead("claude", [str(p)])
+    assert len(result) == rp._BD_MAX_CLAIMS
+    assert result == [f"demo-{i}" for i in range(14, 14 - rp._BD_MAX_CLAIMS, -1)]
+
+
+def test_build_session_agent_carries_bead_claims_from_transcript(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(("t1", "bd update demo-a --claim", _CLAIM_OK, False)))
+    rec = {
+        "session_id": "sess-1", "cwd": "/srv/demo", "git_branch": "main",
+        "model": None, "mtime": "2026-09-23T00:00:00Z", "status": "working", "path": str(p),
+    }
+    agent = rp.build_session_agent(rec, [])
+    assert agent["bead_claims"] == ["demo-a"]
+    assert agent["bead_tracked"] is True
+    assert "bead" not in agent
+
+
+# -- Defect 1: quoting honoured before splitting; heredocs/substitutions ----
+
+
+def test_rp_defect1_quoted_multiline_description_with_embedded_fake_claims(tmp_path):
+    handoff_text = (
+        ". ~/.config/beads/env\n"
+        "export BEADS_ACTOR=demo-actor-grok\n"
+        "bd update $id --claim\n"
+        "bd update demo-9 --claim\n"
+        "bd show $id\n"
+    )
+    cmd = (
+        'id=$(bd create "handoff bead" --json --assignee "")\n'
+        f'bd update "$id" -d "{handoff_text}"\n'
+        'bd assign "$id" ""\n'
+        'bd label add "$id" needs-demo-grok\n'
+    )
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(("t1", cmd, "✓ Updated issue: demo-x — handoff bead", False)))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+def test_rp_defect1_heredoc_body_with_literal_claim_not_counted(tmp_path):
+    cmd = "cat <<EOF\nbd update demo-1 --claim\nEOF\n"
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(("t1", cmd, "ok", False)))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+def test_rp_defect1_timeout_pipe_redirection_claim_counted(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(
+        ("t1", "timeout 60 bd update demo-1 --claim 2>&1 | tail -1", "✓ Updated issue: demo-1 — t", False),
+    ))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == ["demo-1"]
+
+
+def test_rp_defect1_command_substitution_as_id_argument_skipped(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(
+        ("t1", "bd update $(cat f) --claim", "✓ Updated issue: demo-1 — t", False),
+    ))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+# -- Defect 2: non-literal ids skipped, never inferred from result text -----
+
+
+def test_rp_defect2_bare_dollar_var_id_skipped(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(
+        ("t1", "bd update $BID --claim", "✓ Updated issue: demo-a — t", False),
+    ))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+# -- bd assign -- release --------------------------------------------------
+
+
+def test_rp_assign_empty_after_claim_releases(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(
+        ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
+        ("t2", 'bd assign demo-a ""', "✓ Unassigned demo-a — t", False),
+    ))
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+# -- parity: the local (bead_sessions.py) and remote (this module) bead
+# extractors MUST behave identically on the same fixture set -- both are
+# hand-maintained duplicates (this file can't import critdash), so this is
+# the tripwire if they drift apart, same pattern as the classify_error
+# drift test above.
+
+
+_PARITY_CLAUDE_SCENARIOS: tuple[tuple[str, tuple[tuple[str, str, str, bool], ...]], ...] = (
+    ("plain_claim", (("t1", "bd update demo-a --claim", _CLAIM_OK, False),)),
+    ("claim_then_close", (
+        ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
+        ("t2", "bd close demo-a", _CLOSE_OK, False),
+    )),
+    ("failed_already_claimed", (
+        ("t1", "bd update demo-a --claim", "already claimed by other", False),
+    )),
+    ("is_error_true", (("t1", "bd update demo-a --claim", _CLAIM_OK, True),)),
+    ("compound_wrapped", (
+        (
+            "t1",
+            "cd /srv/demo && . env; export BEADS_ACTOR=y; "
+            "timeout 60 bd update demo-a --claim 2>&1 | tail -1",
+            _CLAIM_OK, False,
+        ),
+    )),
+    ("newline_separated", (
+        ("t1", "export BEADS_ACTOR=y\nbd update demo-a --claim", _CLAIM_OK, False),
+    )),
+    ("echo_not_counted", (
+        ("t1", 'echo "bd update demo-a --claim"', "bd update demo-a --claim", False),
+    )),
+    ("grep_not_counted", (
+        ("t1", "grep -- '--claim' notes.txt", "notes.txt:1: --claim", False),
+    )),
+    ("heredoc_body_not_counted", (
+        ("t1", "cat <<EOF\nbd update demo-a --claim\nEOF\n", "ok", False),
+    )),
+    ("command_substitution_id_skipped", (
+        ("t1", "bd update $(cat f) --claim", _CLAIM_OK, False),
+    )),
+    ("variable_id_skipped", (
+        ("t1", "bd update $BID --claim", _CLAIM_OK, False),
+    )),
+    ("defect1_quoted_multiline_with_fake_claims", (
+        (
+            "t1",
+            'id=$(bd create "h" --json)\n'
+            'bd update "$id" -d "export BEADS_ACTOR=y\nbd update $id --claim\n'
+            'bd update demo-9 --claim"\n'
+            'bd assign "$id" ""\n',
+            "✓ Updated issue: demo-x — h",
+            False,
+        ),
+    )),
+    ("assign_unassign_releases", (
+        ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
+        ("t2", 'bd assign demo-a ""', "✓ Unassigned demo-a — t", False),
+    )),
+    ("assign_to_someone_releases", (
+        ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
+        ("t2", "bd assign demo-a demo-actor-alice", "✓ Assigned demo-a — t to demo-actor-alice", False),
+    )),
+    ("claim_a_then_b_both_unreleased", (
+        ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
+        ("t2", "bd update demo-b --claim", "✓ Updated issue: demo-b — t", False),
+    )),
+)
+
+
+@pytest.mark.parametrize("name,pairs", _PARITY_CLAUDE_SCENARIOS, ids=[s[0] for s in _PARITY_CLAUDE_SCENARIOS])
+def test_bead_extraction_parity_claude(tmp_path, name, pairs):
+    p = tmp_path / f"{name}.jsonl"
+    p.write_text(_rp_claude_lines(*pairs))
+    local_claims = local_bs.resolve_session_bead("claude", [str(p)], {})
+    remote_ids = rp.resolve_remote_session_bead("claude", [str(p)])
+    assert [bid for bid, _ts in local_claims] == remote_ids
+
+
+_PARITY_KIMI_SCENARIOS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
+    ("plain_claim", (("k1", "bd update demo-a --claim", _CLAIM_OK),)),
+    ("claim_then_close", (
+        ("k1", "bd update demo-a --claim", _CLAIM_OK),
+        ("k2", "bd close demo-a", _CLOSE_OK),
+    )),
+    ("already_claimed", (("k1", "bd update demo-a --claim", "already claimed by other"),)),
+    ("assign_releases", (
+        ("k1", "bd update demo-a --claim", _CLAIM_OK),
+        ("k2", 'bd assign demo-a ""', "✓ Unassigned demo-a — t"),
+    )),
+)
+
+
+@pytest.mark.parametrize("name,pairs", _PARITY_KIMI_SCENARIOS, ids=[s[0] for s in _PARITY_KIMI_SCENARIOS])
+def test_bead_extraction_parity_kimi(tmp_path, name, pairs):
+    p = tmp_path / f"{name}.jsonl"
+    p.write_text(_rp_kimi_lines(*pairs))
+    local_claims = local_bs.resolve_session_bead("kimi", [str(p)], {})
+    remote_ids = rp.resolve_remote_session_bead("kimi", [str(p)])
+    assert [bid for bid, _ts in local_claims] == remote_ids
+
+
+def test_collect_agents_herdr_only_sets_bead_tracked_by_kind(monkeypatch):
+    herdr_json = json.dumps({"result": {"agents": [
+        {"agent": "claude", "agent_session": {"value": "s1"}, "cwd": "/srv/demo"},
+        {"agent": "codex", "agent_session": {"value": "s2"}, "cwd": "/srv/demo"},
+    ]}})
+
+    class FakeProc:
+        returncode = 0
+        stdout = herdr_json.encode()
+        stderr = b""
+
+    monkeypatch.setattr(rp.subprocess, "run", lambda *a, **k: FakeProc())
+    monkeypatch.setattr(rp, "find_herdr", lambda b: "herdr")
+    agents = rp.collect_agents("herdr", [])
+    by_kind = {a["kind"]: a for a in agents}
+    assert by_kind["claude"]["bead_tracked"] is True
+    assert by_kind["claude"]["bead"] is None  # no transcript path from herdr alone
+    assert by_kind["codex"]["bead_tracked"] is False

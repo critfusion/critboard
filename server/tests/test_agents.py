@@ -8,6 +8,7 @@ from critdash.collectors import CollectorIssue
 from critdash.collectors import agents as agents_mod
 from critdash.collectors.agents import (
     AgentsCollector,
+    _apply_bead_cross_check,
     agent_label,
     best_worktree_match,
     merge_agent_sources,
@@ -41,6 +42,173 @@ def test_best_worktree_match_longest_prefix():
 
 def test_best_worktree_match_none():
     assert best_worktree_match("/unrelated/path", [{"path": "/home/user/work"}]) is None
+
+
+# -- session-bead cross-check (_apply_bead_cross_check) ----------------------
+
+
+def _tracked_agent(session_id, bead, claim_ts=1.0, last_activity=None, kind="claude"):
+    """A bead_tracked agent with a single unreleased claim (or none, when
+    `bead` is None) -- the shape AgentsCollector.collect() hands to
+    _apply_bead_cross_check BEFORE it resolves "bead"/"bead_title"."""
+    claims = [(bead, claim_ts)] if bead else []
+    return {
+        "id": session_id, "session_id": session_id, "kind": kind,
+        "bead_tracked": True, "bead": None, "bead_title": None,
+        "_bead_claims": claims, "last_activity": last_activity,
+    }
+
+
+def _tracked_agent_multi(session_id, claims, last_activity=None, kind="claude"):
+    """A bead_tracked agent with several unreleased claims -- `claims` is
+    the ordered (most-recent-first) [(bead_id, claim_ts), ...] list Defect 3
+    requires resolve_session_bead to expose."""
+    return {
+        "id": session_id, "session_id": session_id, "kind": kind,
+        "bead_tracked": True, "bead": None, "bead_title": None,
+        "_bead_claims": list(claims), "last_activity": last_activity,
+    }
+
+
+def test_cross_check_null_when_bead_no_longer_in_progress():
+    agents = [_tracked_agent("s1", "demo-a")]
+    _apply_bead_cross_check(agents, {"demo-a": {"status": "closed", "title": "t"}})
+    assert agents[0]["bead"] is None
+    assert agents[0]["bead_title"] is None
+
+
+def test_cross_check_keeps_bead_when_in_progress_and_sets_title():
+    agents = [_tracked_agent("s1", "demo-a")]
+    _apply_bead_cross_check(agents, {"demo-a": {"status": "in_progress", "title": "demo title"}})
+    assert agents[0]["bead"] == "demo-a"
+    assert agents[0]["bead_title"] == "demo title"
+
+
+def test_cross_check_null_when_bead_unknown_to_beads_data():
+    agents = [_tracked_agent("s1", "demo-a")]
+    _apply_bead_cross_check(agents, {})
+    assert agents[0]["bead"] is None
+
+
+def test_cross_check_beads_collector_inactive_gives_null():
+    agents = [_tracked_agent("s1", "demo-a")]
+    _apply_bead_cross_check(agents, None)
+    assert agents[0]["bead"] is None
+
+
+def test_cross_check_untracked_kind_untouched_by_inactive_beads():
+    agents = [{"id": "s1", "kind": "codex", "bead_tracked": False, "bead": None, "bead_title": None}]
+    _apply_bead_cross_check(agents, None)
+    assert agents[0]["bead"] is None
+    assert agents[0]["bead_tracked"] is False
+
+
+def test_cross_check_dedupe_most_recent_claim_wins():
+    older = _tracked_agent("s1", "demo-a", claim_ts=100.0)
+    newer = _tracked_agent("s2", "demo-a", claim_ts=200.0)
+    agents = [older, newer]
+    _apply_bead_cross_check(agents, {"demo-a": {"status": "in_progress", "title": "t"}})
+    assert older["bead"] is None
+    assert newer["bead"] == "demo-a"
+
+
+def test_cross_check_dedupe_remote_uses_last_activity_fallback():
+    # A remote agent carries no _bead_claim_ts (remote_probe.py returns
+    # ONLY ids) -- last_activity is the recency fallback.
+    remote = _tracked_agent("s1", "demo-a", claim_ts=None, last_activity="2026-01-01T00:00:00Z")
+    local = _tracked_agent("s2", "demo-a", claim_ts=None, last_activity="2026-06-01T00:00:00Z")
+    agents = [remote, local]
+    _apply_bead_cross_check(agents, {"demo-a": {"status": "in_progress", "title": "t"}})
+    assert remote["bead"] is None
+    assert local["bead"] == "demo-a"
+
+
+def test_cross_check_pops_internal_claim_ts():
+    agents = [_tracked_agent("s1", "demo-a")]
+    _apply_bead_cross_check(agents, {"demo-a": {"status": "in_progress", "title": "t"}})
+    assert "_bead_claim_ts" not in agents[0]
+
+
+def test_cross_check_pops_internal_claims_fields():
+    agents = [_tracked_agent("s1", "demo-a")]
+    _apply_bead_cross_check(agents, {"demo-a": {"status": "in_progress", "title": "t"}})
+    assert "_bead_claims" not in agents[0]
+    assert "_bead_candidates" not in agents[0]
+    assert "_bead_idx" not in agents[0]
+
+
+# -- Defect 3: selection = most recent UNRELEASED claim that is CURRENTLY
+# in_progress, not just the most recent claim outright ----------------------
+
+
+def test_cross_check_selects_older_in_progress_claim_over_newer_blocked_one():
+    # Session claimed A (still in_progress), then later claimed B (now
+    # blocked) -- the real incident this fix targets: the card must show A,
+    # not go blank just because the MOST RECENT claim isn't in_progress.
+    agent = _tracked_agent_multi("s1", [("demo-b", 200.0), ("demo-a", 100.0)])
+    _apply_bead_cross_check(
+        [agent],
+        {"demo-a": {"status": "in_progress", "title": "a"}, "demo-b": {"status": "blocked", "title": "b"}},
+    )
+    assert agent["bead"] == "demo-a"
+    assert agent["bead_title"] == "a"
+
+
+def test_cross_check_selects_newest_when_both_in_progress():
+    agent = _tracked_agent_multi("s1", [("demo-b", 200.0), ("demo-a", 100.0)])
+    _apply_bead_cross_check(
+        [agent],
+        {
+            "demo-a": {"status": "in_progress", "title": "a"},
+            "demo-b": {"status": "in_progress", "title": "b"},
+        },
+    )
+    assert agent["bead"] == "demo-b"
+
+
+def test_cross_check_null_when_none_of_the_claims_are_in_progress():
+    agent = _tracked_agent_multi("s1", [("demo-b", 200.0), ("demo-a", 100.0)])
+    _apply_bead_cross_check(
+        [agent],
+        {"demo-a": {"status": "closed", "title": "a"}, "demo-b": {"status": "blocked", "title": "b"}},
+    )
+    assert agent["bead"] is None
+    assert agent["bead_title"] is None
+
+
+def test_cross_check_dedupe_loser_falls_through_to_its_own_next_in_progress_claim():
+    # Both sessions' CURRENT top candidate is demo-a -- s2's claim is newer,
+    # so s2 keeps demo-a. s1 does NOT just go null: it falls through to its
+    # own next in_progress candidate, demo-c.
+    s1 = _tracked_agent_multi("s1", [("demo-a", 100.0), ("demo-c", 50.0)])
+    s2 = _tracked_agent_multi("s2", [("demo-a", 200.0)])
+    _apply_bead_cross_check(
+        [s1, s2],
+        {
+            "demo-a": {"status": "in_progress", "title": "a"},
+            "demo-c": {"status": "in_progress", "title": "c"},
+        },
+    )
+    assert s2["bead"] == "demo-a"
+    assert s1["bead"] == "demo-c"
+
+
+def test_cross_check_dedupe_chain_of_collisions_resolves():
+    # s1's fallback (after losing demo-a to s2) collides with s3's only
+    # candidate -- s3's claim is newer, so s1 falls through again to null.
+    s1 = _tracked_agent_multi("s1", [("demo-a", 100.0), ("demo-b", 50.0)])
+    s2 = _tracked_agent_multi("s2", [("demo-a", 200.0)])
+    s3 = _tracked_agent_multi("s3", [("demo-b", 300.0)])
+    _apply_bead_cross_check(
+        [s1, s2, s3],
+        {
+            "demo-a": {"status": "in_progress", "title": "a"},
+            "demo-b": {"status": "in_progress", "title": "b"},
+        },
+    )
+    assert s2["bead"] == "demo-a"
+    assert s3["bead"] == "demo-b"
+    assert s1["bead"] is None
 
 
 @pytest.mark.asyncio
@@ -82,7 +250,8 @@ async def test_collect_end_to_end(fixtures_dir, monkeypatch, tmp_path):
     for a in agents:
         for key in (
             "id", "kind", "status", "cwd", "cwd_short", "repo", "branch", "pane", "workspace",
-            "title", "label", "focused", "session_id", "bead", "last_activity", "status_since",
+            "title", "label", "focused", "session_id", "bead", "bead_tracked", "bead_title",
+            "last_activity", "status_since",
             "tokens_today", "cost_today_usd", "msg_count_today", "subagents_active", "model", "source",
         ):
             assert key in a
@@ -103,6 +272,113 @@ async def test_collect_end_to_end(fixtures_dir, monkeypatch, tmp_path):
     assert by_cwd[home + "/work/demo-app"]["cwd_short"] == "~/work/demo-app"
     assert by_cwd[home + "/work/dashboard"]["label"] == "dashboard"
     assert by_cwd[home + "/work/dashboard"]["cwd_short"] == "~/work/dashboard"
+
+
+@pytest.mark.asyncio
+async def test_collect_resolves_session_bead_end_to_end(monkeypatch, tmp_path):
+    """A session-derived (no herdr) agent's bead comes from its OWN
+    transcript, then survives (or not) the beads-data cross-check -- full
+    AgentsCollector.collect() path, synthetic fixtures only."""
+
+    async def fake_exec_no_herdr(*args, **kwargs):
+        raise OSError("no herdr on this host")
+
+    monkeypatch.setattr(agents_mod.asyncio, "create_subprocess_exec", fake_exec_no_herdr)
+
+    projects_dir = tmp_path / "projects" / "-demo"
+    projects_dir.mkdir(parents=True)
+    session_path = projects_dir / "session-1.jsonl"
+    line1 = json.dumps({
+        "timestamp": "2026-09-23T00:00:00.000Z", "sessionId": "session-1", "cwd": "/srv/demo",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "bd update demo-a --claim", "description": "claim"}},
+        ]},
+    })
+    line2 = json.dumps({
+        "timestamp": "2026-09-23T00:00:01.000Z", "sessionId": "session-1",
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "is_error": False,
+             "content": "✓ Updated issue: demo-a — demo title"},
+        ]},
+    })
+    session_path.write_text(line1 + "\n" + line2 + "\n")
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {"demo-a": {"status": "in_progress", "title": "demo title"}}
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store,
+        session_projects_glob=str(projects_dir / "*.jsonl"),
+    )
+    result = await collector.collect()
+    store.close()
+
+    agents = result["agents"]
+    assert len(agents) == 1
+    a = agents[0]
+    assert a["kind"] == "claude"
+    assert a["bead_tracked"] is True
+    assert a["bead"] == "demo-a"
+    assert a["bead_title"] == "demo title"
+
+    # Now the SAME bead is no longer in_progress -- next poll must null it,
+    # even though the transcript (and its cache) is unchanged.
+    ctx.latest_beads_by_id = {"demo-a": {"status": "closed", "title": "demo title"}}
+    result2 = await collector.collect()
+    a2 = result2["agents"][0]
+    assert a2["bead"] is None
+    assert a2["bead_title"] is None
+
+
+@pytest.mark.asyncio
+async def test_collect_resolves_remote_bead_claims_list_end_to_end(monkeypatch, tmp_path):
+    """Defect 3, remote path: remote_probe.py ships ONLY an ordered
+    "bead_claims" id list (never a single "bead") -- AgentsCollector must
+    rewrap that into this collector's own (bead_id, ts) candidate shape and
+    run it through the exact same in_progress cross-check a local session
+    gets."""
+
+    async def fake_exec_no_herdr(*args, **kwargs):
+        raise OSError("no herdr on this host")
+
+    monkeypatch.setattr(agents_mod.asyncio, "create_subprocess_exec", fake_exec_no_herdr)
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {
+        "demo-b": {"status": "blocked", "title": "b"},
+        "demo-a": {"status": "in_progress", "title": "a"},
+    }
+    ctx.remote_hosts = {
+        "host2": {
+            "ok": True,
+            "agents": [{
+                "id": "remote-session-1", "kind": "claude", "status": "working",
+                "cwd": "/srv/demo", "repo": None, "branch": None, "pane": None,
+                "workspace": None, "title": None, "label": "demo", "focused": False,
+                "session_id": "remote-session-1",
+                # newest claim first -- demo-b is blocked, demo-a is in_progress.
+                "bead_claims": ["demo-b", "demo-a"],
+                "bead_tracked": True, "last_activity": "2026-09-23T00:00:00Z",
+                "status_since": None,
+                "tokens_today": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0},
+                "cost_today_usd": 0.0, "msg_count_today": 0, "subagents_active": 0,
+                "model": None, "source": "session", "host": "host2", "stale": False,
+            }],
+        },
+    }
+    collector = AgentsCollector(ctx=ctx, herdr_bin="herdr", store=store)
+    result = await collector.collect()
+    store.close()
+
+    remote_agents = [a for a in result["agents"] if a.get("session_id") == "remote-session-1"]
+    assert len(remote_agents) == 1
+    a = remote_agents[0]
+    assert a["bead"] == "demo-a"
+    assert a["bead_title"] == "a"
+    assert "bead_claims" not in a
+    assert "_bead_claims" not in a
 
 
 # -- short_cwd / agent_label (Fix 2) -----------------------------------------

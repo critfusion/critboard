@@ -322,6 +322,7 @@ def _build_kimi_agent(
         "source": "session",
         "_status_key": session,
         "_event_desc": f"kimi session {status} ({cwd})",
+        "_transcript_paths": list(rec["agent_wire_paths"].values()),
     }
 
 

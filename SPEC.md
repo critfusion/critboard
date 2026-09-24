@@ -130,7 +130,27 @@ Notes on real shapes observed on this host:
     "title": "CritBoard",
     "focused": true,
     "session_id": "ac025f78-…",
-    "bead": "demo-fleet-xxxx",  // claimed bead if resolvable, else null
+    // "bead"/"bead_title": derived from THIS session's own transcript (the
+    // exact bd commands it ran, tokenized respecting shell quoting, and
+    // their results), never from actor name (one actor claims for many
+    // sessions) and never a guess -- and never inferred from a command's
+    // OUTPUT text, only from literal id arguments in the command itself.
+    // Only ever set for a kind in bead_sessions.BEAD_TRACKED_KINDS
+    // ("claude", "kimi" today). A session may hold several unreleased
+    // claims at once; "bead" is the most recent of them that is CURRENTLY
+    // in_progress (not simply the most recent claim outright) -- null when
+    // none of them are. See critdash/collectors/bead_sessions.py for the
+    // extraction rules and critdash/collectors/agents.py's
+    // _apply_bead_cross_check for the in_progress selection and
+    // cross-session dedupe.
+    "bead": "demo-fleet-xxxx",
+    "bead_title": "…",                // null when bead is null
+    // "bead_tracked": true when this agent's `kind` has a transcript
+    // extractor at all (independent of whether `bead` itself is null right
+    // now) -- the UI uses this to say "bead not tracked for <kind>"
+    // instead of the misleading "no active bead" for a kind (codex, grok,
+    // cursor, …) this dashboard doesn't parse transcripts for yet.
+    "bead_tracked": true,
     "last_activity": "2026-09-18T12:59:00Z",   // from jsonl tail
     "status_since": "2026-09-18T12:40:00Z",
     "tokens_today": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4, "total": 10},

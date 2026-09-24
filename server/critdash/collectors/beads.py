@@ -765,6 +765,16 @@ class BeadsCollector(BaseCollector):
 
         self._detect_transitions(items)
 
+        # Published for AgentsCollector's session-bead cross-check (see
+        # ctx.py's docstring on latest_beads_by_id): a bead a session's
+        # transcript claims is only ever DISPLAYED if it is still
+        # in_progress here right now -- otherwise the work ended, or
+        # someone else took it, since that transcript line was written.
+        if self.ctx is not None:
+            self.ctx.latest_beads_by_id = {
+                i["id"]: {"status": i["status"], "title": i.get("title")} for i in items
+            }
+
         return {"beads": {"stats": stats, "items": items, "lanes": lanes}}
 
     def _detect_transitions(self, items: list[dict]) -> None:

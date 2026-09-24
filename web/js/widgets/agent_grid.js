@@ -1,5 +1,6 @@
 import { el, fmtTokens, fmtCost, fmtRelTime, fmtDuration, escapeHtml } from "../utils.js";
-import { openAgentModal } from "../detail.js";
+import { openAgentModal, openBeadModal } from "../detail.js";
+import { truncateLabel } from "../bead_routing.js";
 
 const KIND_LABEL = { claude: "CLAUDE", codex: "CODEX", grok: "GROK" };
 const STATUS_ORDER = { working: 0, idle: 1, done: 2, unknown: 3 };
@@ -43,8 +44,37 @@ function agentCard(a, data) {
   const sub = el("div", { class: "dim mono truncate", style: "font-size:10px;" },
     `${a.repo || "-"}${a.branch ? " @ " + a.branch : ""}`);
 
-  const beadRow = el("div", { class: "dim mono truncate", style: "font-size:10px;" },
-    a.bead ? `bead ${a.bead}` : "no active bead");
+  let beadLabel;
+  if (a.bead) {
+    const titlePart = a.bead_title ? ` — ${truncateLabel(a.bead_title, 24)}` : "";
+    beadLabel = `bead ${a.bead}${titlePart}`;
+  } else if (a.bead_tracked) {
+    beadLabel = "no active bead";
+  } else {
+    // Untracked kind: the dashboard has no transcript extractor for it
+    // (see bead_sessions.BEAD_TRACKED_KINDS), so "no active bead" would
+    // assert a fact it doesn't actually know.
+    beadLabel = `bead not tracked for ${a.kind || "this kind"}`;
+  }
+  const beadRow = el("div", {
+    class: "dim mono truncate" + (a.bead ? " clickable-card" : ""),
+    style: "font-size:10px;" + (a.bead ? " cursor:pointer; text-decoration:underline dotted;" : ""),
+    title: a.bead ? `Open ${a.bead}` : beadLabel,
+    ...(a.bead ? { tabindex: "0", role: "button", "aria-label": `Open bead ${a.bead}` } : {}),
+  }, beadLabel);
+  if (a.bead) {
+    const openThisBead = (e) => {
+      e.stopPropagation();
+      openBeadModal(a.bead, data, beadRow);
+    };
+    beadRow.addEventListener("click", openThisBead);
+    beadRow.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openThisBead(e);
+      }
+    });
+  }
 
   const statusRow = el("div", { style: "display:flex; justify-content:space-between; font-size:10px;" }, [
     el("span", { class: "dim" }, (a.status || "unknown").toUpperCase()),

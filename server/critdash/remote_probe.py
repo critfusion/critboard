@@ -58,6 +58,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -674,6 +675,526 @@ def discover_kimi_sessions(kimi_dir: str) -> list[dict]:
 
 _KIMI_TAIL_READ_BYTES = 65536
 
+# ---------------------------------------------------------------------------
+# Session-transcript bead extraction -- a bounded, stateless-per-call
+# duplicate of critdash/collectors/bead_sessions.py's logic (never imported:
+# this whole file is piped to `ssh host python3 -` fresh on every call, so it
+# has to survive being copied ALONE to a machine with no critdash package
+# installed -- same rule the module docstring already states for the
+# agents/worktrees duplication above). See bead_sessions.py's own docstring
+# for the two verified transcript formats (Claude Code jsonl, Kimi
+# wire.jsonl) and the bd output markers this reads.
+#
+# Unlike the local collector, this has NO incremental cache across ticks --
+# each `ssh host python3 -` invocation is a fresh interpreter with no state
+# from the last probe (see this module's own docstring: "stateless per
+# call"). Every live session's transcript(s) are re-scanned in full on every
+# probe, bounded by `_BD_SCAN_TAIL_BYTES`: a transcript larger than that is
+# read from its TAIL only, not from byte 0 -- a documented, bounded
+# fallback (an active bead claimed further back than the tail window, with
+# no bd activity at all since, would be missed -- judged acceptable: a
+# session with megabytes of non-bd activity since its last claim is not the
+# common case this dashboard needs to catch). Measured against this
+# module's own real remote hosts; see the timing note in the collector's
+# test/verification report.
+_BD_SCAN_TAIL_BYTES = 2_000_000
+_BEAD_TRACKED_KINDS = frozenset({"claude", "kimi"})
+# Cap on how many unreleased-claim ids one session ships off this host --
+# keeps the probe payload small (this is the only thing about a session's
+# bd activity that ever leaves the host: ids, nothing else).
+_BD_MAX_CLAIMS = 10
+
+_BD_ALREADY_CLAIMED_RE = re.compile(r"already claimed", re.IGNORECASE)
+_BD_ERROR_RE = re.compile(r"(?m)^Error:")
+_BD_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_BD_TIMEOUT_DURATION_RE = re.compile(r"^\d+[smh]?$")
+_BD_VALUE_FLAGS = {
+    "--acceptance", "--add-label", "-a", "--assignee", "--append-notes",
+    "--await-id", "--body-file", "-d", "--description", "--design",
+    "--design-file", "--due", "--defer", "-e", "--estimate",
+    "--external-ref", "--metadata", "--notes", "--parent", "-p",
+    "--priority", "--remove-label", "-r", "--reason", "--reason-file",
+    "--session", "--set-labels", "--set-metadata", "--spec-id", "-s",
+    "--status", "--title", "-t", "--type", "--unset-metadata", "--actor",
+    "--db", "-C", "--directory", "--dolt-auto-commit",
+}
+# Same strict allow-list as collectors/beads.py's validate_bead_id --
+# duplicated (not imported) for the same "must survive being copied alone"
+# reason as the rest of this file.
+_BD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def _bd_validate_id(bead_id: str) -> bool:
+    return bool(bead_id) and bool(_BD_ID_RE.match(bead_id))
+
+
+_BD_HEREDOC_OPEN_RE = re.compile(r"<<(-)?")
+_BD_HEREDOC_WORD_RE = re.compile(r"[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _bd_preprocess(command: str) -> str | None:
+    """Quote-aware pass over the whole command, mirroring
+    bead_sessions.py's _preprocess_command: drops heredoc BODIES entirely
+    (from the line after an unquoted `<<[-]DELIM` marker through the
+    terminator line), and drops the CONTENTS of any unquoted `$( ... )` or
+    backtick substitution. Everything else -- crucially, the text of any
+    quoted argument -- passes through byte for byte, so the tokenizer below
+    sees exactly the quoting a real shell would. Returns None on an
+    unterminated quote/substitution/heredoc; see that module for the full
+    rationale (Defect 1)."""
+    out: list[str] = []
+    i, n = 0, len(command)
+    in_squote = in_dquote = False
+    while i < n:
+        c = command[i]
+        if in_squote:
+            out.append(c)
+            i += 1
+            if c == "'":
+                in_squote = False
+            continue
+        if in_dquote:
+            if c == "\\" and i + 1 < n:
+                out.append(c)
+                out.append(command[i + 1])
+                i += 2
+                continue
+            out.append(c)
+            i += 1
+            if c == '"':
+                in_dquote = False
+            continue
+        if c == "'":
+            in_squote = True
+            out.append(c)
+            i += 1
+            continue
+        if c == '"':
+            in_dquote = True
+            out.append(c)
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(c)
+            out.append(command[i + 1])
+            i += 2
+            continue
+        if c == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" and j + 1 < n else 1
+            if j >= n:
+                return None
+            i = j + 1
+            continue
+        if c == "$" and i + 1 < n and command[i + 1] == "(":
+            depth = 1
+            j = i + 2
+            sq = dq = False
+            while j < n and depth > 0:
+                cj = command[j]
+                if sq:
+                    if cj == "'":
+                        sq = False
+                    j += 1
+                    continue
+                if dq:
+                    if cj == "\\" and j + 1 < n:
+                        j += 2
+                        continue
+                    if cj == '"':
+                        dq = False
+                    j += 1
+                    continue
+                if cj == "'":
+                    sq = True
+                elif cj == '"':
+                    dq = True
+                elif cj == "\\" and j + 1 < n:
+                    j += 1
+                elif cj == "(":
+                    depth += 1
+                elif cj == ")":
+                    depth -= 1
+                j += 1
+            if depth != 0:
+                return None
+            i = j
+            continue
+        m = _BD_HEREDOC_OPEN_RE.match(command, i)
+        if m:
+            wm = _BD_HEREDOC_WORD_RE.match(command, m.end())
+            if wm:
+                delim = wm.group(2)
+                strip_tabs = bool(m.group(1))
+                out.append(command[i:wm.end()])
+                i = wm.end()
+                eol = command.find("\n", i)
+                if eol == -1:
+                    out.append(command[i:])
+                    i = n
+                    break
+                out.append(command[i:eol + 1])
+                i = eol + 1
+                found = False
+                while i < n:
+                    line_end = command.find("\n", i)
+                    line_end_excl = line_end if line_end != -1 else n
+                    line = command[i:line_end_excl]
+                    cmp_line = line.lstrip("\t") if strip_tabs else line
+                    i = (line_end + 1) if line_end != -1 else n
+                    if cmp_line == delim:
+                        found = True
+                        break
+                if not found:
+                    return None
+                continue
+        out.append(c)
+        i += 1
+    if in_squote or in_dquote:
+        return None
+    return "".join(out)
+
+
+_BD_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", "&"})
+_BD_NEWLINE_ONLY_RE = re.compile(r"^\n+$")
+_BD_REDIR_OP_RE = re.compile(r"^&?[<>]{1,2}&?$")
+_BD_REDIR_FD_RE = re.compile(r"^\d{1,2}$")
+
+
+def _bd_strip_redirections(tokens: list[str]) -> list[str]:
+    out: list[str] = []
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if _BD_REDIR_FD_RE.match(tok) and i + 1 < n and _BD_REDIR_OP_RE.match(tokens[i + 1]):
+            i += 1
+            continue
+        if _BD_REDIR_OP_RE.match(tok):
+            i += 1
+            if i < n:
+                i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
+def _bd_split_segments(command: str) -> list[list[str]] | None:
+    """Mirrors bead_sessions.py's _split_bd_segments: tokenize the WHOLE
+    command respecting shell quoting first, then split on control operators
+    (&&, ||, ;, |, &, unquoted newlines) that occur outside quotes, with
+    redirections stripped from each segment. Returns None -- never a naive
+    fallback -- if the command can't be tokenized at all."""
+    pre = _bd_preprocess(command)
+    if pre is None:
+        return None
+    try:
+        lex = shlex.shlex(pre, posix=True, punctuation_chars=";&|()<>\n")
+        lex.whitespace_split = True
+        lex.whitespace = lex.whitespace.replace("\n", "")
+        tokens = list(lex)
+    except ValueError:
+        return None
+    segments: list[list[str]] = []
+    seg: list[str] = []
+    for tok in tokens:
+        if tok in _BD_CONTROL_TOKENS or _BD_NEWLINE_ONLY_RE.match(tok):
+            if seg:
+                segments.append(_bd_strip_redirections(seg))
+            seg = []
+        else:
+            seg.append(tok)
+    if seg:
+        segments.append(_bd_strip_redirections(seg))
+    return [s for s in segments if s]
+
+
+def _bd_find_invocation(segment: list[str]) -> list[str] | None:
+    i, n = 0, len(segment)
+    while i < n:
+        tok = segment[i]
+        if tok == "env":
+            i += 1
+            continue
+        if tok == "timeout":
+            i += 1
+            if i < n and _BD_TIMEOUT_DURATION_RE.match(segment[i]):
+                i += 1
+            continue
+        if _BD_ENV_ASSIGN_RE.match(tok):
+            i += 1
+            continue
+        break
+    if i >= n or segment[i] == "export":
+        return None
+    base = segment[i].rsplit("/", 1)[-1]
+    if base != "bd":
+        return None
+    return segment[i + 1 :]
+
+
+def _bd_parse_call(argv: list[str]) -> tuple[str, list[str], dict] | None:
+    """Mirrors bead_sessions.py's _parse_bd_call, including `bd assign <id>
+    <name>` (shorthand for `bd update <id> --assignee <name>`, verified via
+    `bd assign --help`) -- its second positional is a name, NEVER a bead id."""
+    if not argv:
+        return None
+    if argv[0] == "assign":
+        positionals = [t for t in argv[1:] if t != "--"]
+        if len(positionals) < 2:
+            return None
+        return "assign", [positionals[0]], {"assignee": positionals[1]}
+    if argv[0] not in ("update", "close", "done"):
+        return None
+    subcmd = argv[0]
+    ids: list[str] = []
+    flags: dict = {}
+    i, n = 1, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok == "--":
+            i += 1
+            continue
+        if tok.startswith("--") and "=" in tok:
+            name, _sep, val = tok.partition("=")
+            flags[name] = val
+            i += 1
+            continue
+        if len(tok) > 1 and tok[0] == "-" and not re.match(r"^-\d", tok):
+            if tok in _BD_VALUE_FLAGS:
+                flags[tok] = argv[i + 1] if i + 1 < n else ""
+                i += 2
+            else:
+                flags[tok] = True
+                i += 1
+            continue
+        ids.append(tok)
+        i += 1
+    return subcmd, ids, flags
+
+
+def _bd_classify_call(subcmd: str, ids: list[str], flags: dict) -> str | None:
+    """`bd assign <id> <name>` is ALWAYS a release for this session,
+    whatever `<name>` is -- see bead_sessions.py's _classify_bd_call."""
+    if subcmd == "assign":
+        return "release" if ids else None
+    if subcmd in ("close", "done"):
+        return "release" if ids else None
+    if flags.get("--claim"):
+        return "claim"
+    status = flags.get("--status", flags.get("-s"))
+    if status is not None:
+        return "claim" if str(status).strip().lower().replace("-", "_") == "in_progress" else "release"
+    assignee = flags.get("--assignee", flags.get("-a"))
+    if assignee == "":
+        return "release"
+    return None
+
+
+def _bd_result_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        return "\n".join(p for p in parts if isinstance(p, str))
+    return ""
+
+
+def _bd_resolve_success_ids(result_text: str, is_error: bool, attempted_ids: list[str]) -> list[str]:
+    """Mirrors bead_sessions.py's _resolve_success_ids: accepts/rejects the
+    already-literal `attempted_ids` based on is_error and known
+    failure-text markers only -- NEVER infers/substitutes an id from
+    `result_text` (Defect 2)."""
+    if is_error:
+        return []
+    if _BD_ALREADY_CLAIMED_RE.search(result_text) or _BD_ERROR_RE.search(result_text):
+        return []
+    return attempted_ids
+
+
+def _bd_apply_command(
+    events: list[tuple], seq_box: list[int], command: str, is_error: bool, result_text: str, ts: float | None
+) -> None:
+    segments = _bd_split_segments(command)
+    if segments is None:
+        return
+    for seg in segments:
+        argv = _bd_find_invocation(seg)
+        if argv is None:
+            continue
+        parsed = _bd_parse_call(argv)
+        if parsed is None:
+            continue
+        subcmd, ids, flags = parsed
+        if not ids or not all(_bd_validate_id(i) for i in ids):
+            continue
+        action = _bd_classify_call(subcmd, ids, flags)
+        if action is None:
+            continue
+        for bid in _bd_resolve_success_ids(result_text, is_error, ids):
+            seq_box[0] += 1
+            events.append((seq_box[0], action, bid, ts))
+
+
+def _bd_event_key(seq: int, ts: float | None) -> tuple[float, int]:
+    return (ts if ts is not None else float("-inf"), seq)
+
+
+def _bd_unreleased_claims(events: list[tuple]) -> list[tuple[str, float | None]]:
+    """Mirrors bead_sessions.py's _unreleased_claims: every bead this
+    session has claimed and not (yet) released, most-recent-claim-first
+    (Defect 3)."""
+    latest_claim: dict[str, tuple[int, float | None]] = {}
+    for seq, action, bid, ts in events:
+        if action != "claim":
+            continue
+        prev = latest_claim.get(bid)
+        if prev is None or _bd_event_key(seq, ts) > _bd_event_key(*prev):
+            latest_claim[bid] = (seq, ts)
+    unreleased: list[tuple[str, float | None, tuple[float, int]]] = []
+    for bid, (seq, ts) in latest_claim.items():
+        key = _bd_event_key(seq, ts)
+        released_after = any(
+            a == "release" and rid == bid and _bd_event_key(rseq, rts) > key
+            for rseq, a, rid, rts in events
+        )
+        if not released_after:
+            unreleased.append((bid, ts, key))
+    unreleased.sort(key=lambda c: c[2], reverse=True)
+    return [(bid, ts) for bid, ts, _key in unreleased]
+
+
+def _bd_scan_claude_file(path: str, events: list[tuple], seq_box: list[int]) -> None:
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > _BD_SCAN_TAIL_BYTES:
+                f.seek(size - _BD_SCAN_TAIL_BYTES)
+            data = f.read()
+    except OSError:
+        return
+    pending: dict[str, str] = {}
+    for raw in data.split(b"\n"):
+        if not raw:
+            continue
+        has_bash = b'"Bash"' in raw
+        has_result = b'"tool_result"' in raw
+        if not has_bash and not (has_result and pending):
+            continue
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        msg = doc.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type")
+            if itype == "tool_use" and has_bash and item.get("name") == "Bash":
+                tool_id = item.get("id")
+                command = (item.get("input") or {}).get("command")
+                if tool_id and isinstance(command, str) and "bd" in command:
+                    pending[tool_id] = command
+            elif itype == "tool_result" and has_result:
+                tool_id = item.get("tool_use_id")
+                command = pending.pop(tool_id, None) if tool_id else None
+                if command is None:
+                    continue
+                is_error = bool(item.get("is_error"))
+                text = _bd_result_text(item.get("content"))
+                ts_raw = doc.get("timestamp")
+                ts = None
+                if isinstance(ts_raw, str):
+                    try:
+                        ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp()
+                    except ValueError:
+                        ts = None
+                _bd_apply_command(events, seq_box, command, is_error, text, ts)
+
+
+def _bd_scan_kimi_file(path: str, events: list[tuple], seq_box: list[int]) -> None:
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > _BD_SCAN_TAIL_BYTES:
+                f.seek(size - _BD_SCAN_TAIL_BYTES)
+            data = f.read()
+    except OSError:
+        return
+    pending: dict[str, str] = {}
+    for raw in data.split(b"\n"):
+        if not raw:
+            continue
+        has_bash = b'"Bash"' in raw
+        has_tool_role = b'"role"' in raw and b'"tool"' in raw
+        if not has_bash and not (has_tool_role and pending):
+            continue
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(doc, dict) or doc.get("type") != "agent.message.appended":
+            continue
+        msg = (doc.get("message") or {}).get("message")
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        ts_ms = doc.get("time")
+        ts = (ts_ms / 1000.0) if isinstance(ts_ms, int | float) else None
+        if role == "assistant" and has_bash:
+            for tc in msg.get("toolCalls") or []:
+                if not isinstance(tc, dict) or tc.get("name") != "Bash":
+                    continue
+                tool_id = tc.get("id")
+                args_raw = tc.get("arguments")
+                args = None
+                if isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw)
+                    except ValueError:
+                        args = None
+                elif isinstance(args_raw, dict):
+                    args = args_raw
+                command = args.get("command") if isinstance(args, dict) else None
+                if tool_id and isinstance(command, str) and "bd" in command:
+                    pending[tool_id] = command
+        elif role == "tool" and has_tool_role:
+            tool_id = msg.get("toolCallId")
+            command = pending.pop(tool_id, None) if tool_id else None
+            if command is None:
+                continue
+            text = _bd_result_text(msg.get("content"))
+            _bd_apply_command(events, seq_box, command, False, text, ts)
+
+
+def resolve_remote_session_bead(kind: str, paths: list[str]) -> list[str]:
+    """Stateless, full-tail-bounded unreleased-claims resolution for one
+    LIVE session on this remote host. Returns ONLY bead ids -- the ordered
+    (most-recent-claim-first) list this session has an unreleased claim on,
+    capped at _BD_MAX_CLAIMS -- nothing else about the transcript (no
+    command text, no raw output, no timestamp) ever leaves this function,
+    and this module never writes anything but that id list into the
+    probe's JSON output. The local server-side cross-check
+    (agents.py's _apply_bead_cross_check) applies the same in_progress
+    selection rule to this list that it applies to a local session's own
+    (bead_id, ts) candidates."""
+    if kind not in _BEAD_TRACKED_KINDS or not paths:
+        return []
+    events: list[tuple] = []
+    seq_box = [0]
+    scanner = _bd_scan_claude_file if kind == "claude" else _bd_scan_kimi_file
+    for path in paths:
+        scanner(path, events, seq_box)
+    return [bid for bid, _ts in _bd_unreleased_claims(events)][:_BD_MAX_CLAIMS]
+
 
 def tail_last_request(wire_path: str, tail_bytes: int = _KIMI_TAIL_READ_BYTES) -> tuple[str, int] | None:
     try:
@@ -764,7 +1285,11 @@ def build_kimi_session_agent(rec: dict, worktrees: list[dict], now: datetime, wi
         "label": repo or (os.path.basename(cwd.rstrip("/")) if cwd else None) or "kimi",
         "focused": False,
         "session_id": session,
-        "bead": None,
+        # ordered (most-recent-first) unreleased-claim ids -- the local
+        # cross-check (agents.py's _apply_bead_cross_check) resolves this
+        # down to a single "bead", same as it does for local sessions.
+        "bead_claims": resolve_remote_session_bead("kimi", list(rec["agent_wire_paths"].values())),
+        "bead_tracked": True,
         "last_activity": updated_iso,
         "status_since": None,
         "tokens_today": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0},
@@ -1133,6 +1658,7 @@ def scan_session_agents(
             "model": rec["model"],
             "mtime": mtime_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "status": "working" if age_s <= working_threshold_s else "idle",
+            "path": path,
         })
     return out
 
@@ -1161,7 +1687,10 @@ def build_session_agent(rec: dict, worktrees: list[dict]) -> dict:
         "label": repo or (os.path.basename(cwd.rstrip("/")) if cwd else None) or "claude",
         "focused": False,
         "session_id": session,
-        "bead": None,
+        # ordered (most-recent-first) unreleased-claim ids -- see
+        # build_kimi_session_agent's identical field for the rationale.
+        "bead_claims": resolve_remote_session_bead("claude", [rec["path"]] if rec.get("path") else []),
+        "bead_tracked": True,
         "last_activity": rec["mtime"],
         "status_since": None,
         "tokens_today": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0},
@@ -1277,7 +1806,11 @@ def collect_agents(herdr_bin: str, worktrees: list[dict]) -> list[dict]:
             "label": repo or title or kind,
             "focused": bool(raw.get("focused")),
             "session_id": session,
+            # herdr's own output has no transcript path for this session --
+            # merge_remote_agent_sources fills bead in from the session-
+            # derived record when one also exists for this session id.
             "bead": None,
+            "bead_tracked": kind in _BEAD_TRACKED_KINDS,
             "last_activity": None,
             "status_since": None,
             # not computed remotely -- see module docstring

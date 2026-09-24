@@ -48,3 +48,11 @@ class AppContext:
     # that top-level snapshot key (two collectors writing the same key would
     # stomp each other -- see collectors/remote.py's docstring on this rule).
     latest_kimi_agents: list[dict] = field(default_factory=list)
+    # written by BeadsCollector on every successful poll: id -> {"status",
+    # "title"}. None (the default) means the beads collector has never
+    # completed a poll on this host -- e.g. no `bd` binary -- which
+    # AgentsCollector's session-bead cross-check treats as "no beads data
+    # to check against", not "zero beads": a bead resolved from a session
+    # transcript is left null rather than trusted unchecked. Once beads
+    # HAS polled at least once, this is a real (possibly empty) dict.
+    latest_beads_by_id: dict[str, dict] | None = None

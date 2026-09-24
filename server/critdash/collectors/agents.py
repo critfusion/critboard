@@ -6,9 +6,16 @@ Each agent: agent, agent_status (idle|working|done|...), cwd, foreground_cwd,
 pane_id, tab_id, workspace_id, terminal_title/terminal_title_stripped, focused,
 agent_session.value (the Claude sessionId).
 
-`bead` (claimed bead resolvable from the agent) is left null: nothing in
-`herdr agent list` ties an agent_session to a bd actor identity, so any
-match would be a guess. Documented in the final report as a known gap.
+`bead` is never resolved from `herdr agent list` itself: nothing in it ties
+an agent_session to a bd actor identity (one actor claims for many
+sessions), so any match from herdr's output alone would be a guess. It IS
+resolved -- for kinds in bead_sessions.BEAD_TRACKED_KINDS -- from that
+session's OWN transcript (see bead_sessions.py), which is why it lives on
+the session-derived record (`_build_session_agent`/KimiCollector) and is
+merged onto the herdr entry, never computed here. `bead_tracked` says
+whether this agent's kind has a transcript extractor at all; a kind without
+one (e.g. herdr reporting "codex") always gets bead=None, honestly, rather
+than the misleading "no active bead" a tracked-but-idle session would show.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ import os
 from datetime import UTC, datetime
 
 from . import BaseCollector, CollectorIssue, now_iso
+from .bead_sessions import BEAD_TRACKED_KINDS, resolve_session_bead
 
 _STATUS_MAP = {
     "idle": "idle",
@@ -133,6 +141,7 @@ def scan_session_agents(
             "model": rec["model"],
             "mtime": mtime_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "status": "working" if age_s <= working_threshold_s else "idle",
+            "path": path,
         })
     return out
 
@@ -293,6 +302,7 @@ def _build_session_agent(rec: dict, worktrees: list[dict], host: str, usage_by_s
         "source": "session",
         "_status_key": session,
         "_event_desc": f"session {rec['status']} ({cwd})",
+        "_transcript_paths": [rec["path"]] if rec.get("path") else [],
     }
 
 
@@ -336,6 +346,105 @@ def merge_agent_sources(herdr_built: list[dict], session_records: list[dict]) ->
     return merged
 
 
+def _bead_recency(ts: float | None, last_activity) -> float:
+    """A claim candidate's recency, for "whose claim is more recent" in the
+    dedupe step below. A local (claude/kimi) claim carries the transcript's
+    own claim timestamp. A remote claim carries none -- remote_probe.py
+    returns ONLY bead ids, nothing else leaves the remote host -- so
+    `last_activity` (already part of every agent's normal payload) is the
+    best available recency proxy for those. This is an approximation for
+    remote agents, documented here rather than silently assumed."""
+    if ts is not None:
+        return ts
+    if isinstance(last_activity, str) and last_activity:
+        try:
+            return datetime.fromisoformat(last_activity.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return float("-inf")
+
+
+def _claim_recency(a: dict) -> float:
+    return _bead_recency(a.get("_bead_claim_ts"), a.get("last_activity"))
+
+
+def _apply_bead_cross_check(agents: list[dict], beads_by_id: dict[str, dict] | None) -> None:
+    """Resolves each bead_tracked agent's final `bead`/`bead_title` from its
+    raw `_bead_claims` (the ordered, most-recent-first list of unreleased
+    claims `resolve_session_bead`/the remote probe produced -- see
+    bead_sessions.py's docstring, Defect 3):
+
+    1. Cross-check against CURRENT beads data: an agent's candidate list is
+       first narrowed to only the claims whose bead is still `in_progress`
+       RIGHT NOW (never a guess from the transcript alone -- the work may
+       have ended, or someone else may have taken it, since that transcript
+       line was written). If beads_by_id is None, the beads collector has
+       never completed a poll on this host at all (see ctx.py) -- there is
+       nothing to check against, so every candidate is dropped rather than
+       trusted unchecked, per the briefing ("do not cross-check against
+       nothing"). The chosen bead is the FIRST surviving candidate -- i.e.
+       the most recent of this session's unreleased claims that is
+       currently in_progress, not just its most recent claim outright (a
+       session holding bead A (in_progress) whose most recent claim was
+       bead B (now blocked) must still show A, not go blank).
+    2. Dedupe: if two live agents' current candidate is the SAME bead (e.g.
+       two sessions really did race, or a shared actor's claim got
+       misread), only the more recently-claimed one keeps it -- the loser
+       does not go straight to null, it falls through to ITS OWN next
+       in_progress candidate (repeating until every collision is resolved,
+       since advancing a loser can create a new collision with a third
+       agent's candidate).
+    """
+    beads_by_id = beads_by_id or {}
+    tracked = [a for a in agents if a.get("bead_tracked")]
+    for a in tracked:
+        claims = a.get("_bead_claims") or []
+        a["_bead_candidates"] = [
+            (bid, ts) for bid, ts in claims
+            if (beads_by_id.get(bid) or {}).get("status") == "in_progress"
+        ]
+        a["_bead_idx"] = 0
+
+    changed = True
+    while changed:
+        changed = False
+        by_bead: dict[str, list[dict]] = {}
+        for a in tracked:
+            cands, idx = a["_bead_candidates"], a["_bead_idx"]
+            if idx < len(cands):
+                by_bead.setdefault(cands[idx][0], []).append(a)
+        for claimants in by_bead.values():
+            if len(claimants) < 2:
+                continue
+
+            def _candidate_recency(a: dict) -> float:
+                cands, idx = a["_bead_candidates"], a["_bead_idx"]
+                return _bead_recency(cands[idx][1], a.get("last_activity"))
+
+            claimants.sort(key=_candidate_recency, reverse=True)
+            for loser in claimants[1:]:
+                loser["_bead_idx"] += 1
+                changed = True
+
+    for a in tracked:
+        cands, idx = a["_bead_candidates"], a["_bead_idx"]
+        if idx < len(cands):
+            bid, ts = cands[idx]
+            a["bead"] = bid
+            a["bead_title"] = beads_by_id[bid].get("title")
+            a["_bead_claim_ts"] = ts
+        else:
+            a["bead"] = None
+            a["bead_title"] = None
+            a["_bead_claim_ts"] = None
+
+    for a in agents:
+        a.pop("_bead_claims", None)
+        a.pop("_bead_candidates", None)
+        a.pop("_bead_idx", None)
+        a.pop("_bead_claim_ts", None)
+
+
 class AgentsCollector(BaseCollector):
     name = "agents"
     interval_s = 5.0
@@ -356,6 +465,13 @@ class AgentsCollector(BaseCollector):
         self.session_projects_glob = session_projects_glob
         self.session_active_window_s = session_active_window_s
         self._status_since: dict[str, tuple[str, str]] = {}
+        # Per-transcript-path incremental scan state for the session-bead
+        # extractor (see bead_sessions.py) -- one shared dict across all
+        # sessions, since each entry is already keyed by absolute path.
+        # Never cleared, but only ever grows by the set of transcript paths
+        # actually seen live, which scan_session_agents/KimiCollector both
+        # already bound to "recently active" sessions.
+        self._bead_cache: dict = {}
 
     async def collect(self) -> dict:
         # herdr is optional: a fresh install with only Claude Code (or any
@@ -428,6 +544,15 @@ class AgentsCollector(BaseCollector):
         for a in merged:
             key = a.pop("_status_key", None) or a.get("session_id") or a.get("cwd") or ""
             event_desc = a.pop("_event_desc", "")
+            paths = a.pop("_transcript_paths", None)
+            kind = a.get("kind")
+            a["bead_tracked"] = kind in BEAD_TRACKED_KINDS
+            a["bead_title"] = None
+            a["bead"] = None
+            if a["bead_tracked"] and paths:
+                a["_bead_claims"] = resolve_session_bead(kind, paths, self._bead_cache)
+            else:
+                a["_bead_claims"] = []
             status = a["status"]
             prev = self._status_since.get(key)
             if prev is None or prev[0] != status:
@@ -454,7 +579,23 @@ class AgentsCollector(BaseCollector):
             for a in rh.get("agents", []):
                 remote_entry = dict(a)
                 remote_entry["stale"] = stale
+                remote_entry.setdefault("bead_tracked", remote_entry.get("kind") in BEAD_TRACKED_KINDS)
+                remote_entry["bead"] = None
+                remote_entry.setdefault("bead_title", None)
+                # remote_probe.py returns ONLY an ordered list of unreleased
+                # claim ids ("bead_claims"), never a claim timestamp -- nothing
+                # but ids leaves the remote host. Rewrap it into this
+                # collector's own (bead_id, ts) shape (ts always None here) so
+                # _apply_bead_cross_check can apply the exact same in_progress
+                # selection/dedupe rule to remote sessions as local ones; see
+                # that function's docstring for how recency is approximated
+                # (last_activity) for a remote claimant with no ts.
+                remote_claim_ids = remote_entry.pop("bead_claims", None) or []
+                remote_entry["_bead_claims"] = [(bid, None) for bid in remote_claim_ids]
                 agents.append(remote_entry)
+
+        beads_by_id = self.ctx.latest_beads_by_id if self.ctx is not None else None
+        _apply_bead_cross_check(agents, beads_by_id)
 
         if self.ctx is not None:
             self.ctx.latest_agents = agents
