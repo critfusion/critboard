@@ -1196,6 +1196,84 @@ def resolve_remote_session_bead(kind: str, paths: list[str]) -> list[str]:
     return [bid for bid, _ts in _bd_unreleased_claims(events)][:_BD_MAX_CLAIMS]
 
 
+def _claude_projects_dir_from_glob(projects_glob: str) -> str:
+    """projects_glob is always "<claude_projects_dir>/*/*.jsonl" (see
+    RemoteCollector._probe_args, collectors/remote.py) -- strip that fixed
+    two-segment glob suffix to recover the base directory a by-session-id
+    transcript lookup needs (glob.glob("<dir>/*/<session_id>.jsonl")),
+    expanding "~" the same way every other section of this file does."""
+    expanded = os.path.expanduser(projects_glob)
+    suffix = "/*/*.jsonl"
+    if expanded.endswith(suffix):
+        return expanded[: -len(suffix)]
+    return os.path.dirname(os.path.dirname(expanded))
+
+
+def find_claude_transcript_by_session_id(claude_projects_dir: str, session_id: str) -> list[str]:
+    """Mirrors collectors/agents.py's _lookup_claude_transcript: a session's
+    jsonl lives at <claude_projects_dir>/<project-dir>/<session-id>.jsonl,
+    and `project-dir` is not derivable from a pane's cwd (it can be a
+    dash-encoded path for a different, symlinked path than the cwd herdr
+    reports), so this looks the file up by filename across every project dir
+    instead. One readdir of claude_projects_dir plus one stat per project
+    dir -- not a walk of any project dir's own contents."""
+    if not claude_projects_dir:
+        return []
+    pattern = os.path.join(claude_projects_dir, "*", f"{session_id}.jsonl")
+    return glob.glob(pattern)[:1]
+
+
+def find_kimi_wire_paths_by_session_id(kimi_dir: str, session_id: str) -> list[str]:
+    """Mirrors collectors/kimi.py's find_kimi_session_wire_paths (same
+    session_index.jsonl -> state.json chain discover_kimi_sessions uses),
+    scoped to one session id rather than reading every session's state.json.
+    Duplicated, not imported -- see this file's module docstring."""
+    for entry in load_session_index(kimi_dir):
+        if entry["session_id"] != session_id:
+            continue
+        state = load_session_state(entry["session_dir"])
+        if state is None:
+            return []
+        agents = state.get("agents") or {}
+        return [
+            os.path.join(info["homedir"], "wire.jsonl")
+            for info in agents.values()
+            if isinstance(info, dict) and info.get("homedir")
+        ]
+    return []
+
+
+def backfill_herdr_only_bead_claims(
+    agents: list[dict], claude_projects_dir: str, kimi_dir: str,
+) -> None:
+    """For every merged agent that came from herdr ALONE (no session/Kimi
+    record merged onto it -- e.g. a pane herdr still lists as "done"/"idle"
+    long after its transcript's mtime/updatedAt fell outside
+    session_window_s), look its transcript up BY SESSION ID instead of by
+    recent file activity, and resolve its unreleased bead claims from that.
+    Mutates `agents` in place, adding a "bead_claims" key only when a
+    transcript was actually found -- mirrors collectors/agents.py's
+    _resolve_transcript_paths fallback, but this module has no cross-call
+    cache to keep (a fresh `ssh host python3 -` interpreter starts, does
+    this once, and exits -- see the module docstring's "stateless per
+    call"), so there is nothing to cache here."""
+    for agent in agents:
+        if agent.get("source") != "herdr" or "bead_claims" in agent:
+            continue
+        kind = agent.get("kind")
+        if kind not in _BEAD_TRACKED_KINDS:
+            continue
+        session_id = agent.get("session_id")
+        if not session_id:
+            continue
+        if kind == "claude":
+            paths = find_claude_transcript_by_session_id(claude_projects_dir, session_id)
+        else:
+            paths = find_kimi_wire_paths_by_session_id(kimi_dir, session_id)
+        if paths:
+            agent["bead_claims"] = resolve_remote_session_bead(kind, paths)
+
+
 def tail_last_request(wire_path: str, tail_bytes: int = _KIMI_TAIL_READ_BYTES) -> tuple[str, int] | None:
     try:
         size = os.path.getsize(wire_path)
@@ -2091,6 +2169,13 @@ def build_result(
         # briefing) gets folded onto its session id exactly like a Claude one
         # does, no duplicate entry.
         agents = merge_remote_agent_sources(herdr_agents, session_agents + kimi_agents)
+        # The pane-went-quiet gap (see backfill_herdr_only_bead_claims'
+        # docstring): a herdr-only entry has no session record, so it has no
+        # bead_claims from the merge above -- back-fill those by looking its
+        # transcript up by session id instead of by recent activity.
+        backfill_herdr_only_bead_claims(
+            agents, _claude_projects_dir_from_glob(projects_glob), os.path.expanduser(kimi_dir),
+        )
         join_agents_to_worktrees(worktrees, agents)
     except Exception:  # noqa: BLE001
         agents = []

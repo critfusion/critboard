@@ -150,6 +150,35 @@ def load_session_state(session_dir: str) -> dict | None:
     return doc if isinstance(doc, dict) else None
 
 
+def find_kimi_session_wire_paths(kimi_dir: str, session_id: str) -> list[str]:
+    """Look up ONE session's wire.jsonl path(s) by id, using the exact same
+    session_index.jsonl -> state.json chain discover_kimi_sessions() uses
+    for every session -- reused here (not a second convention) rather than
+    duplicated, so a by-session-id lookup (AgentsCollector, for a herdr-
+    listed pane whose session fell outside the active window -- see
+    agents.py's module docstring on the "gone quiet while holding a bead"
+    gap) stays in sync with any future change to Kimi's on-disk layout.
+    Unlike discover_kimi_sessions, this does NOT call load_session_state for
+    every session in the index -- only the one matching `session_id`, so a
+    caller doing this lookup on every herdr tick (bounded to cache misses,
+    see agents.py) doesn't pay for every OTHER session's state.json too.
+    Returns [] if the session isn't in the index, or its state.json is
+    missing/carries no agent homedirs."""
+    for entry in load_session_index(kimi_dir):
+        if entry["session_id"] != session_id:
+            continue
+        state = load_session_state(entry["session_dir"])
+        if state is None:
+            return []
+        agents = state.get("agents") or {}
+        return [
+            os.path.join(info["homedir"], "wire.jsonl")
+            for info in agents.values()
+            if isinstance(info, dict) and info.get("homedir")
+        ]
+    return []
+
+
 def discover_kimi_sessions(kimi_dir: str) -> list[dict]:
     """Enumerate every Kimi session on disk: session_index.jsonl for the
     canonical (id, dir, workDir) triple, state.json for the live cwd/
@@ -488,6 +517,7 @@ __all__ = [
     "classify_kimi_error",
     "discover_kimi_sessions",
     "epoch_ms_to_iso",
+    "find_kimi_session_wire_paths",
     "load_session_index",
     "load_session_state",
     "load_workspaces",

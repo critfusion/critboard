@@ -792,6 +792,225 @@ async def test_collect_merges_herdr_and_kimi_for_same_session_without_duplicatin
     assert matching[0]["pane"] == "pane-5"
 
 
+# -- by-session-id transcript lookup: a herdr-listed pane with NO session
+# record (its transcript went quiet longer ago than session_active_window_s)
+# must still get its bead, by looking the transcript up by session id rather
+# than by recent file activity (_resolve_transcript_paths). --------------
+
+
+def _claude_bash_claim_lines(session_id, bead_id, tool_id="t1"):
+    line1 = json.dumps({
+        "timestamp": "2026-09-23T00:00:00.000Z", "sessionId": session_id,
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": tool_id, "name": "Bash",
+             "input": {"command": f"bd update {bead_id} --claim", "description": "claim"}},
+        ]},
+    })
+    line2 = json.dumps({
+        "timestamp": "2026-09-23T00:00:01.000Z", "sessionId": session_id,
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": tool_id, "is_error": False,
+             "content": f"✓ Updated issue: {bead_id} — demo title"},
+        ]},
+    })
+    return line1 + "\n" + line2 + "\n"
+
+
+@pytest.mark.asyncio
+async def test_collect_finds_bead_for_stale_claude_pane_via_session_id_lookup(monkeypatch, tmp_path):
+    # herdr still lists the pane (status "done"), but its transcript's mtime
+    # is old enough that scan_session_agents would never find it (no
+    # session_projects_glob configured here at all -- proving the bead comes
+    # from the by-id fallback, not from a session record). The transcript
+    # also lives under a project dir name that does NOT match the pane's cwd
+    # -- real case: a symlinked path decodes to a different project dirname
+    # than the pane's own cwd -- proving the lookup goes by filename, never
+    # by decoding/guessing a project dir from cwd.
+    session_id = "stale-claude-session"
+    bead_id = "demo-stale-a"
+    _fake_herdr_exec(monkeypatch, [{
+        "agent": "claude", "agent_status": "done", "cwd": "/srv/demo/ffw",
+        "pane_id": "pane-stale", "workspace_id": "ws-1", "terminal_title_stripped": "ffw",
+        "focused": False, "agent_session": {"value": session_id},
+    }])
+    projects_dir = tmp_path / "projects"
+    mismatched_project_dir = projects_dir / "-srv-work-ffw"  # != "/srv/demo/ffw"
+    mismatched_project_dir.mkdir(parents=True)
+    transcript = mismatched_project_dir / f"{session_id}.jsonl"
+    transcript.write_text(_claude_bash_claim_lines(session_id, bead_id))
+    old = time.time() - 3600  # well outside any session_active_window_s
+    os.utime(transcript, (old, old))
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {bead_id: {"status": "in_progress", "title": "demo title"}}
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, host="localhost",
+        claude_projects_dir=str(projects_dir),
+    )
+    result = await collector.collect()
+    store.close()
+
+    agents = result["agents"]
+    assert len(agents) == 1
+    a = agents[0]
+    assert a["source"] == "herdr"
+    assert a["bead_tracked"] is True
+    assert a["bead"] == bead_id
+    assert a["bead_title"] == "demo title"
+
+
+def _kimi_bash_claim_lines(bead_id, tool_id="k1"):
+    line1 = json.dumps({
+        "type": "agent.message.appended", "time": 1758000000000,
+        "message": {"message": {"role": "assistant", "toolCalls": [
+            {"type": "function", "id": tool_id, "name": "Bash",
+             "arguments": json.dumps({"command": f"bd update {bead_id} --claim"})},
+        ]}},
+    })
+    line2 = json.dumps({
+        "type": "agent.message.appended", "time": 1758000001000,
+        "message": {"message": {"role": "tool", "toolCallId": tool_id, "content": [
+            {"type": "text", "text": f"✓ Updated issue: {bead_id} — demo title"},
+        ]}}},
+    )
+    return line1 + "\n" + line2 + "\n"
+
+
+@pytest.mark.asyncio
+async def test_collect_finds_bead_for_stale_kimi_pane_via_session_id_lookup(monkeypatch, tmp_path):
+    # Mirrors the Claude test above: herdr still lists the kimi pane, but
+    # KimiCollector never published it to ctx.latest_kimi_agents (as if its
+    # state.json updatedAt fell outside session_active_window_s) -- the bead
+    # must still come from a by-session-id lookup under kimi_dir.
+    session_id = "session_stalekimi1"
+    bead_id = "demo-stale-kimi-a"
+    _fake_herdr_exec(monkeypatch, [{
+        "agent": "kimi", "agent_status": "idle", "cwd": "/srv/demo/repos/testrepo",
+        "pane_id": "pane-k1", "workspace_id": "ws-k1", "terminal_title_stripped": "testrepo",
+        "focused": False, "agent_session": {"value": session_id},
+    }])
+
+    kimi_dir = tmp_path / "kimi"
+    session_dir = kimi_dir / "sessions" / "wd_testrepo_abc" / session_id
+    agent_home = session_dir / "agents" / "main"
+    agent_home.mkdir(parents=True)
+    (agent_home / "wire.jsonl").write_text(_kimi_bash_claim_lines(bead_id))
+    (session_dir / "state.json").write_text(json.dumps({
+        "id": session_id, "cwd": "/srv/demo/repos/testrepo", "updatedAt": 1,  # ancient
+        "agents": {"main": {"homedir": str(agent_home)}},
+    }))
+    kimi_dir.mkdir(exist_ok=True)
+    (kimi_dir / "session_index.jsonl").write_text(json.dumps({
+        "sessionId": session_id, "sessionDir": str(session_dir), "workDir": "/srv/demo/repos/testrepo",
+    }) + "\n")
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {bead_id: {"status": "in_progress", "title": "demo title"}}
+    ctx.latest_kimi_agents = []  # KimiCollector hasn't (re-)published this stale session
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, host="localhost", kimi_dir=str(kimi_dir),
+    )
+    result = await collector.collect()
+    store.close()
+
+    agents = result["agents"]
+    assert len(agents) == 1
+    a = agents[0]
+    assert a["kind"] == "kimi"
+    assert a["bead_tracked"] is True
+    assert a["bead"] == bead_id
+    assert a["bead_title"] == "demo title"
+
+
+@pytest.mark.asyncio
+async def test_collect_herdr_pane_with_no_transcript_anywhere_gets_null_bead(monkeypatch, tmp_path):
+    session_id = "ghost-session"
+    _fake_herdr_exec(monkeypatch, [{
+        "agent": "claude", "agent_status": "done", "cwd": "/srv/demo/gone",
+        "pane_id": "pane-ghost", "workspace_id": "ws-1", "terminal_title_stripped": "gone",
+        "focused": False, "agent_session": {"value": session_id},
+    }])
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, host="localhost",
+        claude_projects_dir=str(projects_dir),
+    )
+    result = await collector.collect()
+    store.close()
+
+    a = result["agents"][0]
+    assert a["bead_tracked"] is True
+    assert a["bead"] is None
+    assert a["bead_title"] is None
+
+
+@pytest.mark.asyncio
+async def test_transcript_lookup_cached_and_invalidated_on_delete_or_move(monkeypatch, tmp_path):
+    session_id = "cached-lookup-session"
+    bead_id = "demo-cache-a"
+    _fake_herdr_exec(monkeypatch, [{
+        "agent": "claude", "agent_status": "done", "cwd": "/srv/demo/cache-me",
+        "pane_id": "pane-cache", "workspace_id": "ws-1", "terminal_title_stripped": "cache-me",
+        "focused": False, "agent_session": {"value": session_id},
+    }])
+    projects_dir = tmp_path / "projects"
+    project_a = projects_dir / "-project-a"
+    project_a.mkdir(parents=True)
+    transcript_a = project_a / f"{session_id}.jsonl"
+    transcript_a.write_text(_claude_bash_claim_lines(session_id, bead_id))
+
+    call_count = 0
+    real_glob = agents_mod.glob.glob
+
+    def counting_glob(pattern, *a, **kw):
+        nonlocal call_count
+        call_count += 1
+        return real_glob(pattern, *a, **kw)
+
+    monkeypatch.setattr(agents_mod.glob, "glob", counting_glob)
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {bead_id: {"status": "in_progress", "title": "t"}}
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, host="localhost",
+        claude_projects_dir=str(projects_dir),
+    )
+
+    result1 = await collector.collect()
+    assert result1["agents"][0]["bead"] == bead_id
+    assert call_count == 1
+
+    # Second tick, transcript unchanged: no fresh directory search.
+    result2 = await collector.collect()
+    assert result2["agents"][0]["bead"] == bead_id
+    assert call_count == 1
+
+    # Transcript deleted: the cached path no longer exists -> a fresh lookup
+    # is forced (even though it now finds nothing).
+    transcript_a.unlink()
+    result3 = await collector.collect()
+    assert result3["agents"][0]["bead"] is None
+    assert call_count == 2
+
+    # Transcript "moved" (recreated under a different project dir, same
+    # session id) -- since nothing was cached after the miss above, the next
+    # tick searches again and finds it at its new location.
+    project_b = projects_dir / "-project-b"
+    project_b.mkdir(parents=True)
+    (project_b / f"{session_id}.jsonl").write_text(_claude_bash_claim_lines(session_id, bead_id))
+    result4 = await collector.collect()
+    store.close()
+    assert result4["agents"][0]["bead"] == bead_id
+    assert call_count == 3
+
+
 # -- herdr present-but-broken: structured failure, not a bare RuntimeError --
 # (herdr ABSENT entirely is not an error at all -- see collect()'s OSError
 # catch and test_collect_surfaces_session_only_agent_invisible_to_herdr.)

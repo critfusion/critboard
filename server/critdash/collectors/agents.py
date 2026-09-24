@@ -10,12 +10,24 @@ agent_session.value (the Claude sessionId).
 an agent_session to a bd actor identity (one actor claims for many
 sessions), so any match from herdr's output alone would be a guess. It IS
 resolved -- for kinds in bead_sessions.BEAD_TRACKED_KINDS -- from that
-session's OWN transcript (see bead_sessions.py), which is why it lives on
-the session-derived record (`_build_session_agent`/KimiCollector) and is
-merged onto the herdr entry, never computed here. `bead_tracked` says
-whether this agent's kind has a transcript extractor at all; a kind without
-one (e.g. herdr reporting "codex") always gets bead=None, honestly, rather
-than the misleading "no active bead" a tracked-but-idle session would show.
+session's OWN transcript (see bead_sessions.py). The normal path: a
+session-derived record (`_build_session_agent`/KimiCollector) already
+carries its own `_transcript_paths`, found by recent file activity
+(session_active_window_s), and that gets merged onto the herdr entry.
+
+But a pane herdr still lists (status "done"/"idle") whose transcript hasn't
+been touched in longer than session_active_window_s has NO session record at
+all -- `_transcript_paths` is only ever set on session-derived records, so
+that pane would otherwise show bead=None even while its session still holds
+an unreleased, in_progress claim (the most important case for the owner: an
+agent that went quiet while holding a bead is how beads get "forgotten").
+For exactly that case, `collect()` falls back to `_resolve_transcript_paths`,
+which looks the transcript up BY SESSION ID (not by recent activity) --
+cached per (kind, session_id) across ticks, see that method's docstring.
+`bead_tracked` says whether this agent's kind has a transcript extractor at
+all; a kind without one (e.g. herdr reporting "codex") always gets
+bead=None, honestly, rather than the misleading "no active bead" a
+tracked-but-idle session would show.
 """
 
 from __future__ import annotations
@@ -452,6 +464,7 @@ class AgentsCollector(BaseCollector):
     def __init__(
         self, ctx=None, herdr_bin: str = "herdr", store=None, host: str = "localhost",
         session_projects_glob: str | None = None, session_active_window_s: float = 900.0,
+        claude_projects_dir: str | None = None, kimi_dir: str | None = None,
     ):
         super().__init__(ctx)
         self.herdr_bin = herdr_bin
@@ -464,6 +477,14 @@ class AgentsCollector(BaseCollector):
         # machine's real ~/.claude/projects.
         self.session_projects_glob = session_projects_glob
         self.session_active_window_s = session_active_window_s
+        # Base dirs for the BY-SESSION-ID transcript lookup a herdr-listed
+        # pane falls back to when it has no session record at all (see
+        # _resolve_transcript_paths). None disables that lookup for the same
+        # "opt-in, never touch a real path a caller didn't ask for" reason
+        # session_projects_glob is opt-in above -- main.py wires both from
+        # config.
+        self.claude_projects_dir = claude_projects_dir
+        self.kimi_dir = kimi_dir
         self._status_since: dict[str, tuple[str, str]] = {}
         # Per-transcript-path incremental scan state for the session-bead
         # extractor (see bead_sessions.py) -- one shared dict across all
@@ -472,6 +493,68 @@ class AgentsCollector(BaseCollector):
         # actually seen live, which scan_session_agents/KimiCollector both
         # already bound to "recently active" sessions.
         self._bead_cache: dict = {}
+        # (kind, session_id) -> transcript path(s), for herdr-listed panes
+        # that have no session record (see _resolve_transcript_paths). Only
+        # ever populated for sessions herdr is CURRENTLY reporting -- never
+        # grows to cover every session ever seen -- and never caches a MISS
+        # (no path found), since a pane herdr just started reporting may not
+        # have written its transcript's first line yet; the lookup itself is
+        # cheap (bounded by however many tracked-kind panes herdr lists this
+        # tick) so retrying next tick beats a false permanent null.
+        self._session_transcript_cache: dict[tuple[str, str], list[str]] = {}
+
+    def _lookup_claude_transcript(self, session_id: str) -> list[str]:
+        """A Claude session's jsonl lives at
+        <claude_projects_dir>/<project-dir>/<session-id>.jsonl -- but
+        `project-dir` is NOT derivable from the pane's cwd (it can be a
+        dash-encoded path for a DIFFERENT, symlinked path than the cwd herdr
+        reports -- verified live on this host 2026-09-23), so this looks the
+        file up by filename across every project dir instead of guessing a
+        project dir from cwd. glob.glob("<dir>/*/<id>.jsonl") costs one
+        readdir of claude_projects_dir (to expand the "*") plus one stat per
+        project dir -- not a walk of any project dir's own contents."""
+        if not self.claude_projects_dir:
+            return []
+        pattern = os.path.join(os.path.expanduser(self.claude_projects_dir), "*", f"{session_id}.jsonl")
+        return glob.glob(pattern)[:1]
+
+    def _lookup_kimi_transcript(self, session_id: str) -> list[str]:
+        # Local import: kimi.py imports FROM this module (agent_label,
+        # best_worktree_match, short_cwd) at module scope, so a module-level
+        # import here would be circular. The cost of a deferred import is
+        # paid once per interpreter (module caching), not per call.
+        from .kimi import find_kimi_session_wire_paths
+
+        if not self.kimi_dir:
+            return []
+        return find_kimi_session_wire_paths(os.path.expanduser(self.kimi_dir), session_id)
+
+    def _resolve_transcript_paths(self, kind: str, session_id: str) -> list[str]:
+        """For a herdr-listed pane with no session record at all -- its
+        transcript's mtime (Claude) or state.json updatedAt (Kimi) fell
+        outside session_active_window_s, e.g. herdr still shows the pane as
+        "done"/"idle" long after its last bd activity -- look up that
+        session's transcript BY SESSION ID instead of by recent file
+        activity, so its unreleased bead claim is still found no matter how
+        stale the file looks. Cached across ticks by (kind, session_id): a
+        cache hit is reused without touching the filesystem again UNLESS one
+        of its cached paths has since disappeared (session ended and its log
+        was pruned/archived), which forces one fresh lookup."""
+        key = (kind, session_id)
+        cached = self._session_transcript_cache.get(key)
+        if cached and all(os.path.exists(p) for p in cached):
+            return cached
+        if kind == "claude":
+            paths = self._lookup_claude_transcript(session_id)
+        elif kind == "kimi":
+            paths = self._lookup_kimi_transcript(session_id)
+        else:
+            paths = []
+        if paths:
+            self._session_transcript_cache[key] = paths
+        else:
+            self._session_transcript_cache.pop(key, None)
+        return paths
 
     async def collect(self) -> dict:
         # herdr is optional: a fresh install with only Claude Code (or any
@@ -549,6 +632,12 @@ class AgentsCollector(BaseCollector):
             a["bead_tracked"] = kind in BEAD_TRACKED_KINDS
             a["bead_title"] = None
             a["bead"] = None
+            # No session record for this session id at all (only herdr knows
+            # about it) -- fall back to a by-session-id lookup rather than
+            # leaving this pane's bead permanently null just because its
+            # transcript went quiet (see _resolve_transcript_paths).
+            if not paths and a["bead_tracked"] and a.get("session_id"):
+                paths = self._resolve_transcript_paths(kind, a["session_id"])
             if a["bead_tracked"] and paths:
                 a["_bead_claims"] = resolve_session_bead(kind, paths, self._bead_cache)
             else:

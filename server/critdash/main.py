@@ -311,6 +311,12 @@ def build_app() -> FastAPI:
         ctx=app_ctx, herdr_bin=herdr_bin_local, store=store, host=local_host,
         session_projects_glob=config.expand("claude_projects_dir") + "/*/*.jsonl",
         session_active_window_s=session_active_window_s,
+        # By-session-id transcript lookup fallback for a herdr-listed pane
+        # with no session record (see AgentsCollector.__init__/module
+        # docstring) -- same claude_projects_dir/kimi_dir config values the
+        # session-derived collectors above already use.
+        claude_projects_dir=config.expand("claude_projects_dir"),
+        kimi_dir=config.sources.get("kimi_dir", "~/.kimi-code"),
     )
     agents_collector.interval_s = config.interval("agents")
     scheduler.register(agents_collector)

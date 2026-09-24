@@ -1140,3 +1140,151 @@ def test_collect_agents_herdr_only_sets_bead_tracked_by_kind(monkeypatch):
     assert by_kind["claude"]["bead_tracked"] is True
     assert by_kind["claude"]["bead"] is None  # no transcript path from herdr alone
     assert by_kind["codex"]["bead_tracked"] is False
+
+
+# -- by-session-id transcript backfill for herdr-only agents (the same
+# "pane went quiet while holding a bead" gap agents.py fixes locally --
+# see backfill_herdr_only_bead_claims' docstring) ---------------------------
+
+
+def test_claude_projects_dir_from_glob_strips_fixed_suffix():
+    assert rp._claude_projects_dir_from_glob("/x/y/projects/*/*.jsonl") == "/x/y/projects"
+
+
+def test_find_claude_transcript_by_session_id_ignores_pane_cwd(tmp_path):
+    # The transcript lives under a project dir name that does NOT match any
+    # cwd -- proves the lookup goes by filename only, never a decoded/guessed
+    # project dir.
+    project_dir = tmp_path / "-mismatched-project-dir"
+    project_dir.mkdir()
+    (project_dir / "remote-session-1.jsonl").write_text("{}\n")
+    found = rp.find_claude_transcript_by_session_id(str(tmp_path), "remote-session-1")
+    assert found == [str(project_dir / "remote-session-1.jsonl")]
+
+
+def test_find_claude_transcript_by_session_id_no_match_returns_empty(tmp_path):
+    assert rp.find_claude_transcript_by_session_id(str(tmp_path), "no-such-session") == []
+
+
+def test_find_kimi_wire_paths_by_session_id(tmp_path):
+    session_id = "session_remote_kimi1"
+    session_dir = tmp_path / "sessions" / "wd_x" / session_id
+    agent_home = session_dir / "agents" / "main"
+    agent_home.mkdir(parents=True)
+    (tmp_path / "session_index.jsonl").write_text(json.dumps({
+        "sessionId": session_id, "sessionDir": str(session_dir), "workDir": "/srv/demo",
+    }) + "\n")
+    (session_dir / "state.json").write_text(json.dumps({
+        "id": session_id, "agents": {"main": {"homedir": str(agent_home)}},
+    }))
+    found = rp.find_kimi_wire_paths_by_session_id(str(tmp_path), session_id)
+    assert found == [str(agent_home / "wire.jsonl")]
+
+
+def test_find_kimi_wire_paths_by_session_id_no_match_returns_empty(tmp_path):
+    (tmp_path / "session_index.jsonl").write_text("")
+    assert rp.find_kimi_wire_paths_by_session_id(str(tmp_path), "no-such-session") == []
+
+
+def test_backfill_herdr_only_bead_claims_resolves_claude_transcript(tmp_path):
+    project_dir = tmp_path / "-mismatched"
+    project_dir.mkdir()
+    p = project_dir / "stale-remote-session.jsonl"
+    p.write_text(_rp_claude_lines(("t1", "bd update demo-a --claim", _CLAIM_OK, False)))
+
+    agents = [{
+        "source": "herdr", "kind": "claude", "session_id": "stale-remote-session",
+        "bead": None, "bead_tracked": True,
+    }]
+    rp.backfill_herdr_only_bead_claims(agents, str(tmp_path), str(tmp_path / "no-kimi"))
+    assert agents[0]["bead_claims"] == ["demo-a"]
+
+
+def test_backfill_herdr_only_bead_claims_resolves_kimi_transcript(tmp_path):
+    session_id = "session_remote_stale_kimi"
+    session_dir = tmp_path / "kimi" / "sessions" / "wd_x" / session_id
+    agent_home = session_dir / "agents" / "main"
+    agent_home.mkdir(parents=True)
+    (agent_home / "wire.jsonl").write_text(_rp_kimi_lines(("k1", "bd update demo-a --claim", _CLAIM_OK)))
+    kimi_dir = tmp_path / "kimi"
+    (kimi_dir / "session_index.jsonl").write_text(json.dumps({
+        "sessionId": session_id, "sessionDir": str(session_dir), "workDir": "/srv/demo",
+    }) + "\n")
+    (session_dir / "state.json").write_text(json.dumps({
+        "id": session_id, "agents": {"main": {"homedir": str(agent_home)}},
+    }))
+
+    agents = [{
+        "source": "herdr", "kind": "kimi", "session_id": session_id,
+        "bead": None, "bead_tracked": True,
+    }]
+    rp.backfill_herdr_only_bead_claims(agents, str(tmp_path / "no-claude"), str(kimi_dir))
+    assert agents[0]["bead_claims"] == ["demo-a"]
+
+
+def test_backfill_herdr_only_bead_claims_skips_already_merged_entries(tmp_path):
+    # An entry that already came from a session/kimi record (source="both")
+    # already carries "bead_claims" from the merge -- must not be touched or
+    # re-scanned.
+    agents = [{
+        "source": "both", "kind": "claude", "session_id": "s1",
+        "bead_claims": ["demo-existing"], "bead_tracked": True,
+    }]
+    rp.backfill_herdr_only_bead_claims(agents, str(tmp_path), str(tmp_path))
+    assert agents[0]["bead_claims"] == ["demo-existing"]
+
+
+def test_backfill_herdr_only_bead_claims_untracked_kind_untouched(tmp_path):
+    agents = [{
+        "source": "herdr", "kind": "codex", "session_id": "s1", "bead": None, "bead_tracked": False,
+    }]
+    rp.backfill_herdr_only_bead_claims(agents, str(tmp_path), str(tmp_path))
+    assert "bead_claims" not in agents[0]
+
+
+def test_backfill_herdr_only_bead_claims_no_transcript_leaves_no_claims(tmp_path):
+    agents = [{
+        "source": "herdr", "kind": "claude", "session_id": "ghost", "bead": None, "bead_tracked": True,
+    }]
+    rp.backfill_herdr_only_bead_claims(agents, str(tmp_path), str(tmp_path / "no-kimi"))
+    assert "bead_claims" not in agents[0]
+    assert agents[0]["bead"] is None
+
+
+def test_build_result_backfills_bead_for_herdr_only_stale_claude_pane(tmp_path, monkeypatch):
+    # Full build_result() wiring: herdr reports a pane whose session has NO
+    # scannable session record (scan_session_agents excludes it -- either
+    # its transcript predates session_window_s here we just never let it
+    # match by not writing under the projects_glob pattern at all, forcing
+    # merge_remote_agent_sources to leave it herdr-only), but the transcript
+    # DOES exist elsewhere for the by-id lookup to find, under a project dir
+    # name that does not match the pane's cwd.
+    projects_dir = tmp_path / "claude-projects"
+    mismatched = projects_dir / "-mismatched-dir"
+    mismatched.mkdir(parents=True)
+    (mismatched / "stale-remote-session.jsonl").write_text(
+        _rp_claude_lines(("t1", "bd update demo-a --claim", _CLAIM_OK, False))
+    )
+
+    def fake_collect_agents(herdr_bin, worktrees):
+        return [{
+            "id": "stale-remote-session", "kind": "claude", "status": "done", "cwd": "/srv/demo",
+            "repo": None, "branch": None, "pane": "p1", "workspace": "w1", "title": "demo",
+            "label": "demo", "focused": False, "session_id": "stale-remote-session", "bead": None,
+            "bead_tracked": True, "last_activity": None, "status_since": None,
+            "tokens_today": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0},
+            "cost_today_usd": 0.0, "msg_count_today": 0, "subagents_active": 0, "model": None,
+            "source": "herdr",
+        }]
+
+    monkeypatch.setattr(rp, "collect_agents", fake_collect_agents)
+
+    result = rp.build_result(
+        "testhost", str(projects_dir / "*" / "*.jsonl"), ["/nonexistent"], ["/"],
+        "no-such-herdr", 4, 5.0, 4, str(tmp_path / "state.json"),
+        kimi_dir=str(tmp_path / "no-kimi"),
+    )
+    matching = [a for a in result["agents"] if a["session_id"] == "stale-remote-session"]
+    assert len(matching) == 1
+    assert matching[0]["bead_claims"] == ["demo-a"]
+    json.dumps(result)  # still JSON-serializable
