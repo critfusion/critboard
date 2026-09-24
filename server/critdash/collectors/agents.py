@@ -465,6 +465,7 @@ class AgentsCollector(BaseCollector):
         self, ctx=None, herdr_bin: str = "herdr", store=None, host: str = "localhost",
         session_projects_glob: str | None = None, session_active_window_s: float = 900.0,
         claude_projects_dir: str | None = None, kimi_dir: str | None = None,
+        codex_dir: str | None = None, grok_dir: str | None = None, cursor_dir: str | None = None,
     ):
         super().__init__(ctx)
         self.herdr_bin = herdr_bin
@@ -485,6 +486,13 @@ class AgentsCollector(BaseCollector):
         # config.
         self.claude_projects_dir = claude_projects_dir
         self.kimi_dir = kimi_dir
+        # Same opt-in, None-disables-the-lookup rule as claude_projects_dir/
+        # kimi_dir above, for the three formats added later (see
+        # bead_sessions.py's module docstring for the verified on-disk
+        # shape each of these lookups targets).
+        self.codex_dir = codex_dir
+        self.grok_dir = grok_dir
+        self.cursor_dir = cursor_dir
         self._status_since: dict[str, tuple[str, str]] = {}
         # Per-transcript-path incremental scan state for the session-bead
         # extractor (see bead_sessions.py) -- one shared dict across all
@@ -529,6 +537,62 @@ class AgentsCollector(BaseCollector):
             return []
         return find_kimi_session_wire_paths(os.path.expanduser(self.kimi_dir), session_id)
 
+    def _lookup_codex_transcript(self, session_id: str) -> list[str]:
+        """A Codex session's rollout jsonl lives at
+        <codex_dir>/sessions/YYYY/MM/DD/rollout-<timestamp>-<session-id>.jsonl
+        -- the session id was verified live to appear VERBATIM at the end of
+        the filename (after the timestamp prefix bd_sessions.py's own
+        extractor never reads), so this globs across every year/month/day
+        dir rather than trying to derive the date from anything herdr
+        reports (herdr gives no session-start date at all)."""
+        if not self.codex_dir:
+            return []
+        pattern = os.path.join(
+            os.path.expanduser(self.codex_dir), "sessions", "*", "*", "*", f"rollout-*-{session_id}.jsonl"
+        )
+        return glob.glob(pattern)[:1]
+
+    def _lookup_grok_transcript(self, session_id: str) -> list[str]:
+        """A Grok session's own dir is
+        <grok_dir>/sessions/<url-quoted-cwd>/<session-id>/ -- verified live:
+        the dir is named EXACTLY the session id herdr reports, under a
+        parent dir per (URL-quoted) working directory this host has ever
+        run Grok in, so this globs across every quoted-cwd dir rather than
+        re-deriving the quoting from the pane's own cwd (which may not even
+        be the cwd the session was STARTED in). Returns the two paths
+        GrokExtractor needs, in the fixed [chat_history.jsonl, events.jsonl]
+        order `_scan_grok_group` requires -- or [] if either file is
+        missing (e.g. a session with no conversation yet), same "nothing to
+        extract" signal every other lookup gives for an empty/absent
+        transcript."""
+        if not self.grok_dir:
+            return []
+        dirs = glob.glob(os.path.join(os.path.expanduser(self.grok_dir), "sessions", "*", session_id))
+        if not dirs:
+            return []
+        chat_path = os.path.join(dirs[0], "chat_history.jsonl")
+        events_path = os.path.join(dirs[0], "events.jsonl")
+        if not os.path.exists(chat_path) or not os.path.exists(events_path):
+            return []
+        return [chat_path, events_path]
+
+    def _lookup_cursor_transcript(self, session_id: str) -> list[str]:
+        """A Cursor session's store.db lives at
+        <cursor_dir>/chats/<workspace-hash>/<session-id>/store.db --
+        verified live: the chats/<hash>/<id> dir name is the SAME session
+        id herdr reports for every session that has actually run a
+        conversation (hasConversation: true in that dir's meta.json); a
+        pane herdr lists that hasn't run one yet has the dir but no
+        store.db, so this returns [] for it -- correctly "no bead claims
+        yet", not a lookup failure. (A second, separate transcript exists
+        at ~/.cursor/projects/<project>/agent-transcripts/<id>/<id>.jsonl
+        with a matching id, but it records no tool RESULT at all -- see
+        bead_sessions.py's module docstring -- so it is not used here.)"""
+        if not self.cursor_dir:
+            return []
+        pattern = os.path.join(os.path.expanduser(self.cursor_dir), "chats", "*", session_id, "store.db")
+        return glob.glob(pattern)[:1]
+
     def _resolve_transcript_paths(self, kind: str, session_id: str) -> list[str]:
         """For a herdr-listed pane with no session record at all -- its
         transcript's mtime (Claude) or state.json updatedAt (Kimi) fell
@@ -548,6 +612,12 @@ class AgentsCollector(BaseCollector):
             paths = self._lookup_claude_transcript(session_id)
         elif kind == "kimi":
             paths = self._lookup_kimi_transcript(session_id)
+        elif kind == "codex":
+            paths = self._lookup_codex_transcript(session_id)
+        elif kind == "grok":
+            paths = self._lookup_grok_transcript(session_id)
+        elif kind == "cursor":
+            paths = self._lookup_cursor_transcript(session_id)
         else:
             paths = []
         if paths:

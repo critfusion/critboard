@@ -102,6 +102,9 @@ class RemoteCollector(BaseCollector):
         max_depth: int = 4,
         session_active_window_s: float = 900.0,
         kimi_dir: str = "~/.kimi-code",
+        codex_dir: str = "~/.codex",
+        grok_dir: str = "~/.grok",
+        cursor_dir: str = "~/.cursor",
     ):
         super().__init__(ctx)
         self.hosts = hosts or []
@@ -120,6 +123,9 @@ class RemoteCollector(BaseCollector):
         self.max_depth = max_depth
         self.session_active_window_s = session_active_window_s
         self.kimi_dir = kimi_dir
+        self.codex_dir = codex_dir
+        self.grok_dir = grok_dir
+        self.cursor_dir = cursor_dir
 
     async def collect(self) -> dict:
         ssh_hosts = [h for h in self.hosts if h.get("enabled", True) and h.get("mode") == "ssh"]
@@ -180,6 +186,10 @@ class RemoteCollector(BaseCollector):
         # expanded on the remote host by remote_probe.py's own
         # os.path.expanduser(), never against this machine's home directory.
         kimi_dir = self._host_value(host_cfg, "kimi_dir", self.kimi_dir)
+        # Same per-host override + NOT-pre-expanded rule as kimi_dir above.
+        codex_dir = self._host_value(host_cfg, "codex_dir", self.codex_dir)
+        grok_dir = self._host_value(host_cfg, "grok_dir", self.grok_dir)
+        cursor_dir = self._host_value(host_cfg, "cursor_dir", self.cursor_dir)
 
         args = [
             name,
@@ -190,6 +200,9 @@ class RemoteCollector(BaseCollector):
             "--max-depth", str(self.max_depth),
             "--session-window", str(session_window),
             "--kimi-dir", str(kimi_dir),
+            "--codex-dir", str(codex_dir),
+            "--grok-dir", str(grok_dir),
+            "--cursor-dir", str(cursor_dir),
         ]
         for r in repo_roots:
             args += ["--repo-root", r]

@@ -38,7 +38,98 @@ falsely claiming "no active bead").
     success here is read from the SAME bd-output text markers used for
     Claude (see `_resolve_success_ids`), not from a flag.
 
-Cost: incremental. Each transcript path gets one small `_FileState` cached
+  - Codex (~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<session-id>.jsonl):
+    verified live on this host 2026-09-23 (structure only recorded here).
+    One JSON object per line. A shell call and its result are a SINGLE
+    line, not a call/result pair -- {"type": "event_msg", "timestamp":
+    <ISO8601 str>, "payload": {"type": "item_completed", "started_at_ms":
+    <int>, "completed_at_ms": <int>, "item": {"type": "CommandExecution",
+    "command": [<3 strings>], "status": <str, "completed"|"failed"|...>,
+    "exit_code": <int>, "stdout": <str>, "stderr": <str>,
+    "aggregated_output": <str>, "duration": {"secs": <int>, "nanos":
+    <int>}}}}. `item.command` was, on every one of dozens of real exec
+    items inspected, exactly `["/bin/bash", "-lc", <the actual shell
+    command string>]` -- this extractor only handles that exact 3-element
+    "/bin/bash -lc <script>" shape and skips anything else rather than
+    guess at a different wrapper. Success is `status == "completed" and
+    exit_code == 0`; a failed command was observed live with exit_code in
+    {1, 2, 16, 127, 128, 143, -1}, `status == "failed"`. There is also a
+    "custom_tool_call"/"custom_tool_call_output" pair (matched call_id,
+    like Claude's tool_use/tool_result) recording the SAME exec call
+    request/response as plain text with no exit code -- NOT used here,
+    since the single item_completed event above already carries the
+    structured result and is strictly more informative.
+
+  - Grok (~/.grok/sessions/<url-quoted cwd>/<session-id>/): verified live
+    on this host 2026-09-23 across many real sessions (structure only
+    recorded here). Unlike the other three formats, the command and its
+    result are NOT in the same file:
+      * chat_history.jsonl -- one JSON object per line; an assistant turn
+        is {"type": "assistant", "content": <str>, "tool_calls": [{"id":
+        <str>, "name": <str, e.g. "run_terminal_command">, "arguments":
+        <JSON-encoded STRING with a "command" key (shell string, same
+        shape as Claude's)>}], "model_id": <str>, ...}. Its result is a
+        LATER line {"type": "tool_result", "tool_call_id": <matches
+        tool_calls[].id>, "content": <str>}. BUT this file is a rolling
+        context window: an old entry's `content` was observed live
+        replaced with the literal placeholder text "[Tool result omitted
+        -- too old]" once enough turns pass -- so this file's own result
+        text can NOT be trusted for success/failure of an old claim.
+      * events.jsonl -- a separate, append-only (never pruned) log in the
+        SAME session dir: {"ts": <ISO8601 str>, "type": "tool_completed",
+        "tool_name": <str>, "duration_ms": <int>, "outcome": <str,
+        "success"|"error" -- only these two values seen live>,
+        "tool_call_id": <matches chat_history.jsonl's tool_calls[].id>}.
+        This is the authoritative, never-pruned success signal.
+    So GrokExtractor reads the command text from chat_history.jsonl and
+    the pass/fail verdict + timestamp from events.jsonl, joined on
+    tool_call_id -- the one format here where "find the command" and
+    "find its result" are genuinely two different files (see
+    `GrokExtractor`, `_MultiFileState`, `_scan_grok_group`).
+
+  - Cursor (~/.cursor/chats/<workspace-hash>/<session-id>/store.db):
+    verified live on this host 2026-09-23 across several real sessions
+    with real bd activity (structure only recorded here). This is a
+    SQLite file (`blobs(id TEXT PRIMARY KEY, data BLOB)`, `meta(key,
+    value)`), not an append-only text log -- see `CursorExtractor`'s own
+    docstring for why it is read whole rather than byte-tailed. Roughly a
+    third of `blobs.data` rows are plain UTF-8 JSON conversation messages
+    (the rest are binary tree/pointer nodes this extractor never parses).
+    A message row is {"role": <str>, "content": [...], "id": <str>,
+    "providerOptions": {...}}. A shell call is a "role": "assistant" row
+    whose content list has an item {"type": "tool-call", "toolCallId":
+    <str>, "toolName": "Shell", "args": {"command": <shell string, same
+    shape as Claude's>, "description": <str>}}. Its result is a SEPARATE
+    "role": "tool" row: content item {"type": "tool-result", "toolCallId":
+    <matches the call above>, "result": <str>, "experimental_content":
+    [{"type": "text", "text": <str>}]}, with the pass/fail verdict one
+    level up, on that SAME row's own "providerOptions.cursor.
+    highLevelToolCallResult": {"isError": <bool>, "output": <dict with an
+    "output.success.{command,stdout,...}" shape when isError is false, OR
+    a list of short error strings when isError is true>, "rawErrorMessages":
+    <list[str], only present when isError is true>}. No per-message
+    timestamp was found anywhere in a message row (session-level
+    created/updated timestamps exist in meta.json and the `meta` table,
+    but nothing per-message) -- CursorExtractor always records ts=None for
+    every event, ordered only by SQLite row insertion order (`rowid`),
+    same as every other extractor's `seq` tie-break when ts is unknown
+    (see `_event_key`). `meta`'s per-session JSON blob carries a
+    "blobEncryptionKey" field, but every `blobs.data` row read live on
+    this host decoded as plain UTF-8 JSON without using it -- documented
+    as a live-verified fact, not a guarantee that a future Cursor version
+    can't start actually encrypting these rows (if it did, `extract_calls`
+    below would simply fail its `json.loads` and skip that row, same
+    graceful-empty behavior as any other unparseable line, never a crash
+    or an invented claim). A second, incomplete transcript was also found
+    at ~/.cursor/projects/<project>/agent-transcripts/<session-id>/
+    <session-id>.jsonl -- a "Shell" tool_use with no id and NO matching
+    tool_result at all -- and is NOT used here for exactly that reason
+    (see `_lookup_cursor_transcript`'s docstring in agents.py for why the
+    session-id -> transcript mapping still holds even though this second
+    file is unusable).
+
+Cost: incremental where the on-disk format allows it. Each jsonl transcript
+path gets one small `_FileState` cached
 across ticks (inode, size, byte offset, a tiny `events` list of already-
 resolved successful claim/release actions, and a handful of pending tool
 calls awaiting their result line). A later tick reads and JSON-parses only
@@ -49,7 +140,17 @@ only parsed when there is a pending call to match it against). Truncation
 or rotation (current size < cached size, or a changed inode) resets that
 one file's state and rescans from byte 0 -- the file is small relative to a
 whole transcript re-read, since only the O(dozens) bd-related lines ever
-touch `events`.
+touch `events`. Codex is one jsonl transcript, same as Claude -- each
+item_completed line is already a complete (command, result) pair, so it
+needs no `pending` dict at all. Grok is TWO jsonl transcripts per session
+(chat_history.jsonl for the command, events.jsonl for the result) that
+share ONE `_MultiFileState` (a byte offset per path, but a single shared
+`pending`/`events`/`seq`) -- see `_scan_grok_group`. Cursor's store.db is
+SQLite, not an append-only text log, so none of the above applies: it has
+no meaningful byte offset to tail, and a session's whole db is small (low
+hundreds of KB), so it is read and fully re-derived on every tick that its
+(inode, size, mtime, -wal size) signature has changed since the last tick
+-- see `_scan_one_sqlite_file`, `_SqliteState`.
 """
 
 from __future__ import annotations
@@ -58,6 +159,7 @@ import json
 import os
 import re
 import shlex
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -616,7 +718,299 @@ class KimiExtractor:
                 _apply_command(state, pc.command, False, text, ts)
 
 
-_EXTRACTORS = {"claude": ClaudeExtractor(), "kimi": KimiExtractor()}
+def _iso_ts(raw) -> float | None:
+    """Generic ISO8601 (optionally "Z"-suffixed) string -> epoch seconds,
+    same parse `_claude_ts` does for Claude's `timestamp` -- reused as-is
+    for Grok's `ts` field, which was verified live to use the identical
+    "YYYY-MM-DDTHH:MM:SS.sssZ" shape."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+class CodexExtractor:
+    """CommandExecution item_completed events in a Codex rollout jsonl --
+    see the module docstring for the verified shape. Unlike Claude/Kimi,
+    one line already carries both the command and its result, so this
+    needs no `pending` dict at all."""
+
+    kind = "codex"
+
+    def feed(self, state: _FileState, lines: list[bytes]) -> None:
+        for raw in lines:
+            if not raw:
+                continue
+            if b'"CommandExecution"' not in raw or b"bd" not in raw:
+                continue
+            try:
+                doc = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(doc, dict) or doc.get("type") != "event_msg":
+                continue
+            payload = doc.get("payload")
+            if not isinstance(payload, dict) or payload.get("type") != "item_completed":
+                continue
+            item = payload.get("item")
+            if not isinstance(item, dict) or item.get("type") != "CommandExecution":
+                continue
+            command_argv = item.get("command")
+            # Every real exec item inspected live was exactly
+            # ["/bin/bash", "-lc", <script>] -- any other shape (a
+            # different wrapper, a missing/short list) is skipped rather
+            # than guessed at.
+            if not (
+                isinstance(command_argv, list) and len(command_argv) == 3
+                and command_argv[1] == "-lc" and isinstance(command_argv[2], str)
+            ):
+                continue
+            command = command_argv[2]
+            if "bd" not in command:
+                continue
+            is_error = not (item.get("status") == "completed" and item.get("exit_code") == 0)
+            text = item.get("aggregated_output")
+            if not isinstance(text, str):
+                text = (item.get("stdout") or "") + (item.get("stderr") or "")
+            ts_ms = payload.get("completed_at_ms")
+            ts = ts_ms / 1000.0 if isinstance(ts_ms, int | float) else _iso_ts(doc.get("timestamp"))
+            _apply_command(state, command, is_error, text, ts)
+
+
+@dataclass
+class _MultiFileState:
+    """Shared state for a kind whose command and result live in two
+    DIFFERENT files (Grok only, so far) -- `files` tracks each path's own
+    (inode, size, offset, tail_buf) independently, but `pending`/`events`/
+    `seq` are shared across both, so a call recorded from one file's lines
+    can be matched against a result recorded from the other's."""
+
+    files: dict = field(default_factory=dict)  # path -> (inode, size, offset, tail_buf)
+    pending: dict = field(default_factory=dict)  # tool_call_id -> _PendingCall
+    events: list = field(default_factory=list)  # (seq, action, bead_id, ts)
+    seq: int = 0
+
+
+class GrokExtractor:
+    """Grok's command (chat_history.jsonl) and result (events.jsonl) are
+    two separate files for one session -- see the module docstring for the
+    verified shape of each, and why chat_history.jsonl's OWN result text
+    can't be trusted (rolling-window pruning). `feed` is called once per
+    path with that path's own newly-appended lines (see `_scan_grok_group`)
+    and dispatches on the path's basename."""
+
+    kind = "grok"
+    multi_file = True
+
+    def feed(self, state: _MultiFileState, path: str, lines: list[bytes]) -> None:
+        if path.endswith("chat_history.jsonl"):
+            self._feed_calls(state, lines)
+        elif path.endswith("events.jsonl"):
+            self._feed_results(state, lines)
+
+    def _feed_calls(self, state: _MultiFileState, lines: list[bytes]) -> None:
+        for raw in lines:
+            if not raw or b'"assistant"' not in raw or b"bd" not in raw:
+                continue
+            try:
+                doc = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(doc, dict) or doc.get("type") != "assistant":
+                continue
+            for call in doc.get("tool_calls") or []:
+                if not isinstance(call, dict) or call.get("name") != "run_terminal_command":
+                    continue
+                tool_id = call.get("id")
+                args_raw = call.get("arguments")
+                args = None
+                if isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw)
+                    except ValueError:
+                        args = None
+                elif isinstance(args_raw, dict):
+                    args = args_raw
+                command = args.get("command") if isinstance(args, dict) else None
+                if tool_id and isinstance(command, str) and "bd" in command:
+                    state.pending[tool_id] = _PendingCall(command=command)
+
+    def _feed_results(self, state: _MultiFileState, lines: list[bytes]) -> None:
+        for raw in lines:
+            if not raw or b'"tool_completed"' not in raw or not state.pending:
+                continue
+            try:
+                doc = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(doc, dict) or doc.get("type") != "tool_completed":
+                continue
+            tool_id = doc.get("tool_call_id")
+            pc = state.pending.pop(tool_id, None) if tool_id else None
+            if pc is None:
+                continue
+            # events.jsonl carries no result TEXT at all (see module
+            # docstring) -- "" is passed as result_text; is_error from the
+            # authoritative "outcome" field is what actually decides
+            # success/failure here, same _apply_command/_resolve_success_ids
+            # path as every other extractor.
+            is_error = doc.get("outcome") != "success"
+            ts = _iso_ts(doc.get("ts"))
+            _apply_command(state, pc.command, is_error, "", ts)
+
+
+def _scan_grok_group(paths: list[str], cache: dict, extractor: GrokExtractor) -> _MultiFileState | None:
+    """Mirrors `_scan_one_file`'s incremental byte-offset tailing, but for
+    the TWO paths one Grok session needs (see `_MultiFileState`), keyed in
+    `cache` by the paths tuple rather than a single path string. Processes
+    `paths` in the order given -- callers (agents.py's
+    `_lookup_grok_transcript`) must always pass [chat_history.jsonl,
+    events.jsonl] in that order, so a call and its same-tick result are fed
+    call-before-result."""
+    if len(paths) != 2:
+        return None
+    key = tuple(paths)
+    state = cache.get(key)
+    if state is None:
+        state = _MultiFileState()
+        cache[key] = state
+    for path in paths:
+        try:
+            st = os.stat(path)
+        except OSError:
+            state.files.pop(path, None)
+            continue
+        fst = state.files.get(path)
+        if fst is None or fst[0] != st.st_ino or st.st_size < fst[1]:
+            fst = (st.st_ino, 0, 0, b"")
+        inode, _size, offset, tail_buf = fst
+        if st.st_size <= offset:
+            state.files[path] = (inode, st.st_size, offset, tail_buf)
+            continue
+        try:
+            with open(path, "rb") as f:
+                f.seek(offset)
+                chunk = f.read()
+        except OSError:
+            continue
+        data = tail_buf + chunk
+        parts = data.split(b"\n")
+        new_tail = parts[-1]
+        lines = parts[:-1]
+        new_offset = offset + len(chunk)
+        state.files[path] = (inode, st.st_size, new_offset, new_tail)
+        extractor.feed(state, path, lines)
+    return state
+
+
+class CursorExtractor:
+    """Cursor's store.db (see module docstring for the verified schema) is
+    SQLite, not an append-only text log -- there is no byte offset to
+    tail, so `extract_calls` re-reads and re-derives EVERY event from the
+    whole file each time it's called (see `_scan_one_sqlite_file` for the
+    cheap staleness check that skips this when nothing changed). `blobs`
+    has no reliable per-row timestamp, so calls are yielded ts=None, in
+    ascending `rowid` order (SQLite's own insertion order for this
+    append-only table) -- good enough for `_apply_command`'s seq tie-break,
+    not for comparing recency across sessions/files (see `_event_key`)."""
+
+    kind = "cursor"
+    storage = "sqlite"
+
+    def extract_calls(self, path: str) -> list[tuple[str, bool, str, float | None]]:
+        try:
+            con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                rows = con.execute("SELECT data FROM blobs ORDER BY rowid").fetchall()
+            finally:
+                con.close()
+        except sqlite3.Error:
+            return []
+        pending: dict[str, str] = {}
+        calls: list[tuple[str, bool, str, float | None]] = []
+        for (data,) in rows:
+            try:
+                doc = json.loads(data)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            content = doc.get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                itype = item.get("type")
+                if itype == "tool-call" and item.get("toolName") == "Shell":
+                    args = item.get("args")
+                    command = args.get("command") if isinstance(args, dict) else None
+                    tool_id = item.get("toolCallId")
+                    if tool_id and isinstance(command, str) and "bd" in command:
+                        pending[tool_id] = command
+                elif itype == "tool-result":
+                    tool_id = item.get("toolCallId")
+                    command = pending.pop(tool_id, None) if tool_id else None
+                    if command is None:
+                        continue
+                    hltcr = (
+                        ((doc.get("providerOptions") or {}).get("cursor") or {})
+                        .get("highLevelToolCallResult") or {}
+                    )
+                    is_error = bool(hltcr.get("isError"))
+                    text = _result_text(item.get("experimental_content"))
+                    if not text and isinstance(item.get("result"), str):
+                        text = item["result"]
+                    calls.append((command, is_error, text, None))
+        return calls
+
+
+@dataclass
+class _SqliteState:
+    sig: tuple | None = None
+    events: list = field(default_factory=list)
+
+
+def _sqlite_sig(path: str) -> tuple | None:
+    """A cheap staleness signature for a store.db that may be in WAL mode
+    (a write can land in the -wal file without touching store.db's own
+    mtime/size) -- includes the -wal file's size so an update still
+    triggers a re-read even when the main file itself is untouched."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    try:
+        wal_size = os.path.getsize(path + "-wal")
+    except OSError:
+        wal_size = -1
+    return (st.st_ino, st.st_size, st.st_mtime_ns, wal_size)
+
+
+def _scan_one_sqlite_file(
+    path: str, cache: dict[str, _SqliteState], extractor: CursorExtractor
+) -> _SqliteState | None:
+    sig = _sqlite_sig(path)
+    if sig is None:
+        cache.pop(path, None)
+        return None
+    cached = cache.get(path)
+    if cached is not None and cached.sig == sig:
+        return cached
+    scratch = _FileState(inode=0)
+    for command, is_error, text, ts in extractor.extract_calls(path):
+        _apply_command(scratch, command, is_error, text, ts)
+    state = _SqliteState(sig=sig, events=scratch.events)
+    cache[path] = state
+    return state
+
+
+_EXTRACTORS = {
+    "claude": ClaudeExtractor(), "kimi": KimiExtractor(),
+    "codex": CodexExtractor(), "grok": GrokExtractor(), "cursor": CursorExtractor(),
+}
 BEAD_TRACKED_KINDS = frozenset(_EXTRACTORS)
 
 
@@ -688,23 +1082,38 @@ def _unreleased_claims(events: list[tuple]) -> list[tuple[str, float | None]]:
 
 
 def resolve_session_bead(
-    kind: str, paths: list[str], cache: dict[str, _FileState]
+    kind: str, paths: list[str], cache: dict
 ) -> list[tuple[str, float | None]]:
     """Every (bead_id, claim_ts) this session has an unreleased claim on,
     ordered most-recent-claim-first (see _unreleased_claims) -- empty list,
     never None, when there's nothing (or `kind` isn't tracked). Given every
-    transcript path that session writes to (Claude: one jsonl; Kimi: one
-    wire.jsonl per agent -- main plus any subagents it dispatched, merged by
-    real timestamp since each file's own event ordinal isn't comparable
-    across files). `cache` is a plain dict the caller keeps across polls,
-    keyed by absolute path -- callers should scope one cache dict per
-    collector instance and only ever pass paths for sessions currently
-    considered live, so it never grows to cover every transcript ever
-    written."""
+    transcript path that session writes to (Claude/Codex: one jsonl; Kimi:
+    one wire.jsonl per agent -- main plus any subagents it dispatched,
+    merged by real timestamp since each file's own event ordinal isn't
+    comparable across files; Grok: exactly [chat_history.jsonl,
+    events.jsonl] for its one session, see `_scan_grok_group`; Cursor: one
+    store.db). `cache` is a plain dict the caller keeps across polls --
+    callers should scope one cache dict per collector instance and only
+    ever pass paths for sessions currently considered live, so it never
+    grows to cover every transcript ever written. Keyed by absolute path
+    for a single-file-per-session kind, by the paths tuple for Grok's
+    two-file group (see `_scan_grok_group`) -- never a key collision
+    between kinds, since real paths from different providers are never
+    equal strings."""
     extractor = _EXTRACTORS.get(kind)
     if extractor is None or not paths:
         return []
-    combined: list[tuple] = []
+    if getattr(extractor, "storage", None) == "sqlite":
+        combined: list[tuple] = []
+        for path in paths:
+            state = _scan_one_sqlite_file(path, cache, extractor)
+            if state is not None:
+                combined.extend(state.events)
+        return _unreleased_claims(combined)
+    if getattr(extractor, "multi_file", False):
+        state = _scan_grok_group(paths, cache, extractor)
+        return _unreleased_claims(state.events if state is not None else [])
+    combined = []
     for path in paths:
         state = _scan_one_file(path, cache, extractor)
         if state is not None:

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 
@@ -898,7 +899,7 @@ def test_resolve_remote_session_bead_kimi_claim(tmp_path):
 def test_resolve_remote_session_bead_untracked_kind_returns_none(tmp_path):
     p = tmp_path / "s.jsonl"
     p.write_text(_rp_claude_lines(("t1", "bd update demo-a --claim", _CLAIM_OK, False)))
-    assert rp.resolve_remote_session_bead("codex", [str(p)]) == []
+    assert rp.resolve_remote_session_bead("opencode", [str(p)]) == []
 
 
 def test_resolve_remote_session_bead_untracked_kind_not_parsed_via_kimi_fallback(tmp_path):
@@ -1122,10 +1123,173 @@ def test_bead_extraction_parity_kimi(tmp_path, name, pairs):
     assert [bid for bid, _ts in local_claims] == remote_ids
 
 
+# -- parity: Codex, Grok, Cursor (see bead_sessions.py's module docstring
+# for the verified on-disk shape each fixture builder below mirrors) ------
+
+
+def _rp_codex_lines(*items):
+    lines = []
+    t = 1000
+    for command, exit_code, status, stdout in items:
+        lines.append(json.dumps({
+            "type": "event_msg", "timestamp": "2026-09-23T00:00:00.000Z",
+            "payload": {
+                "type": "item_completed", "completed_at_ms": t,
+                "item": {
+                    "type": "CommandExecution", "command": ["/bin/bash", "-lc", command],
+                    "status": status, "exit_code": exit_code, "stdout": stdout, "stderr": "",
+                    "aggregated_output": stdout,
+                },
+            },
+        }))
+        t += 10
+    return "\n".join(lines) + "\n"
+
+
+_PARITY_CODEX_SCENARIOS: tuple[tuple[str, tuple[tuple[str, int, str, str], ...]], ...] = (
+    ("plain_claim", (("bd update demo-a --claim", 0, "completed", _CLAIM_OK),)),
+    ("claim_then_close", (
+        ("bd update demo-a --claim", 0, "completed", _CLAIM_OK),
+        ("bd close demo-a", 0, "completed", _CLOSE_OK),
+    )),
+    ("failed_exit_code", (("bd update demo-a --claim", 1, "failed", "permission denied"),)),
+    ("compound_wrapped", (("cd /srv/demo && bd update demo-a --claim", 0, "completed", _CLAIM_OK),)),
+    ("echo_not_counted", (
+        ('echo "bd update demo-a --claim"', 0, "completed", "bd update demo-a --claim"),
+    )),
+    ("variable_id_skipped", (("bd update $BID --claim", 0, "completed", _CLAIM_OK),)),
+)
+
+
+@pytest.mark.parametrize("name,items", _PARITY_CODEX_SCENARIOS, ids=[s[0] for s in _PARITY_CODEX_SCENARIOS])
+def test_bead_extraction_parity_codex(tmp_path, name, items):
+    p = tmp_path / f"{name}.jsonl"
+    p.write_text(_rp_codex_lines(*items))
+    local_claims = local_bs.resolve_session_bead("codex", [str(p)], {})
+    remote_ids = rp.resolve_remote_session_bead("codex", [str(p)])
+    assert [bid for bid, _ts in local_claims] == remote_ids
+
+
+def _rp_grok_files(tmp_path, name, *pairs):
+    chat_lines = []
+    event_lines = []
+    for i, (tool_id, command, outcome) in enumerate(pairs):
+        chat_lines.append(json.dumps({
+            "type": "assistant", "content": "demo turn",
+            "tool_calls": [{
+                "id": tool_id, "name": "run_terminal_command",
+                "arguments": json.dumps({"command": command, "description": "run"}),
+            }],
+        }))
+        # chat_history.jsonl's own result text is pruned/untrustworthy on a
+        # real host (see bead_sessions.py's module docstring) -- every
+        # fixture uses that same placeholder to prove events.jsonl's
+        # "outcome" is what actually decides success/failure here.
+        chat_lines.append(json.dumps({
+            "type": "tool_result", "tool_call_id": tool_id, "content": "[Tool result omitted — too old]",
+        }))
+        event_lines.append(json.dumps({
+            "ts": f"2026-09-23T00:00:{i:02d}.000Z", "type": "tool_completed",
+            "tool_name": "run_terminal_command", "duration_ms": 5,
+            "outcome": outcome, "tool_call_id": tool_id,
+        }))
+    d = tmp_path / name
+    d.mkdir()
+    chat_p = d / "chat_history.jsonl"
+    chat_p.write_text("\n".join(chat_lines) + "\n")
+    events_p = d / "events.jsonl"
+    events_p.write_text("\n".join(event_lines) + "\n")
+    return [str(chat_p), str(events_p)]
+
+
+_PARITY_GROK_SCENARIOS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
+    ("plain_claim", (("g1", "bd update demo-a --claim", "success"),)),
+    ("claim_then_close", (
+        ("g1", "bd update demo-a --claim", "success"),
+        ("g2", "bd close demo-a", "success"),
+    )),
+    ("failed_outcome", (("g1", "bd update demo-a --claim", "error"),)),
+    ("compound_wrapped", (("g1", "cd /srv/demo && bd update demo-a --claim", "success"),)),
+    ("echo_not_counted", (("g1", 'echo "bd update demo-a --claim"', "success"),)),
+    ("variable_id_skipped", (("g1", "bd update $BID --claim", "success"),)),
+)
+
+
+@pytest.mark.parametrize("name,pairs", _PARITY_GROK_SCENARIOS, ids=[s[0] for s in _PARITY_GROK_SCENARIOS])
+def test_bead_extraction_parity_grok(tmp_path, name, pairs):
+    paths = _rp_grok_files(tmp_path, name, *pairs)
+    local_claims = local_bs.resolve_session_bead("grok", paths, {})
+    remote_ids = rp.resolve_remote_session_bead("grok", paths)
+    assert [bid for bid, _ts in local_claims] == remote_ids
+
+
+def _rp_cursor_db(tmp_path, name, *pairs):
+    path = tmp_path / name
+    con = sqlite3.connect(str(path))
+    con.execute("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)")
+    con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    idx = 0
+    for tool_id, command, is_error in pairs:
+        call_row = {
+            "role": "assistant",
+            "content": [{
+                "type": "tool-call", "toolCallId": tool_id, "toolName": "Shell",
+                "args": {"command": command, "description": "run"},
+            }],
+            "id": f"demo-msg-{idx}",
+        }
+        con.execute("INSERT INTO blobs (id, data) VALUES (?, ?)", (f"demo-blob-{idx}", json.dumps(call_row)))
+        idx += 1
+        if is_error:
+            hltcr = {"output": ["demo error text"], "isError": True, "rawErrorMessages": ["demo error text"]}
+        else:
+            hltcr = {
+                "output": {"command": command, "stdout": "ok", "executionTime": 1, "localExecutionTimeMs": 1},
+                "isError": False,
+            }
+        result_row = {
+            "role": "tool",
+            "content": [{
+                "type": "tool-result", "toolCallId": tool_id, "result": "ok",
+                "experimental_content": [{"type": "text", "text": "ok"}],
+            }],
+            "id": f"demo-msg-{idx}",
+            "providerOptions": {"cursor": {"highLevelToolCallResult": hltcr}},
+        }
+        con.execute(
+            "INSERT INTO blobs (id, data) VALUES (?, ?)", (f"demo-blob-{idx}", json.dumps(result_row))
+        )
+        idx += 1
+    con.commit()
+    con.close()
+    return str(path)
+
+
+_PARITY_CURSOR_SCENARIOS: tuple[tuple[str, tuple[tuple[str, str, bool], ...]], ...] = (
+    ("plain_claim", (("c1", "bd update demo-a --claim", False),)),
+    ("claim_then_close", (
+        ("c1", "bd update demo-a --claim", False),
+        ("c2", "bd close demo-a", False),
+    )),
+    ("failed_is_error", (("c1", "bd update demo-a --claim", True),)),
+    ("compound_wrapped", (("c1", "cd /srv/demo && bd update demo-a --claim", False),)),
+    ("echo_not_counted", (("c1", 'echo "bd update demo-a --claim"', False),)),
+    ("variable_id_skipped", (("c1", "bd update $BID --claim", False),)),
+)
+
+
+@pytest.mark.parametrize("name,pairs", _PARITY_CURSOR_SCENARIOS, ids=[s[0] for s in _PARITY_CURSOR_SCENARIOS])
+def test_bead_extraction_parity_cursor(tmp_path, name, pairs):
+    p = _rp_cursor_db(tmp_path, f"{name}.db", *pairs)
+    local_claims = local_bs.resolve_session_bead("cursor", [p], {})
+    remote_ids = rp.resolve_remote_session_bead("cursor", [p])
+    assert [bid for bid, _ts in local_claims] == remote_ids
+
+
 def test_collect_agents_herdr_only_sets_bead_tracked_by_kind(monkeypatch):
     herdr_json = json.dumps({"result": {"agents": [
         {"agent": "claude", "agent_session": {"value": "s1"}, "cwd": "/srv/demo"},
-        {"agent": "codex", "agent_session": {"value": "s2"}, "cwd": "/srv/demo"},
+        {"agent": "opencode", "agent_session": {"value": "s2"}, "cwd": "/srv/demo"},
     ]}})
 
     class FakeProc:
@@ -1139,7 +1303,7 @@ def test_collect_agents_herdr_only_sets_bead_tracked_by_kind(monkeypatch):
     by_kind = {a["kind"]: a for a in agents}
     assert by_kind["claude"]["bead_tracked"] is True
     assert by_kind["claude"]["bead"] is None  # no transcript path from herdr alone
-    assert by_kind["codex"]["bead_tracked"] is False
+    assert by_kind["opencode"]["bead_tracked"] is False
 
 
 # -- by-session-id transcript backfill for herdr-only agents (the same

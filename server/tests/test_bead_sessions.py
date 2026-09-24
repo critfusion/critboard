@@ -15,6 +15,7 @@ FIRST (or only) entry, so `_first` unwraps that for readability.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from critdash.collectors.bead_sessions import (
     BEAD_TRACKED_KINDS,
@@ -548,9 +549,332 @@ def test_kimi_assign_release(tmp_path):
 
 
 def test_bead_tracked_kinds():
-    assert BEAD_TRACKED_KINDS == frozenset({"claude", "kimi"})
+    assert BEAD_TRACKED_KINDS == frozenset({"claude", "kimi", "codex", "grok", "cursor"})
 
 
 def test_unknown_kind_returns_empty_list(tmp_path):
     p = write(tmp_path / "x.jsonl", "not used\n")
+    assert resolve_session_bead("opencode", [p], {}) == []
+
+
+# ---------------------------------------------------------------------------
+# Codex line builders -- one item_completed line IS the (command, result)
+# pair (see bead_sessions.py's module docstring for the verified shape).
+# ---------------------------------------------------------------------------
+
+
+def codex_item_completed(
+    command: str, exit_code: int = 0, status: str = "completed",
+    stdout: str = "ok", ts_ms: int = 1000, timestamp: str = "2026-09-23T00:00:00.000Z",
+) -> str:
+    return json.dumps({
+        "type": "event_msg",
+        "timestamp": timestamp,
+        "payload": {
+            "type": "item_completed",
+            "started_at_ms": ts_ms - 5,
+            "completed_at_ms": ts_ms,
+            "item": {
+                "type": "CommandExecution",
+                "command": ["/bin/bash", "-lc", command],
+                "status": status,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": "",
+                "aggregated_output": stdout,
+            },
+        },
+    })
+
+
+def codex_lines(*items: tuple[str, int, str, str]) -> str:
+    """Each item: (command, exit_code, status, stdout)."""
+    lines = []
+    t = 1000
+    for command, exit_code, status, stdout in items:
+        lines.append(codex_item_completed(command, exit_code, status, stdout, t))
+        t += 10
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Codex extractor
+# ---------------------------------------------------------------------------
+
+
+def test_codex_plain_claim(tmp_path):
+    p = write(tmp_path / "rollout.jsonl", codex_lines(
+        ("bd update demo-a --claim", 0, "completed", CLAIM_OK),
+    ))
+    claims = resolve_session_bead("codex", [p], {})
+    assert _first(claims) == "demo-a"
+    assert claims[0][1] is not None
+
+
+def test_codex_compound_wrapped_command(tmp_path):
+    p = write(tmp_path / "rollout.jsonl", codex_lines(
+        ("cd /demo/work && bd update demo-a --claim", 0, "completed", CLAIM_OK),
+    ))
+    assert _first(resolve_session_bead("codex", [p], {})) == "demo-a"
+
+
+def test_codex_quoted_handoff_text_not_counted(tmp_path):
+    p = write(tmp_path / "rollout.jsonl", codex_lines(
+        ('echo "bd update demo-a --claim"', 0, "completed", "bd update demo-a --claim"),
+    ))
     assert resolve_session_bead("codex", [p], {}) == []
+
+
+def test_codex_failed_claim_exit_code_ignored(tmp_path):
+    # stdout deliberately does NOT contain "Error:"/"already claimed" -- this
+    # pins success/failure to `status`/`exit_code` alone (see
+    # CodexExtractor.feed), not the shared text-marker fallback every
+    # extractor also has.
+    p = write(tmp_path / "rollout.jsonl", codex_lines(
+        ("bd update demo-a --claim", 1, "failed", "permission denied doing thing"),
+    ))
+    assert resolve_session_bead("codex", [p], {}) == []
+
+
+def test_codex_claim_then_close_is_null(tmp_path):
+    p = write(tmp_path / "rollout.jsonl", codex_lines(
+        ("bd update demo-a --claim", 0, "completed", CLAIM_OK),
+        ("bd close demo-a", 0, "completed", CLOSE_OK),
+    ))
+    assert resolve_session_bead("codex", [p], {}) == []
+
+
+def test_codex_nonliteral_id_skipped(tmp_path):
+    p = write(tmp_path / "rollout.jsonl", codex_lines(
+        ("bd update $id --claim", 0, "completed", CLAIM_OK),
+    ))
+    assert resolve_session_bead("codex", [p], {}) == []
+
+
+def test_codex_non_bash_lc_command_shape_skipped(tmp_path):
+    # command is a list but not the verified ["/bin/bash", "-lc", <script>]
+    # shape -- skipped rather than guessed at.
+    line = json.dumps({
+        "type": "event_msg",
+        "timestamp": "2026-09-23T00:00:00.000Z",
+        "payload": {
+            "type": "item_completed",
+            "completed_at_ms": 1000,
+            "item": {
+                "type": "CommandExecution",
+                "command": ["bd", "update", "demo-a", "--claim"],
+                "status": "completed",
+                "exit_code": 0,
+                "aggregated_output": CLAIM_OK,
+            },
+        },
+    })
+    p = write(tmp_path / "rollout.jsonl", line + "\n")
+    assert resolve_session_bead("codex", [p], {}) == []
+
+
+# ---------------------------------------------------------------------------
+# Grok line builders -- command in chat_history.jsonl, pass/fail verdict in
+# the SEPARATE events.jsonl (see bead_sessions.py's module docstring).
+# ---------------------------------------------------------------------------
+
+
+def grok_assistant_call(tool_id: str, command: str) -> str:
+    return json.dumps({
+        "type": "assistant",
+        "content": "demo turn",
+        "tool_calls": [{
+            "id": tool_id, "name": "run_terminal_command",
+            "arguments": json.dumps({"command": command, "description": "run"}),
+        }],
+        "model_id": "demo-model",
+    })
+
+
+def grok_tool_result_pruned(tool_id: str) -> str:
+    # chat_history.jsonl's own result text is untrustworthy once pruned --
+    # every fixture uses the real observed placeholder to prove events.jsonl
+    # (not this) is what decides success/failure.
+    return json.dumps({"type": "tool_result", "tool_call_id": tool_id,
+                        "content": "[Tool result omitted — too old]"})
+
+
+def grok_tool_completed(tool_id: str, outcome: str, ts: str) -> str:
+    return json.dumps({"ts": ts, "type": "tool_completed", "tool_name": "run_terminal_command",
+                        "duration_ms": 12, "outcome": outcome, "tool_call_id": tool_id})
+
+
+def grok_session(tmp_path, name: str, *pairs: tuple[str, str, str]) -> list[str]:
+    """Each pair: (tool_id, command, outcome). Returns [chat_history_path,
+    events_path] in the fixed order GrokExtractor/_scan_grok_group require."""
+    chat_lines: list[str] = []
+    event_lines: list[str] = []
+    for i, (tool_id, command, outcome) in enumerate(pairs):
+        chat_lines.append(grok_assistant_call(tool_id, command))
+        chat_lines.append(grok_tool_result_pruned(tool_id))
+        event_lines.append(grok_tool_completed(tool_id, outcome, f"2026-09-23T00:00:{i:02d}.000Z"))
+    d = tmp_path / name
+    d.mkdir()
+    chat_p = write(d / "chat_history.jsonl", "\n".join(chat_lines) + "\n")
+    events_p = write(d / "events.jsonl", "\n".join(event_lines) + "\n")
+    return [chat_p, events_p]
+
+
+# ---------------------------------------------------------------------------
+# Grok extractor
+# ---------------------------------------------------------------------------
+
+
+def test_grok_plain_claim(tmp_path):
+    paths = grok_session(tmp_path, "s1", ("g1", "bd update demo-a --claim", "success"))
+    claims = resolve_session_bead("grok", paths, {})
+    assert _first(claims) == "demo-a"
+    assert claims[0][1] is not None
+
+
+def test_grok_compound_wrapped_command(tmp_path):
+    paths = grok_session(tmp_path, "s1", ("g1", "cd /demo/work && bd update demo-a --claim", "success"))
+    assert _first(resolve_session_bead("grok", paths, {})) == "demo-a"
+
+
+def test_grok_quoted_handoff_text_not_counted(tmp_path):
+    paths = grok_session(tmp_path, "s1", ("g1", 'echo "bd update demo-a --claim"', "success"))
+    assert resolve_session_bead("grok", paths, {}) == []
+
+
+def test_grok_failed_claim_outcome_error_ignored(tmp_path):
+    # chat_history.jsonl's own (pruned) result text looks like neither
+    # success nor a known failure marker -- only events.jsonl's "outcome"
+    # decides this, proving the join is load-bearing, not decorative.
+    paths = grok_session(tmp_path, "s1", ("g1", "bd update demo-a --claim", "error"))
+    assert resolve_session_bead("grok", paths, {}) == []
+
+
+def test_grok_claim_then_close_is_null(tmp_path):
+    paths = grok_session(
+        tmp_path, "s1",
+        ("g1", "bd update demo-a --claim", "success"),
+        ("g2", "bd close demo-a", "success"),
+    )
+    assert resolve_session_bead("grok", paths, {}) == []
+
+
+def test_grok_nonliteral_id_skipped(tmp_path):
+    paths = grok_session(tmp_path, "s1", ("g1", "bd update $id --claim", "success"))
+    assert resolve_session_bead("grok", paths, {}) == []
+
+
+def test_grok_missing_events_file_gives_no_claims(tmp_path):
+    # Only chat_history.jsonl exists (e.g. events.jsonl not found by the
+    # caller's lookup) -- resolve_session_bead requires exactly 2 paths.
+    chat_p = write(
+        tmp_path / "chat_history.jsonl", grok_assistant_call("g1", "bd update demo-a --claim") + "\n"
+    )
+    assert resolve_session_bead("grok", [chat_p], {}) == []
+
+
+# ---------------------------------------------------------------------------
+# Cursor db builder -- store.db's `blobs` table (see bead_sessions.py's
+# module docstring for the verified schema).
+# ---------------------------------------------------------------------------
+
+
+def cursor_db(tmp_path, name: str, *pairs: tuple[str, str, bool]) -> str:
+    """Each pair: (tool_call_id, command, is_error). Writes a synthetic
+    store.db with one assistant tool-call blob and one tool tool-result
+    blob per pair, in insertion order (CursorExtractor reads `ORDER BY
+    rowid`, so insertion order IS read order here)."""
+    path = tmp_path / name
+    con = sqlite3.connect(str(path))
+    con.execute("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)")
+    con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    idx = 0
+    for tool_id, command, is_error in pairs:
+        call_row = {
+            "role": "assistant",
+            "content": [{
+                "type": "tool-call", "toolCallId": tool_id, "toolName": "Shell",
+                "args": {"command": command, "description": "run"},
+            }],
+            "id": f"demo-msg-{idx}",
+        }
+        con.execute("INSERT INTO blobs (id, data) VALUES (?, ?)", (f"demo-blob-{idx}", json.dumps(call_row)))
+        idx += 1
+        if is_error:
+            hltcr = {"output": ["demo error text"], "isError": True, "rawErrorMessages": ["demo error text"]}
+        else:
+            hltcr = {
+                "output": {"command": command, "stdout": "ok", "executionTime": 1, "localExecutionTimeMs": 1},
+                "isError": False,
+            }
+        result_row = {
+            "role": "tool",
+            "content": [{
+                "type": "tool-result", "toolCallId": tool_id, "result": "ok",
+                "experimental_content": [{"type": "text", "text": "ok"}],
+            }],
+            "id": f"demo-msg-{idx}",
+            "providerOptions": {"cursor": {"highLevelToolCallResult": hltcr}},
+        }
+        con.execute(
+            "INSERT INTO blobs (id, data) VALUES (?, ?)", (f"demo-blob-{idx}", json.dumps(result_row))
+        )
+        idx += 1
+    con.commit()
+    con.close()
+    return str(path)
+
+
+# ---------------------------------------------------------------------------
+# Cursor extractor
+# ---------------------------------------------------------------------------
+
+
+def test_cursor_plain_claim(tmp_path):
+    p = cursor_db(tmp_path, "store.db", ("c1", "bd update demo-a --claim", False))
+    claims = resolve_session_bead("cursor", [p], {})
+    assert _first(claims) == "demo-a"
+
+
+def test_cursor_compound_wrapped_command(tmp_path):
+    p = cursor_db(tmp_path, "store.db", ("c1", "cd /demo/work && bd update demo-a --claim", False))
+    assert _first(resolve_session_bead("cursor", [p], {})) == "demo-a"
+
+
+def test_cursor_quoted_handoff_text_not_counted(tmp_path):
+    p = cursor_db(tmp_path, "store.db", ("c1", 'echo "bd update demo-a --claim"', False))
+    assert resolve_session_bead("cursor", [p], {}) == []
+
+
+def test_cursor_failed_claim_is_error_ignored(tmp_path):
+    p = cursor_db(tmp_path, "store.db", ("c1", "bd update demo-a --claim", True))
+    assert resolve_session_bead("cursor", [p], {}) == []
+
+
+def test_cursor_claim_then_close_is_null(tmp_path):
+    p = cursor_db(
+        tmp_path, "store.db",
+        ("c1", "bd update demo-a --claim", False),
+        ("c2", "bd close demo-a", False),
+    )
+    assert resolve_session_bead("cursor", [p], {}) == []
+
+
+def test_cursor_nonliteral_id_skipped(tmp_path):
+    p = cursor_db(tmp_path, "store.db", ("c1", "bd update $id --claim", False))
+    assert resolve_session_bead("cursor", [p], {}) == []
+
+
+def test_cursor_binary_blob_rows_skipped_safely(tmp_path):
+    # A real store.db is roughly 2/3 non-UTF8 binary "pointer" blobs (see
+    # module docstring) -- must not crash or be mistaken for a message row.
+    p = cursor_db(tmp_path, "store.db", ("c1", "bd update demo-a --claim", False))
+    con = sqlite3.connect(p)
+    con.execute("INSERT INTO blobs (id, data) VALUES (?, ?)", ("demo-binary", b"\x00\x01\xff\xfe\x02"))
+    con.commit()
+    con.close()
+    assert _first(resolve_session_bead("cursor", [p], {})) == "demo-a"
+
+
+def test_cursor_missing_db_gives_no_claims(tmp_path):
+    assert resolve_session_bead("cursor", [str(tmp_path / "missing.db")], {}) == []

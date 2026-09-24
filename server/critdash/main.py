@@ -317,6 +317,9 @@ def build_app() -> FastAPI:
         # session-derived collectors above already use.
         claude_projects_dir=config.expand("claude_projects_dir"),
         kimi_dir=config.sources.get("kimi_dir", "~/.kimi-code"),
+        codex_dir=config.sources.get("codex_dir", "~/.codex"),
+        grok_dir=config.sources.get("grok_dir", "~/.grok"),
+        cursor_dir=config.sources.get("cursor_dir", "~/.cursor"),
     )
     agents_collector.interval_s = config.interval("agents")
     scheduler.register(agents_collector)
@@ -397,6 +400,9 @@ def build_app() -> FastAPI:
             max_depth=config.sources.get("repo_scan_depth", 4),
             session_active_window_s=session_active_window_s,
             kimi_dir=config.sources.get("kimi_dir", "~/.kimi-code"),
+            codex_dir=config.sources.get("codex_dir", "~/.codex"),
+            grok_dir=config.sources.get("grok_dir", "~/.grok"),
+            cursor_dir=config.sources.get("cursor_dir", "~/.cursor"),
         )
         c.interval_s = config.sources.get("remote_interval_s", 120)
         return c

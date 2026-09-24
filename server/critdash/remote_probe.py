@@ -60,6 +60,7 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -682,8 +683,13 @@ _KIMI_TAIL_READ_BYTES = 65536
 # has to survive being copied ALONE to a machine with no critdash package
 # installed -- same rule the module docstring already states for the
 # agents/worktrees duplication above). See bead_sessions.py's own docstring
-# for the two verified transcript formats (Claude Code jsonl, Kimi
-# wire.jsonl) and the bd output markers this reads.
+# for all five verified transcript formats (Claude Code jsonl, Kimi
+# wire.jsonl, Codex rollout jsonl, Grok's chat_history.jsonl+events.jsonl
+# pair, Cursor's store.db) and the bd output markers this reads. Unlike
+# bead_sessions.py, nothing here is cached across calls (a fresh `ssh host
+# python3 -` interpreter starts, runs once, and exits), so Codex/Grok/Cursor
+# are each read in full (bounded by _BD_SCAN_TAIL_BYTES / SQLite's own file
+# size, both small) rather than incrementally.
 #
 # Unlike the local collector, this has NO incremental cache across ticks --
 # each `ssh host python3 -` invocation is a fresh interpreter with no state
@@ -698,7 +704,7 @@ _KIMI_TAIL_READ_BYTES = 65536
 # module's own real remote hosts; see the timing note in the collector's
 # test/verification report.
 _BD_SCAN_TAIL_BYTES = 2_000_000
-_BEAD_TRACKED_KINDS = frozenset({"claude", "kimi"})
+_BEAD_TRACKED_KINDS = frozenset({"claude", "kimi", "codex", "grok", "cursor"})
 # Cap on how many unreleased-claim ids one session ships off this host --
 # keeps the probe payload small (this is the only thing about a session's
 # bd activity that ever leaves the host: ids, nothing else).
@@ -1175,6 +1181,178 @@ def _bd_scan_kimi_file(path: str, events: list[tuple], seq_box: list[int]) -> No
             _bd_apply_command(events, seq_box, command, False, text, ts)
 
 
+def _bd_iso_ts(raw) -> float | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _bd_scan_codex_file(path: str, events: list[tuple], seq_box: list[int]) -> None:
+    """Mirrors bead_sessions.py's CodexExtractor: one item_completed line IS
+    the (command, result) pair, so this needs no pending dict."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > _BD_SCAN_TAIL_BYTES:
+                f.seek(size - _BD_SCAN_TAIL_BYTES)
+            data = f.read()
+    except OSError:
+        return
+    for raw in data.split(b"\n"):
+        if not raw or b'"CommandExecution"' not in raw or b"bd" not in raw:
+            continue
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(doc, dict) or doc.get("type") != "event_msg":
+            continue
+        payload = doc.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "item_completed":
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "CommandExecution":
+            continue
+        command_argv = item.get("command")
+        if not (
+            isinstance(command_argv, list) and len(command_argv) == 3
+            and command_argv[1] == "-lc" and isinstance(command_argv[2], str)
+        ):
+            continue
+        command = command_argv[2]
+        if "bd" not in command:
+            continue
+        is_error = not (item.get("status") == "completed" and item.get("exit_code") == 0)
+        text = item.get("aggregated_output")
+        if not isinstance(text, str):
+            text = (item.get("stdout") or "") + (item.get("stderr") or "")
+        ts_ms = payload.get("completed_at_ms")
+        ts = ts_ms / 1000.0 if isinstance(ts_ms, int | float) else _bd_iso_ts(doc.get("timestamp"))
+        _bd_apply_command(events, seq_box, command, is_error, text, ts)
+
+
+def _bd_scan_grok_files(chat_path: str, events_path: str, events: list[tuple], seq_box: list[int]) -> None:
+    """Mirrors bead_sessions.py's GrokExtractor/_scan_grok_group: the
+    command lives in chat_history.jsonl, the pass/fail verdict + timestamp
+    in the separate, never-pruned events.jsonl, joined on tool_call_id.
+    `pending` is a plain local dict here (stateless per call, like the rest
+    of this module) -- chat_path is read and matched into `pending` FIRST,
+    then events_path resolves each match, so within this one call a call's
+    result is always found regardless of which half of the tail window
+    each line happened to land in."""
+    pending: dict[str, str] = {}
+    try:
+        size = os.path.getsize(chat_path)
+        with open(chat_path, "rb") as f:
+            if size > _BD_SCAN_TAIL_BYTES:
+                f.seek(size - _BD_SCAN_TAIL_BYTES)
+            chat_data = f.read()
+    except OSError:
+        chat_data = b""
+    for raw in chat_data.split(b"\n"):
+        if not raw or b'"assistant"' not in raw or b"bd" not in raw:
+            continue
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(doc, dict) or doc.get("type") != "assistant":
+            continue
+        for call in doc.get("tool_calls") or []:
+            if not isinstance(call, dict) or call.get("name") != "run_terminal_command":
+                continue
+            tool_id = call.get("id")
+            args_raw = call.get("arguments")
+            args = None
+            if isinstance(args_raw, str):
+                try:
+                    args = json.loads(args_raw)
+                except ValueError:
+                    args = None
+            elif isinstance(args_raw, dict):
+                args = args_raw
+            command = args.get("command") if isinstance(args, dict) else None
+            if tool_id and isinstance(command, str) and "bd" in command:
+                pending[tool_id] = command
+    try:
+        size = os.path.getsize(events_path)
+        with open(events_path, "rb") as f:
+            if size > _BD_SCAN_TAIL_BYTES:
+                f.seek(size - _BD_SCAN_TAIL_BYTES)
+            events_data = f.read()
+    except OSError:
+        events_data = b""
+    for raw in events_data.split(b"\n"):
+        if not raw or b'"tool_completed"' not in raw or not pending:
+            continue
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(doc, dict) or doc.get("type") != "tool_completed":
+            continue
+        tool_id = doc.get("tool_call_id")
+        command = pending.pop(tool_id, None) if tool_id else None
+        if command is None:
+            continue
+        is_error = doc.get("outcome") != "success"
+        ts = _bd_iso_ts(doc.get("ts"))
+        _bd_apply_command(events, seq_box, command, is_error, "", ts)
+
+
+def _bd_scan_cursor_db(path: str, events: list[tuple], seq_box: list[int]) -> None:
+    """Mirrors bead_sessions.py's CursorExtractor: store.db is SQLite, read
+    whole (small file) rather than tailed. No per-message timestamp exists
+    (see bead_sessions.py's module docstring), so every event here is
+    ts=None, ordered by SQLite row insertion order (rowid)."""
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = con.execute("SELECT data FROM blobs ORDER BY rowid").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return
+    pending: dict[str, str] = {}
+    for (data,) in rows:
+        try:
+            doc = json.loads(data)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        content = doc.get("content")
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type")
+            if itype == "tool-call" and item.get("toolName") == "Shell":
+                args = item.get("args")
+                command = args.get("command") if isinstance(args, dict) else None
+                tool_id = item.get("toolCallId")
+                if tool_id and isinstance(command, str) and "bd" in command:
+                    pending[tool_id] = command
+            elif itype == "tool-result":
+                tool_id = item.get("toolCallId")
+                command = pending.pop(tool_id, None) if tool_id else None
+                if command is None:
+                    continue
+                hltcr = (
+                    ((doc.get("providerOptions") or {}).get("cursor") or {})
+                    .get("highLevelToolCallResult") or {}
+                )
+                is_error = bool(hltcr.get("isError"))
+                text = _bd_result_text(item.get("experimental_content"))
+                if not text and isinstance(item.get("result"), str):
+                    text = item["result"]
+                _bd_apply_command(events, seq_box, command, is_error, text, None)
+
+
 def resolve_remote_session_bead(kind: str, paths: list[str]) -> list[str]:
     """Stateless, full-tail-bounded unreleased-claims resolution for one
     LIVE session on this remote host. Returns ONLY bead ids -- the ordered
@@ -1190,7 +1368,18 @@ def resolve_remote_session_bead(kind: str, paths: list[str]) -> list[str]:
         return []
     events: list[tuple] = []
     seq_box = [0]
-    scanner = _bd_scan_claude_file if kind == "claude" else _bd_scan_kimi_file
+    if kind == "grok":
+        # Grok is always exactly [chat_history.jsonl, events.jsonl] for its
+        # one session (see find_grok_transcript_by_session_id) -- anything
+        # else means the caller didn't build the pair correctly, so this
+        # yields nothing rather than guess which path is which.
+        if len(paths) == 2:
+            _bd_scan_grok_files(paths[0], paths[1], events, seq_box)
+        return [bid for bid, _ts in _bd_unreleased_claims(events)][:_BD_MAX_CLAIMS]
+    scanner = {
+        "claude": _bd_scan_claude_file, "kimi": _bd_scan_kimi_file,
+        "codex": _bd_scan_codex_file, "cursor": _bd_scan_cursor_db,
+    }[kind]
     for path in paths:
         scanner(path, events, seq_box)
     return [bid for bid, _ts in _bd_unreleased_claims(events)][:_BD_MAX_CLAIMS]
@@ -1243,8 +1432,49 @@ def find_kimi_wire_paths_by_session_id(kimi_dir: str, session_id: str) -> list[s
     return []
 
 
+def find_codex_transcript_by_session_id(codex_dir: str, session_id: str) -> list[str]:
+    """Mirrors collectors/agents.py's _lookup_codex_transcript: a Codex
+    rollout jsonl lives at
+    <codex_dir>/sessions/YYYY/MM/DD/rollout-<timestamp>-<session-id>.jsonl,
+    the session id verified live to appear verbatim at the end of the
+    filename."""
+    if not codex_dir:
+        return []
+    pattern = os.path.join(codex_dir, "sessions", "*", "*", "*", f"rollout-*-{session_id}.jsonl")
+    return glob.glob(pattern)[:1]
+
+
+def find_grok_transcript_by_session_id(grok_dir: str, session_id: str) -> list[str]:
+    """Mirrors collectors/agents.py's _lookup_grok_transcript: a Grok
+    session's own dir is <grok_dir>/sessions/<url-quoted-cwd>/<session-id>/,
+    named EXACTLY the session id. Returns [chat_history.jsonl,
+    events.jsonl] in that fixed order (see _bd_scan_grok_files), or [] if
+    either file is missing."""
+    if not grok_dir:
+        return []
+    dirs = glob.glob(os.path.join(grok_dir, "sessions", "*", session_id))
+    if not dirs:
+        return []
+    chat_path = os.path.join(dirs[0], "chat_history.jsonl")
+    events_path = os.path.join(dirs[0], "events.jsonl")
+    if not os.path.exists(chat_path) or not os.path.exists(events_path):
+        return []
+    return [chat_path, events_path]
+
+
+def find_cursor_transcript_by_session_id(cursor_dir: str, session_id: str) -> list[str]:
+    """Mirrors collectors/agents.py's _lookup_cursor_transcript: a Cursor
+    session's store.db lives at
+    <cursor_dir>/chats/<workspace-hash>/<session-id>/store.db."""
+    if not cursor_dir:
+        return []
+    pattern = os.path.join(cursor_dir, "chats", "*", session_id, "store.db")
+    return glob.glob(pattern)[:1]
+
+
 def backfill_herdr_only_bead_claims(
     agents: list[dict], claude_projects_dir: str, kimi_dir: str,
+    codex_dir: str = "", grok_dir: str = "", cursor_dir: str = "",
 ) -> None:
     """For every merged agent that came from herdr ALONE (no session/Kimi
     record merged onto it -- e.g. a pane herdr still lists as "done"/"idle"
@@ -1257,19 +1487,24 @@ def backfill_herdr_only_bead_claims(
     cache to keep (a fresh `ssh host python3 -` interpreter starts, does
     this once, and exits -- see the module docstring's "stateless per
     call"), so there is nothing to cache here."""
+    lookups = {
+        "claude": lambda sid: find_claude_transcript_by_session_id(claude_projects_dir, sid),
+        "kimi": lambda sid: find_kimi_wire_paths_by_session_id(kimi_dir, sid),
+        "codex": lambda sid: find_codex_transcript_by_session_id(codex_dir, sid),
+        "grok": lambda sid: find_grok_transcript_by_session_id(grok_dir, sid),
+        "cursor": lambda sid: find_cursor_transcript_by_session_id(cursor_dir, sid),
+    }
     for agent in agents:
         if agent.get("source") != "herdr" or "bead_claims" in agent:
             continue
         kind = agent.get("kind")
-        if kind not in _BEAD_TRACKED_KINDS:
+        lookup = lookups.get(kind)
+        if lookup is None or kind not in _BEAD_TRACKED_KINDS:
             continue
         session_id = agent.get("session_id")
         if not session_id:
             continue
-        if kind == "claude":
-            paths = find_claude_transcript_by_session_id(claude_projects_dir, session_id)
-        else:
-            paths = find_kimi_wire_paths_by_session_id(kimi_dir, session_id)
+        paths = lookup(session_id)
         if paths:
             agent["bead_claims"] = resolve_remote_session_bead(kind, paths)
 
@@ -2138,6 +2373,7 @@ def build_result(
     herdr_bin: str, worker_pool: int, git_timeout_s: float, max_depth: int,
     state_file: str | None, productivity_since: str = "30 days ago",
     session_window_s: float = 900.0, kimi_dir: str = "~/.kimi-code",
+    codex_dir: str = "~/.codex", grok_dir: str = "~/.grok", cursor_dir: str = "~/.cursor",
 ) -> dict:
     worktrees: list[dict] = []
     agents: list[dict] = []
@@ -2175,6 +2411,7 @@ def build_result(
         # transcript up by session id instead of by recent activity.
         backfill_herdr_only_bead_claims(
             agents, _claude_projects_dir_from_glob(projects_glob), os.path.expanduser(kimi_dir),
+            os.path.expanduser(codex_dir), os.path.expanduser(grok_dir), os.path.expanduser(cursor_dir),
         )
         join_agents_to_worktrees(worktrees, agents)
     except Exception:  # noqa: BLE001
@@ -2224,6 +2461,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--productivity-since", default="30 days ago")
     p.add_argument("--session-window", type=float, default=900.0)
     p.add_argument("--kimi-dir", default="~/.kimi-code")
+    p.add_argument("--codex-dir", default="~/.codex")
+    p.add_argument("--grok-dir", default="~/.grok")
+    p.add_argument("--cursor-dir", default="~/.cursor")
     return p.parse_args(argv)
 
 
@@ -2238,6 +2478,7 @@ def main(argv: list[str] | None = None) -> int:
             args.host, args.projects_glob, repo_roots, disk_mounts,
             args.herdr_bin, args.worker_pool, args.git_timeout, args.max_depth,
             args.state_file, args.productivity_since, args.session_window, args.kimi_dir,
+            args.codex_dir, args.grok_dir, args.cursor_dir,
         )
     except Exception as exc:  # noqa: BLE001 -- always print valid JSON, never a traceback
         result = {

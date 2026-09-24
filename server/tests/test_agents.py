@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import time
 
 import pytest
@@ -1009,6 +1010,147 @@ async def test_transcript_lookup_cached_and_invalidated_on_delete_or_move(monkey
     store.close()
     assert result4["agents"][0]["bead"] == bead_id
     assert call_count == 3
+
+
+# -- by-session-id transcript lookup: codex/grok/cursor ---------------------
+
+
+@pytest.mark.asyncio
+async def test_collect_finds_bead_for_stale_codex_pane_via_session_id_lookup(monkeypatch, tmp_path):
+    session_id = "stale-codex-session"
+    bead_id = "demo-stale-codex-a"
+    _fake_herdr_exec(monkeypatch, [{
+        "agent": "codex", "agent_status": "idle", "cwd": "/srv/demo/ffw",
+        "pane_id": "pane-codex", "workspace_id": "ws-1", "terminal_title_stripped": "ffw",
+        "focused": False, "agent_session": {"value": session_id},
+    }])
+    codex_dir = tmp_path / "codex"
+    day_dir = codex_dir / "sessions" / "2026" / "09" / "18"
+    day_dir.mkdir(parents=True)
+    line = json.dumps({
+        "type": "event_msg", "timestamp": "2026-09-18T00:00:00.000Z",
+        "payload": {
+            "type": "item_completed", "completed_at_ms": 1000,
+            "item": {
+                "type": "CommandExecution",
+                "command": ["/bin/bash", "-lc", f"bd update {bead_id} --claim"],
+                "status": "completed", "exit_code": 0,
+                "aggregated_output": f"✓ Updated issue: {bead_id} — demo title",
+            },
+        },
+    })
+    (day_dir / f"rollout-2026-09-18T00-00-00-{session_id}.jsonl").write_text(line + "\n")
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {bead_id: {"status": "in_progress", "title": "demo title"}}
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, host="localhost", codex_dir=str(codex_dir),
+    )
+    result = await collector.collect()
+    store.close()
+
+    a = result["agents"][0]
+    assert a["kind"] == "codex"
+    assert a["bead_tracked"] is True
+    assert a["bead"] == bead_id
+    assert a["bead_title"] == "demo title"
+
+
+@pytest.mark.asyncio
+async def test_collect_finds_bead_for_stale_grok_pane_via_session_id_lookup(monkeypatch, tmp_path):
+    session_id = "stale-grok-session"
+    bead_id = "demo-stale-grok-a"
+    _fake_herdr_exec(monkeypatch, [{
+        "agent": "grok", "agent_status": "idle", "cwd": "/srv/demo/ffw",
+        "pane_id": "pane-grok", "workspace_id": "ws-1", "terminal_title_stripped": "ffw",
+        "focused": False, "agent_session": {"value": session_id},
+    }])
+    grok_dir = tmp_path / "grok"
+    session_dir = grok_dir / "sessions" / "%2Fsrv%2Fdemo%2Fffw" / session_id
+    session_dir.mkdir(parents=True)
+    tool_id = "g1"
+    chat_line = json.dumps({
+        "type": "assistant", "content": "demo turn",
+        "tool_calls": [{
+            "id": tool_id, "name": "run_terminal_command",
+            "arguments": json.dumps({"command": f"bd update {bead_id} --claim", "description": "run"}),
+        }],
+    })
+    (session_dir / "chat_history.jsonl").write_text(chat_line + "\n")
+    event_line = json.dumps({
+        "ts": "2026-09-18T00:00:01.000Z", "type": "tool_completed", "tool_name": "run_terminal_command",
+        "duration_ms": 10, "outcome": "success", "tool_call_id": tool_id,
+    })
+    (session_dir / "events.jsonl").write_text(event_line + "\n")
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {bead_id: {"status": "in_progress", "title": "demo title"}}
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, host="localhost", grok_dir=str(grok_dir),
+    )
+    result = await collector.collect()
+    store.close()
+
+    a = result["agents"][0]
+    assert a["kind"] == "grok"
+    assert a["bead_tracked"] is True
+    assert a["bead"] == bead_id
+    assert a["bead_title"] == "demo title"
+
+
+@pytest.mark.asyncio
+async def test_collect_finds_bead_for_stale_cursor_pane_via_session_id_lookup(monkeypatch, tmp_path):
+    session_id = "stale-cursor-session"
+    bead_id = "demo-stale-cursor-a"
+    _fake_herdr_exec(monkeypatch, [{
+        "agent": "cursor", "agent_status": "idle", "cwd": "/srv/demo/ffw",
+        "pane_id": "pane-cursor", "workspace_id": "ws-1", "terminal_title_stripped": "ffw",
+        "focused": False, "agent_session": {"value": session_id},
+    }])
+    cursor_dir = tmp_path / "cursor"
+    session_dir = cursor_dir / "chats" / "demo-hash" / session_id
+    session_dir.mkdir(parents=True)
+    db_path = session_dir / "store.db"
+    con = sqlite3.connect(str(db_path))
+    con.execute("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)")
+    con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    tool_id = "c1"
+    call_row = {
+        "role": "assistant",
+        "content": [{"type": "tool-call", "toolCallId": tool_id, "toolName": "Shell",
+                     "args": {"command": f"bd update {bead_id} --claim", "description": "run"}}],
+        "id": "demo-msg-0",
+    }
+    con.execute("INSERT INTO blobs (id, data) VALUES (?, ?)", ("demo-blob-0", json.dumps(call_row)))
+    result_row = {
+        "role": "tool",
+        "content": [{"type": "tool-result", "toolCallId": tool_id, "result": "ok",
+                     "experimental_content": [{"type": "text", "text": "ok"}]}],
+        "id": "demo-msg-1",
+        "providerOptions": {"cursor": {"highLevelToolCallResult": {
+            "output": {"command": f"bd update {bead_id} --claim", "stdout": "ok"}, "isError": False,
+        }}},
+    }
+    con.execute("INSERT INTO blobs (id, data) VALUES (?, ?)", ("demo-blob-1", json.dumps(result_row)))
+    con.commit()
+    con.close()
+
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {bead_id: {"status": "in_progress", "title": "demo title"}}
+    collector = AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, host="localhost", cursor_dir=str(cursor_dir),
+    )
+    result = await collector.collect()
+    store.close()
+
+    a = result["agents"][0]
+    assert a["kind"] == "cursor"
+    assert a["bead_tracked"] is True
+    assert a["bead"] == bead_id
+    assert a["bead_title"] == "demo title"
 
 
 # -- herdr present-but-broken: structured failure, not a bare RuntimeError --
