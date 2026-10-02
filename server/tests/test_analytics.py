@@ -350,14 +350,21 @@ async def test_analytics_collector_end_to_end_ingest_and_rollup(tmp_store, tmp_p
     proj_dir = tmp_path / "-home-user-work-demo"
     proj_dir.mkdir()
     import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    # Relative to now: the collector's rollup only covers recent days, so a
+    # fixed date ages out of the window and the test starts failing.
+    t0 = datetime.now(UTC) - timedelta(hours=1)
+    ts_call = t0.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    ts_result = (t0 + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     lines = [
-        {"type": "assistant", "uuid": "u1", "timestamp": "2026-09-18T10:00:00.000Z",
+        {"type": "assistant", "uuid": "u1", "timestamp": ts_call,
          "sessionId": "s1", "isSidechain": False,
          "message": {"model": "claude-sonnet-5", "content": [
              {"type": "tool_use", "id": "toolu_1", "name": "Edit", "input": {"file_path": "a.py"}}
          ]}},
-        {"type": "user", "uuid": "u2", "timestamp": "2026-09-18T10:00:01.000Z",
+        {"type": "user", "uuid": "u2", "timestamp": ts_result,
          "sessionId": "s1", "isSidechain": False,
          "message": {"content": [
              {"type": "tool_result", "tool_use_id": "toolu_1", "is_error": True,
