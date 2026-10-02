@@ -319,10 +319,18 @@ class UsageCollector(BaseCollector):
         # The store has its own lock and allows cross-thread use.
         inserted = await asyncio.to_thread(self._ingest)
 
-        usage_data = self._compute_rollups()
-        self._update_ctx_session_map()
+        # Rollups and the ctx session map scan the whole usage_events table
+        # (hundreds of ms once subagent rows are in), so they run off the
+        # loop too. Every store read takes the store lock; the ctx write is
+        # one attribute assignment of a freshly built dict.
+        usage_data = await asyncio.to_thread(self._rollup_and_update_ctx)
 
         return {"usage": usage_data, "_inserted": inserted}
+
+    def _rollup_and_update_ctx(self) -> dict:
+        usage_data = self._compute_rollups()
+        self._update_ctx_session_map()
+        return usage_data
 
     def _ingest(self) -> int:
         files = glob.glob(os.path.expanduser(self.projects_glob))

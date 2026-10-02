@@ -378,3 +378,29 @@ async def test_analytics_collector_end_to_end_ingest_and_rollup(tmp_store, tmp_p
     edit = next(r for r in tools["usage"] if r["tool"] == "Edit")
     assert edit["calls"] == 1
     assert edit["errors"] == 1
+
+
+# -- local analytics never ingests subagent transcripts ------------------------
+
+
+@pytest.mark.asyncio
+async def test_local_analytics_ingest_skips_subagent_files(tmp_path, tmp_store):
+    import json
+
+    def tool_line(uuid, tool_use_id):
+        return json.dumps({
+            "type": "assistant", "uuid": uuid, "timestamp": "2026-10-01T10:00:00.000Z", "sessionId": "p1",
+            "message": {"id": uuid, "model": "claude-opus-5", "content": [
+                {"type": "tool_use", "id": tool_use_id, "name": "Edit", "input": {"file_path": "a.py"}},
+            ]},
+        }) + "\n"
+
+    proj = tmp_path / "-home-user-work-demo"
+    (proj / "p1" / "subagents").mkdir(parents=True)
+    (proj / "p1.jsonl").write_text(tool_line("u-main", "toolu_main"))
+    (proj / "p1" / "subagents" / "agent-aaa111.jsonl").write_text(tool_line("u-sub", "toolu_sub"))
+
+    await AnalyticsCollector(projects_glob=str(tmp_path / "*" / "*.jsonl"), store=tmp_store)._ingest()
+
+    uuids = [r["uuid"] for r in tmp_store._conn.execute("SELECT uuid FROM tool_call_events").fetchall()]
+    assert uuids == ["u-main"]

@@ -941,3 +941,128 @@ def test_last_activity_and_model_ignore_subagent_rows(tmp_store):
     (row,) = tmp_store.usage_last_activity_by_session()
     assert row["model"] == "claude-opus-5"
     assert row["ts"] == "2026-10-01T10:00:00.000Z"
+
+
+# -- q733.13 follow-ups --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_collect_rollups_and_ctx_map_run_off_the_event_loop_thread(tmp_path, tmp_store):
+    glob_ = _make_tree(tmp_path, main_lines=[_assistant_line("m1", "2026-10-01T10:00:00.000Z")])
+    c = _usage_collector(tmp_store, glob_, ctx=_ctx(tmp_path))
+    seen = {}
+    for name in ("_compute_rollups", "_update_ctx_session_map"):
+        real = getattr(c, name)
+        setattr(c, name, lambda real=real, name=name: (seen.setdefault(name, threading.current_thread()), real())[1])
+    await c.collect()
+    assert set(seen) == {"_compute_rollups", "_update_ctx_session_map"}
+    assert all(t is not threading.main_thread() for t in seen.values())
+
+
+@pytest.mark.asyncio
+async def test_collect_keeps_the_event_loop_responsive_while_rollups_run(tmp_path, tmp_store):
+    import asyncio
+    import time
+
+    glob_ = _make_tree(tmp_path, main_lines=[_assistant_line("m1", "2026-10-01T10:00:00.000Z")])
+    c = _usage_collector(tmp_store, glob_, ctx=_ctx(tmp_path))
+    real = c._compute_rollups
+    c._compute_rollups = lambda: (time.sleep(0.3), real())[1]  # a slow table scan
+    lags = []
+
+    async def probe():
+        while True:
+            t = time.perf_counter()
+            await asyncio.sleep(0.01)
+            lags.append(time.perf_counter() - t - 0.01)
+
+    task = asyncio.create_task(probe())
+    await c.collect()
+    task.cancel()
+    assert max(lags) < 0.1  # 0.3 s on the loop thread would show up as ~0.3
+
+
+@pytest.mark.asyncio
+async def test_ingest_inserts_rows_before_the_offset_advances(tmp_path, tmp_store, monkeypatch):
+    """Crash safety: a stop after the insert but before the offset save must
+    re-read the file (rows deduped), and a stop before the insert must not
+    leave the offset past rows that were never stored."""
+    lines = [_assistant_line("m1", "2026-10-01T10:00:00.000Z"), _assistant_line("m2", "2026-10-01T10:01:00.000Z")]
+    glob_ = _make_tree(tmp_path, main_lines=lines)
+    path = str(tmp_path / PROJ_DIR / f"{PARENT}.jsonl")
+
+    def boom(*a, **k):
+        raise RuntimeError("stop")
+
+    with monkeypatch.context() as m:
+        m.setattr(tmp_store, "set_offset", boom)
+        with pytest.raises(RuntimeError):
+            await _usage_collector(tmp_store, glob_).collect()
+    assert len(_rows(tmp_store)) == 2  # rows landed before the failed offset save
+    assert tmp_store.get_offset(path) is None
+
+    result = await _usage_collector(tmp_store, glob_).collect()  # restart re-reads the file
+    assert result["_inserted"] == 0  # duplicates rejected, nothing lost
+    assert len(_rows(tmp_store)) == 2
+    assert tmp_store.get_offset(path) is not None
+
+
+@pytest.mark.asyncio
+async def test_ingest_failed_insert_leaves_offset_unset_and_rerun_loses_nothing(tmp_path, tmp_store, monkeypatch):
+    lines = [_assistant_line("m1", "2026-10-01T10:00:00.000Z"), _assistant_line("m2", "2026-10-01T10:01:00.000Z")]
+    glob_ = _make_tree(tmp_path, main_lines=lines)
+    path = str(tmp_path / PROJ_DIR / f"{PARENT}.jsonl")
+
+    def boom(*a, **k):
+        raise RuntimeError("stop")
+
+    with monkeypatch.context() as m:
+        m.setattr(tmp_store, "insert_usage_events", boom)
+        with pytest.raises(RuntimeError):
+            await _usage_collector(tmp_store, glob_).collect()
+    assert tmp_store.get_offset(path) is None
+    assert (await _usage_collector(tmp_store, glob_).collect())["_inserted"] == 2
+    assert len(_rows(tmp_store)) == 2
+
+
+# Asia/Kolkata is UTC+05:30: local midnight 2026-10-02 is 2026-10-01T18:30:00Z,
+# which is not an hour boundary.
+_IST_NOW = datetime(2026, 10, 2, 10, 0, 0, tzinfo=UTC)
+
+
+def _remote_bucket(hour, output=100, host="host-b"):
+    return {"host": host, "hour": hour, "model": "claude-opus-5", "project": "p", "input": 0,
+            "output": output, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0, "messages": 1}
+
+
+@pytest.mark.asyncio
+async def test_remote_hourly_today_window_is_exact_for_a_half_hour_zone(tmp_path, tmp_store):
+    tmp_store.upsert_remote_usage_buckets([
+        _remote_bucket("2026-10-01T17", 1),  # before local midnight
+        _remote_bucket("2026-10-01T18", 10),  # starts 18:00Z, 30 min before local midnight: excluded
+        _remote_bucket("2026-10-01T19", 100),  # first whole hour inside local today
+        _remote_bucket("2026-10-02T05", 1000),
+    ])
+    ctx = _ctx(tmp_path, tz="Asia/Kolkata")
+    c = _usage_collector(tmp_store, _make_tree(tmp_path), ctx=ctx, now=_IST_NOW)
+    usage = (await c.collect())["usage"]
+    assert usage["totals"]["today"]["output"] == 1100
+
+
+def test_remote_usage_grouped_whole_hour_since_keeps_its_own_hour(tmp_store):
+    tmp_store.upsert_remote_usage_buckets([_remote_bucket("2026-10-01T18", 10), _remote_bucket("2026-10-01T17", 1)])
+    rows = tmp_store.remote_usage_grouped(("model",), since_iso="2026-10-01T18:00:00Z")
+    assert rows[0]["output"] == 10
+
+
+@pytest.mark.parametrize("since,kimi_days,expected", [
+    ("2026-10-01T18:30:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 10),  # +05:30: day 10-01 is mostly before
+    ("2026-10-02T05:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 10),  # -05:00: day 10-02 is mostly inside
+    ("2026-10-02T00:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 10),  # UTC: exact
+    ("2026-10-01T11:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 11),  # +13:00: 10-01 is 13h inside
+])
+def test_remote_kimi_totals_count_a_day_bucket_when_most_of_it_is_in_the_window(tmp_store, since, kimi_days, expected):
+    tmp_store.upsert_remote_kimi_usage_buckets([
+        {"host": "host-b", "day": d, "model": "kimi", "tokens": t, "turns": 1} for d, t in kimi_days.items()
+    ])
+    assert tmp_store.remote_kimi_usage_totals(since)["tokens"] == expected

@@ -299,6 +299,11 @@ def aggregate_file(path: str, project: str) -> dict:
     session_buckets: dict[tuple[str, str, str, str], dict] = {}
 
     seen_ids: set[str] = set()
+    # message_id -> [hour, model, day, session_id|None, sidechain, input,
+    # output, cache_read, cache_write_5m, cache_write_1h]. The caller merges
+    # these across files so a message id seen in two transcripts counts once,
+    # like the local store's UNIQUE(host, message_id).
+    msgs: dict[str, list] = {}
     pending_tool_use: dict[str, dict] = {}
 
     try:
@@ -307,7 +312,7 @@ def aggregate_file(path: str, project: str) -> dict:
     except OSError:
         return {
             "usage": {}, "tools": {}, "errors": {}, "error_examples": {},
-            "trouble_files": {}, "api_errors": {}, "sessions": {},
+            "trouble_files": {}, "api_errors": {}, "sessions": {}, "msgs": {},
         }
 
     for raw_line in data.split(b"\n"):
@@ -335,6 +340,11 @@ def aggregate_file(path: str, project: str) -> dict:
             model = row["model"]
             session_id = doc.get("sessionId") or doc.get("session_id")
             is_sidechain = "1" if doc.get("isSidechain") else "0"
+            msgs[row["message_id"]] = [
+                hour, model, row["ts"][:10], session_id or None, is_sidechain,
+                row["input"], row["output"], row["cache_read"],
+                row["cache_write_5m"], row["cache_write_1h"],
+            ]
             if session_id:
                 day = row["ts"][:10]
                 skey = (day, session_id, is_sidechain, model)
@@ -419,6 +429,7 @@ def aggregate_file(path: str, project: str) -> dict:
         "sessions": {
             f"{d}{_SEP}{sid}{_SEP}{sc}{_SEP}{m}": v for (d, sid, sc, m), v in session_buckets.items()
         },
+        "msgs": msgs,
     }
 
 
@@ -463,6 +474,13 @@ def collect_usage_and_analytics(projects_glob: str, state_file: str | None = Non
     trouble_merged: dict[tuple[str, str, str], dict] = {}
     api_error_merged: dict[tuple[str, str], dict] = {}
     session_merged: dict[tuple[str, str, str, str], dict] = {}
+    # Message ids already counted by an earlier file in THIS call, so an id
+    # present in two transcripts (a subagent file re-logging a parent turn)
+    # counts once -- local parity with UNIQUE(host, message_id), first file
+    # wins. A cache entry written before "msgs" existed has only pre-merged
+    # buckets: it still counts, but its ids cannot be deduped until the file
+    # changes. Subagent entries without "msgs" are re-parsed once instead.
+    seen_msg_ids: set[str] = set()
 
     for path in paths:
         try:
@@ -476,6 +494,7 @@ def collect_usage_and_analytics(projects_glob: str, state_file: str | None = Non
             and cached.get("inode") == inode
             and cached.get("size") == size
             and cached.get("mtime") == mtime
+            and not (path in subagent_paths and "msgs" not in cached)
         )
         if unchanged:
             buckets = cached
@@ -496,17 +515,37 @@ def collect_usage_and_analytics(projects_glob: str, state_file: str | None = Non
             project = project_name_from_dir(dirname)
             buckets = aggregate_file(path, project)
             if path in subagent_paths:
-                buckets = {k: v for k, v in buckets.items() if k in ("usage", "sessions")}
-            new_files[path] = {"inode": inode, "size": size, "mtime": mtime, "project": project, **buckets}
+                buckets = {k: v for k, v in buckets.items() if k in ("usage", "sessions", "msgs")}
+            # usage/sessions buckets are rebuilt from "msgs" at merge time
+            stored = {k: v for k, v in buckets.items() if k not in ("usage", "sessions")}
+            new_files[path] = {"inode": inode, "size": size, "mtime": mtime, "project": project, **stored}
 
         # back-compat: a pre-wave-2 cache entry stored usage buckets under
         # the old key "buckets" instead of "usage".
-        usage_buckets = buckets.get("usage") or buckets.get("buckets") or {}
-        for k, v in usage_buckets.items():
-            hour, model = k.split(_SEP)
-            agg = usage_merged.setdefault((hour, model, project), dict.fromkeys(_BUCKET_FIELDS, 0))
-            for f in _BUCKET_FIELDS:
-                agg[f] += v[f]
+        if "msgs" in new_files[path]:
+            for mid, m in new_files[path]["msgs"].items():
+                if mid in seen_msg_ids:
+                    continue
+                seen_msg_ids.add(mid)
+                hour, model, day, sid, sidechain = m[:5]
+                vals = dict(zip(_BUCKET_FIELDS, (*m[5:10], 1), strict=True))
+                agg = usage_merged.setdefault((hour, model, project), dict.fromkeys(_BUCKET_FIELDS, 0))
+                for f in _BUCKET_FIELDS:
+                    agg[f] += vals[f]
+                if sid:
+                    sagg = session_merged.setdefault(
+                        (day, sid, sidechain, model),
+                        {"project": project, **dict.fromkeys(_BUCKET_FIELDS, 0)},
+                    )
+                    for f in _BUCKET_FIELDS:
+                        sagg[f] += vals[f]
+        else:
+            usage_buckets = buckets.get("usage") or buckets.get("buckets") or {}
+            for k, v in usage_buckets.items():
+                hour, model = k.split(_SEP)
+                agg = usage_merged.setdefault((hour, model, project), dict.fromkeys(_BUCKET_FIELDS, 0))
+                for f in _BUCKET_FIELDS:
+                    agg[f] += v[f]
 
         for k, v in (buckets.get("tools") or {}).items():
             day, tool = k.split(_SEP)
@@ -538,12 +577,13 @@ def collect_usage_and_analytics(projects_glob: str, state_file: str | None = Non
             if v["last_seen"] > agg["last_seen"]:
                 agg["last_seen"] = v["last_seen"]
 
-        for k, v in (buckets.get("sessions") or {}).items():
-            day, sid, sidechain, model = k.split(_SEP)
-            default = {"project": v.get("project"), **dict.fromkeys(_BUCKET_FIELDS, 0)}
-            agg = session_merged.setdefault((day, sid, sidechain, model), default)
-            for f in _BUCKET_FIELDS:
-                agg[f] += v[f]
+        if "msgs" not in new_files[path]:
+            for k, v in (buckets.get("sessions") or {}).items():
+                day, sid, sidechain, model = k.split(_SEP)
+                default = {"project": v.get("project"), **dict.fromkeys(_BUCKET_FIELDS, 0)}
+                agg = session_merged.setdefault((day, sid, sidechain, model), default)
+                for f in _BUCKET_FIELDS:
+                    agg[f] += v[f]
 
     # Merge onto the CURRENT on-disk state rather than overwrite wholesale --
     # collect_kimi() below shares this same state file (its own "kimi_files"

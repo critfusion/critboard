@@ -26,6 +26,30 @@ def _widen_since_hour(since_iso: str, hours: int = _TZ_WIDEN_HOURS) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _first_whole_hour_prefix(since_iso: str) -> str:
+    """"YYYY-MM-DDTHH" of the first hour bucket that starts at or after
+    `since_iso`. A bucket that begins before the window start (e.g. the 18:00Z
+    hour when local midnight is 18:30Z, a +05:30 zone) holds pre-window data
+    and is excluded, so a non-whole-hour zone's "today" is exact."""
+    dt = datetime.fromisoformat(since_iso.replace("Z", "+00:00"))
+    if dt.minute or dt.second or dt.microsecond:
+        dt = dt.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    return dt.strftime("%Y-%m-%dT%H")
+
+
+def _first_daily_bucket(since_iso: str) -> str:
+    """"YYYY-MM-DD" of the first UTC-day bucket to count for a window starting
+    at `since_iso`. Daily buckets cannot be split, so one is counted when at
+    least half of its UTC day lies inside the window. (Requiring the whole
+    day inside would zero "today" for every zone west of UTC, whose local
+    midnight is never a UTC midnight.) Exact for UTC; for other zones the
+    error is under 12 hours of one bucket."""
+    dt = datetime.fromisoformat(since_iso.replace("Z", "+00:00")) - timedelta(hours=12)
+    if dt.hour or dt.minute or dt.second or dt.microsecond:
+        dt = dt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    return dt.strftime("%Y-%m-%d")
+
+
 def fold_hour_rows_to_local_day(
     rows: Iterable[sqlite3.Row], tz_name: str, key_cols: tuple[str, ...] = ()
 ) -> list[dict]:
@@ -466,9 +490,8 @@ class Store:
         """Token sums from remote_usage_buckets grouped by `group_cols` (any
         of host/hour/model/project -- an internal fixed whitelist, never
         caller-supplied text, so building the GROUP BY/SELECT list by string
-        join is safe). `since_iso` is compared against the bucket's hour
-        prefix (its first 13 chars, e.g. "2026-09-18T14") since buckets are
-        hour-granularity, not full-timestamp."""
+        join is safe). Buckets are hour-granularity: one counts only if it starts
+        at or after `since_iso` (see _first_whole_hour_prefix)."""
         cols = tuple(group_cols)
         if not cols or not all(c in self._REMOTE_GROUP_COLS for c in cols):
             raise ValueError(f"invalid group_cols: {group_cols!r}")
@@ -476,7 +499,7 @@ class Store:
         params: list = []
         if since_iso:
             clauses.append("hour >= ?")
-            params.append(since_iso[:13])
+            params.append(_first_whole_hour_prefix(since_iso))
         if host:
             clauses.append("host = ?")
             params.append(host)
@@ -1331,7 +1354,7 @@ class Store:
 
     def remote_kimi_usage_totals(self, since_iso: str | None = None) -> dict:
         where = "WHERE day >= ?" if since_iso else ""
-        params = [since_iso[:10]] if since_iso else []
+        params = [_first_daily_bucket(since_iso)] if since_iso else []
         with self._lock:
             row = self._conn.execute(
                 f"""SELECT COALESCE(SUM(tokens),0) AS tokens, COALESCE(SUM(turns),0) AS messages

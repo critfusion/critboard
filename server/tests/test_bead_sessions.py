@@ -959,3 +959,13 @@ def test_cursor_binary_blob_rows_skipped_safely(tmp_path):
 
 def test_cursor_missing_db_gives_no_claims(tmp_path):
     assert resolve_session_bead("cursor", [str(tmp_path / "missing.db")], {}) == []
+
+
+@pytest.mark.parametrize("cmd", [
+    "bd-herdr clear demo-a",  # one argument that looks like a bead id: still not a claim
+    "bd-herdr resolve demo-a",
+    "bd-herdr bind demo-a",
+])
+def test_claude_bd_herdr_single_arg_subcommands_not_counted(tmp_path, cmd):
+    p = write(tmp_path / "s.jsonl", claude_lines(("t1", cmd, BOUND_OK, False)))
+    assert resolve_session_bead("claude", [p], {}) == []

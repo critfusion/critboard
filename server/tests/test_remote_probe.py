@@ -149,7 +149,7 @@ def test_extract_usage_fields_falls_back_to_flat_cache_creation_field():
 
 _EMPTY_AGGREGATE = {
     "usage": {}, "tools": {}, "errors": {}, "error_examples": {},
-    "trouble_files": {}, "api_errors": {}, "sessions": {},
+    "trouble_files": {}, "api_errors": {}, "sessions": {}, "msgs": {},
 }
 
 
@@ -1103,6 +1103,9 @@ _PARITY_CLAUDE_SCENARIOS: tuple[tuple[str, tuple[tuple[str, str, str, bool], ...
         ("t2", "bd-herdr clear %7", "cleared beads metadata on %7", False),
     )),
     ("wrapper_bind_not_a_claim", (("t1", "bd-herdr bind %7 demo-a", "bound", False),)),
+    ("wrapper_resolve_not_a_claim", (("t1", "bd-herdr resolve claude demo-a", _CLAIM_OK, False),)),
+    ("wrapper_clear_bead_shaped_pane_not_a_claim", (("t1", "bd-herdr clear demo-a", _CLAIM_OK, False),)),
+    ("wrapper_resolve_one_arg_not_a_claim", (("t1", "bd-herdr resolve demo-a", _CLAIM_OK, False),)),
     ("wrapper_then_close", (
         ("t1", "bd-claim demo-a", _CLAIM_OK, False),
         ("t2", "bd close demo-a", _CLOSE_OK, False),
@@ -1553,3 +1556,94 @@ def test_remote_merge_carries_herdr_bead_onto_the_session_record():
     session = [{"session_id": "s1", "repo": "demo", "label": "demo", "kind": "claude"}]
     (merged,) = rp.merge_remote_agent_sources(herdr, session)
     assert merged["herdr_bead"] == "demo-h"
+
+
+@pytest.mark.parametrize("cmd", [
+    "bd-herdr clear demo-a",  # one argument that happens to look like a bead id
+    "bd-herdr resolve demo-a",
+    "bd-herdr bind demo-a",
+    "bd-herdr bind %7 demo-a",
+    "bd-herdr resolve claude demo-a",
+    "bd-herdr clear %7",
+])
+def test_bd_herdr_non_claim_subcommands_are_not_claims_locally_or_remotely(tmp_path, cmd):
+    p = tmp_path / "s.jsonl"
+    p.write_text(_rp_claude_lines(("t1", cmd, _CLAIM_OK, False)))
+    assert local_bs.resolve_session_bead("claude", [str(p)], {}) == []
+    assert rp.resolve_remote_session_bead("claude", [str(p)]) == []
+
+
+# -- cross-file message_id dedupe (parity with UNIQUE(host, message_id)) ------
+
+
+def _id_tree(tmp_path):
+    proj = tmp_path / "projects" / "-home-user-work-demo"
+    proj.mkdir(parents=True)
+    (proj / "parent-1.jsonl").write_text(
+        _sub_usage_line("m1", "2026-10-01T10:00:00.000Z", "parent-1", "x") + "\n"
+        + _sub_usage_line("m2", "2026-10-01T10:01:00.000Z", "parent-1", "x") + "\n"
+    )
+    subs = proj / "parent-1" / "subagents"
+    subs.mkdir(parents=True)
+    (subs / "agent-aaa111.jsonl").write_text(
+        _sub_usage_line("m2", "2026-10-01T10:01:00.000Z", "parent-1", "aaa111") + "\n"  # also in the parent file
+        + _sub_usage_line("m3", "2026-10-01T10:02:00.000Z", "parent-1", "aaa111") + "\n"
+    )
+    (subs / "agent-bbb222.jsonl").write_text(
+        _sub_usage_line("m3", "2026-10-01T10:02:00.000Z", "parent-1", "bbb222") + "\n"  # also in aaa111
+    )
+    return str(tmp_path / "projects" / "*" / "*.jsonl")
+
+
+def test_message_id_in_two_files_is_counted_once_remotely(tmp_path):
+    out = rp.collect_usage_and_analytics(_id_tree(tmp_path), state_file=str(tmp_path / "state.json"))
+    assert sum(b["messages"] for b in out["usage_buckets"]) == 3
+    assert sum(b["output"] for b in out["usage_buckets"]) == 15
+    assert sum(b["messages"] for b in out["session_buckets"]) == 3
+
+
+def test_cross_file_dedupe_matches_the_local_store(tmp_path, tmp_store):
+    import asyncio
+
+    from critdash.collectors.usage import UsageCollector
+
+    pattern = _id_tree(tmp_path)
+    asyncio.run(UsageCollector(projects_glob=pattern, store=tmp_store, pricing={}).collect())
+    local = tmp_store.usage_totals()
+    out = rp.collect_usage_and_analytics(pattern, state_file=str(tmp_path / "state.json"))
+    assert local["messages"] == sum(b["messages"] for b in out["usage_buckets"]) == 3
+    assert local["output"] == sum(b["output"] for b in out["usage_buckets"])
+    assert local["input"] == sum(b["input"] for b in out["usage_buckets"])
+
+
+def test_cross_file_dedupe_holds_across_cached_and_changed_files(tmp_path):
+    pattern = _id_tree(tmp_path)
+    state = str(tmp_path / "state.json")
+    first = rp.collect_usage_and_analytics(pattern, state_file=state)
+    second = rp.collect_usage_and_analytics(pattern, state_file=state)  # every file cached
+    assert sum(b["messages"] for b in second["usage_buckets"]) == 3
+    assert second["usage_buckets"] == first["usage_buckets"]
+    # the parent file changes: it is re-parsed, its ids still win over later files
+    parent = tmp_path / "projects" / "-home-user-work-demo" / "parent-1.jsonl"
+    with parent.open("a") as fh:
+        fh.write(_sub_usage_line("m4", "2026-10-01T10:03:00.000Z", "parent-1", "x") + "\n")
+    third = rp.collect_usage_and_analytics(pattern, state_file=state)
+    assert sum(b["messages"] for b in third["usage_buckets"]) == 4
+
+
+def test_cache_entry_without_msgs_for_a_subagent_file_is_reparsed(tmp_path, monkeypatch):
+    pattern = _id_tree(tmp_path)
+    state = str(tmp_path / "state.json")
+    rp.collect_usage_and_analytics(pattern, state_file=state)
+    data = json.loads(open(state).read())
+    for path, entry in data["files"].items():
+        if "/subagents/" in path:
+            entry.pop("msgs")  # a cache entry written before ids were kept
+    open(state, "w").write(json.dumps(data))
+
+    calls = []
+    orig = rp.aggregate_file
+    monkeypatch.setattr(rp, "aggregate_file", lambda path, project: (calls.append(path), orig(path, project))[1])
+    out = rp.collect_usage_and_analytics(pattern, state_file=state)
+    assert sorted(p.rsplit("/", 1)[-1] for p in calls) == ["agent-aaa111.jsonl", "agent-bbb222.jsonl"]
+    assert sum(b["messages"] for b in out["usage_buckets"]) == 3
