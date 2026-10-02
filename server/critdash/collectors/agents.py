@@ -6,9 +6,11 @@ Each agent: agent, agent_status (idle|working|done|...), cwd, foreground_cwd,
 pane_id, tab_id, workspace_id, terminal_title/terminal_title_stripped, focused,
 agent_session.value (the Claude sessionId).
 
-`bead` is never resolved from `herdr agent list` itself: nothing in it ties
-an agent_session to a bd actor identity (one actor claims for many
-sessions), so any match from herdr's output alone would be a guess. It IS
+`bead` is never GUESSED from `herdr agent list`: nothing in it ties an
+agent_session to a bd actor identity (one actor claims for many sessions).
+Two sources decide it. First, a pane binding: bd-claim / bd-herdr claim
+write `tokens.bead` onto the pane (see herdr_pane_bead), and when that bead
+is in_progress it wins (see _apply_bead_cross_check). Otherwise it is
 resolved -- for kinds in bead_sessions.BEAD_TRACKED_KINDS -- from that
 session's OWN transcript (see bead_sessions.py). The normal path: a
 session-derived record (`_build_session_agent`/KimiCollector) already
@@ -40,6 +42,7 @@ from datetime import UTC, datetime
 
 from . import BaseCollector, CollectorIssue, now_iso
 from .bead_sessions import BEAD_TRACKED_KINDS, resolve_session_bead
+from .beads import validate_bead_id
 
 _STATUS_MAP = {
     "idle": "idle",
@@ -218,6 +221,15 @@ def best_worktree_match(cwd: str, worktrees: list[dict], host: str | None = None
     return best
 
 
+def herdr_pane_bead(raw: dict) -> str | None:
+    """The bead id a pane is bound to, from herdr's per-pane metadata
+    (`tokens.bead`, set when a session claims a bead with bd-claim /
+    bd-herdr claim). Only a well-formed id is returned."""
+    tokens = raw.get("tokens")
+    bead = tokens.get("bead") if isinstance(tokens, dict) else None
+    return bead if isinstance(bead, str) and validate_bead_id(bead) else None
+
+
 def _usage_fields(session: str | None, usage_by_session: dict) -> dict:
     usage = usage_by_session.get(session, {}) if session else {}
     default_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}
@@ -256,6 +268,7 @@ def _build_herdr_agent(raw: dict, worktrees: list[dict], host: str, usage_by_ses
         "focused": bool(raw.get("focused")),
         "session_id": session,
         "bead": None,
+        "_herdr_bead": herdr_pane_bead(raw),
         "last_activity": usage["last_activity"],
         "tokens_today": usage["tokens_today"],
         "cost_today_usd": usage["cost_today_usd"],
@@ -336,7 +349,7 @@ def merge_agent_sources(herdr_built: list[dict], session_records: list[dict]) ->
             base.update({
                 "pane": h["pane"], "workspace": h["workspace"], "title": h["title"],
                 "status": h["status"], "focused": h["focused"], "kind": h["kind"],
-                "source": "both", "_status_key": h["_status_key"],
+                "source": "both", "_herdr_bead": h.get("_herdr_bead"), "_status_key": h["_status_key"],
                 "_event_desc": h["_event_desc"],
             })
             # recompute label now that herdr's title/kind are available -- a
@@ -399,6 +412,10 @@ def _apply_bead_cross_check(agents: list[dict], beads_by_id: dict[str, dict] | N
        currently in_progress, not just its most recent claim outright (a
        session holding bead A (in_progress) whose most recent claim was
        bead B (now blocked) must still show A, not go blank).
+    0. Before step 1's selection: a bead bound to the agent's herdr pane
+       (`_herdr_bead`, from herdr's tokens.bead) that is in_progress becomes
+       the agent's FIRST candidate and, in the dedupe below, outranks any
+       transcript claim on the same bead.
     2. Dedupe: if two live agents' current candidate is the SAME bead (e.g.
        two sessions really did race, or a shared actor's claim got
        misread), only the more recently-claimed one keeps it -- the loser
@@ -408,7 +425,7 @@ def _apply_bead_cross_check(agents: list[dict], beads_by_id: dict[str, dict] | N
        agent's candidate).
     """
     beads_by_id = beads_by_id or {}
-    tracked = [a for a in agents if a.get("bead_tracked")]
+    tracked = [a for a in agents if a.get("bead_tracked") or a.get("_herdr_bead")]
     for a in tracked:
         claims = a.get("_bead_claims") or []
         a["_bead_candidates"] = [
@@ -416,6 +433,19 @@ def _apply_bead_cross_check(agents: list[dict], beads_by_id: dict[str, dict] | N
             if (beads_by_id.get(bid) or {}).get("status") == "in_progress"
         ]
         a["_bead_idx"] = 0
+        # herdr's pane binding (tokens.bead) wins when that bead is
+        # in_progress right now: the pane is the authority for ITS bead, and
+        # unlike a transcript it also covers claims made through wrappers or
+        # by agents with no transcript extractor. Not in_progress (released,
+        # closed, never polled) -> ignored, transcript claims decide.
+        herdr_bead = a.get("_herdr_bead")
+        a["_bead_herdr_bound"] = bool(
+            herdr_bead and (beads_by_id.get(herdr_bead) or {}).get("status") == "in_progress"
+        )
+        if a["_bead_herdr_bound"]:
+            a["_bead_candidates"] = [(herdr_bead, None)] + [
+                c for c in a["_bead_candidates"] if c[0] != herdr_bead
+            ]
 
     changed = True
     while changed:
@@ -429,11 +459,12 @@ def _apply_bead_cross_check(agents: list[dict], beads_by_id: dict[str, dict] | N
             if len(claimants) < 2:
                 continue
 
-            def _candidate_recency(a: dict) -> float:
+            def _candidate_rank(a: dict) -> tuple[int, float]:
                 cands, idx = a["_bead_candidates"], a["_bead_idx"]
-                return _bead_recency(cands[idx][1], a.get("last_activity"))
+                bound = 1 if a["_bead_herdr_bound"] and idx == 0 else 0
+                return bound, _bead_recency(cands[idx][1], a.get("last_activity"))
 
-            claimants.sort(key=_candidate_recency, reverse=True)
+            claimants.sort(key=_candidate_rank, reverse=True)
             for loser in claimants[1:]:
                 loser["_bead_idx"] += 1
                 changed = True
@@ -455,6 +486,8 @@ def _apply_bead_cross_check(agents: list[dict], beads_by_id: dict[str, dict] | N
         a.pop("_bead_candidates", None)
         a.pop("_bead_idx", None)
         a.pop("_bead_claim_ts", None)
+        a.pop("_bead_herdr_bound", None)
+        a.pop("_herdr_bead", None)
 
 
 class AgentsCollector(BaseCollector):
@@ -749,6 +782,7 @@ class AgentsCollector(BaseCollector):
                 # selection/dedupe rule to remote sessions as local ones; see
                 # that function's docstring for how recency is approximated
                 # (last_activity) for a remote claimant with no ts.
+                remote_entry["_herdr_bead"] = remote_entry.pop("herdr_bead", None)
                 remote_claim_ids = remote_entry.pop("bead_claims", None) or []
                 remote_entry["_bead_claims"] = [(bid, None) for bid in remote_claim_ids]
                 agents.append(remote_entry)

@@ -48,7 +48,7 @@ from .history import InvalidWindowError, bucket_count, build_grouped_history, pa
 from .pricing import compute_cost_usd
 from .state import SnapshotStore
 from .store import Store, zero_fill_daily, zero_fill_hourly
-from .tzutil import DEFAULT_TZ, is_valid_timezone
+from .tzutil import is_valid_timezone, read_layout_timezone
 from .version import VersionTracker
 
 logger = logging.getLogger("critdash")
@@ -70,23 +70,7 @@ _MAX_CONFIG_BODY_BYTES = 1_000_000
 
 
 def _read_layout_timezone(config: Config) -> str:
-    """The "timezone" key in config/layout.json (IANA name), defaulting to
-    UTC. Read fresh on every call (not cached) so a POST /api/config/layout
-    that changes it takes effect immediately, no restart needed. Any
-    problem reading/parsing the file, or an unrecognized zone name, falls
-    back to UTC rather than 500ing -- this is presentation-only (see
-    tzutil.py); it must never break a history query."""
-    try:
-        with config.layout_path.open() as f:
-            doc = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return DEFAULT_TZ
-    if not isinstance(doc, dict):
-        return DEFAULT_TZ
-    tz = doc.get("timezone")
-    if isinstance(tz, str) and is_valid_timezone(tz):
-        return tz
-    return DEFAULT_TZ
+    return read_layout_timezone(config)
 
 
 def _read_human_labels(config: Config) -> list[str]:
@@ -632,16 +616,15 @@ def build_app() -> FastAPI:
     @app.get("/api/history/usage")
     async def history_usage(window: str = "24h", bucket: str = "hour", group_by: str = "none"):
         now = datetime.now(UTC)
+        tz_name = _read_layout_timezone(config)
         try:
-            since_dt, until_dt = parse_window(window, now)
+            since_dt, until_dt = parse_window(window, now, tz_name)
         except InvalidWindowError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if bucket not in ("hour", "day"):
             raise HTTPException(
                 status_code=400, detail=f"invalid bucket: {bucket!r} (expected 'hour' or 'day')"
             )
-
-        tz_name = _read_layout_timezone(config)
 
         if group_by == "none":
             # Unchanged for tz_name="UTC" (the default): the exact query +

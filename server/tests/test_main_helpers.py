@@ -1112,3 +1112,29 @@ def test_healthz_explicit_enable_false_disables_beads_despite_dependency_present
     assert beads["optional"] is True
     assert beads["reason_code"] == "config_missing"
     assert "collectors.beads.enabled=false" in beads["detail"]
+
+
+def test_history_usage_today_window_starts_at_local_midnight(monkeypatch):
+    from datetime import UTC, datetime
+
+    from fastapi.testclient import TestClient
+
+    from critdash import main as main_mod
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 2, 0, 47, tzinfo=UTC)  # 20:47 EDT on Oct 1
+
+    monkeypatch.setattr(main_mod, "datetime", _Frozen)
+    client = TestClient(main_mod.app)
+
+    monkeypatch.setattr(main_mod, "_read_layout_timezone", lambda config: "America/New_York")
+    ny = client.get("/api/history/usage?window=today&bucket=hour").json()
+    # local midnight = 04:00Z Oct 1 .. 00:47Z Oct 2: 21 hourly buckets
+    assert len(ny) == 21
+    assert ny[0]["t"].startswith("2026-10-01T04")
+
+    monkeypatch.setattr(main_mod, "_read_layout_timezone", lambda config: "UTC")
+    utc = client.get("/api/history/usage?window=today&bucket=hour").json()
+    assert len(utc) == 1

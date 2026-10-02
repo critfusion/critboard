@@ -259,3 +259,29 @@ async def test_kimi_collector_ingests_quota_error(tmp_store, make_kimi_root):
     assert len(errors) == 1
     assert errors[0]["kind"] == "quota_exceeded"
     assert errors[0]["count"] == 1
+
+
+async def test_kimi_today_window_is_local_midnight(tmp_store, make_kimi_root, tmp_path, monkeypatch):
+    import json
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from critdash.collectors import kimi as kimi_mod
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 2, 0, 47, tzinfo=tz)  # 20:47 EDT on Oct 1
+
+    seen = []
+    real = tmp_store.kimi_usage_by_session
+    monkeypatch.setattr(
+        tmp_store, "kimi_usage_by_session", lambda since, **kw: (seen.append(since), real(since, **kw))[1],
+    )
+    monkeypatch.setattr(kimi_mod, "datetime", _Frozen)
+    layout = tmp_path / "layout.json"
+    layout.write_text(json.dumps({"timezone": "America/New_York"}))
+    ctx = AppContext(config=SimpleNamespace(layout_path=layout), store=tmp_store)
+    root = make_kimi_root(age_s_1=300.0, age_s_2=30.0)
+    await KimiCollector(ctx=ctx, store=tmp_store, kimi_dir=str(root)).collect()
+    assert seen == ["2026-10-01T04:00:00Z"]

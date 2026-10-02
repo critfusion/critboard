@@ -678,3 +678,254 @@ def test_kimi_data_present_does_not_change_claude_totals(tmp_store):
     assert before["by_host"] == after["by_host"]
     assert before["burn"] == after["burn"]
     assert before["budget"] == after["budget"]
+
+
+# -- subagent transcripts, local-midnight "today" (q733.12) -------------------
+# Synthetic fixtures; every "now" is injected, nothing reads the wall clock.
+
+import threading  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+PARENT = "11111111-aaaa-bbbb-cccc-000000000001"
+PROJ_DIR = "-home-user-work-demo"
+
+
+def _assistant_line(mid, ts, session=PARENT, agent=None, sidechain=False, output=10):
+    doc = {
+        "type": "assistant", "timestamp": ts, "sessionId": session, "isSidechain": sidechain,
+        "message": {"id": mid, "model": "claude-opus-5", "usage": {
+            "input_tokens": 100, "output_tokens": output,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+        }},
+    }
+    if agent:
+        doc["agentId"] = agent
+    return json.dumps(doc)
+
+
+def _make_tree(tmp_path, main_lines=(), subagents=None):
+    """<root>/<proj>/<PARENT>.jsonl plus <root>/<proj>/<PARENT>/subagents/agent-<id>.jsonl"""
+    proj = tmp_path / PROJ_DIR
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / f"{PARENT}.jsonl").write_text("\n".join(main_lines) + ("\n" if main_lines else ""))
+    for agent_id, lines in (subagents or {}).items():
+        d = proj / PARENT / "subagents"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"agent-{agent_id}.jsonl").write_text("\n".join(lines) + "\n")
+    return str(tmp_path / "*" / "*.jsonl")
+
+
+def _usage_collector(tmp_store, glob_, ctx=None, now=None):
+    c = UsageCollector(ctx=ctx, projects_glob=glob_, store=tmp_store, pricing=_simple_pricing())
+    if now is not None:
+        c._now = lambda: now
+    return c
+
+
+def _rows(store, where="1=1"):
+    return store._conn.execute(f"SELECT * FROM usage_events WHERE {where} ORDER BY message_id").fetchall()  # noqa: S608
+
+
+@pytest.mark.asyncio
+async def test_subagent_file_ingested_under_parent_session_with_sidechain_flag(tmp_path, tmp_store):
+    glob_ = _make_tree(
+        tmp_path,
+        main_lines=[_assistant_line("m-main", "2026-10-01T10:00:00.000Z")],
+        subagents={"aaa111": [
+            _assistant_line("m-sub1", "2026-10-01T10:01:00.000Z", agent="aaa111", sidechain=True),
+            _assistant_line("m-sub2", "2026-10-01T10:02:00.000Z", agent="aaa111", sidechain=True, output=20),
+        ]},
+    )
+    result = await _usage_collector(tmp_store, glob_).collect()
+    assert result["_inserted"] == 3
+    sub = _rows(tmp_store, "is_sidechain = 1")
+    assert [r["message_id"] for r in sub] == ["m-sub1", "m-sub2"]
+    assert {r["session_id"] for r in sub} == {PARENT}
+    assert {r["agent_id"] for r in sub} == {"aaa111"}
+    assert {r["project"] for r in sub} == {"demo"}  # not "subagents" / the session dir
+    assert sub[1]["cost_usd"] == pytest.approx((100 * 3.0 + 20 * 15.0) / 1_000_000)
+    main = _rows(tmp_store, "is_sidechain = 0")
+    assert [r["message_id"] for r in main] == ["m-main"]
+    assert main[0]["agent_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_subagent_agent_id_falls_back_to_file_name(tmp_path, tmp_store):
+    glob_ = _make_tree(tmp_path, subagents={"bbb222": [
+        _assistant_line("m-sub1", "2026-10-01T10:01:00.000Z", sidechain=False),  # no agentId, no flag
+    ]})
+    await _usage_collector(tmp_store, glob_).collect()
+    row = _rows(tmp_store)[0]
+    assert row["agent_id"] == "bbb222"
+    assert row["is_sidechain"] == 1
+
+
+@pytest.mark.asyncio
+async def test_subagent_rescan_dedupes_and_picks_up_appended_lines(tmp_path, tmp_store):
+    lines = [_assistant_line("m-sub1", "2026-10-01T10:01:00.000Z", agent="aaa111", sidechain=True)]
+    glob_ = _make_tree(tmp_path, subagents={"aaa111": lines + lines})  # same message id twice
+    c = _usage_collector(tmp_store, glob_)
+    assert (await c.collect())["_inserted"] == 1
+    assert (await c.collect())["_inserted"] == 0  # offset cached, nothing re-read
+    f = tmp_path / PROJ_DIR / PARENT / "subagents" / "agent-aaa111.jsonl"
+    with f.open("a") as fh:
+        fh.write(_assistant_line("m-sub2", "2026-10-01T10:05:00.000Z", agent="aaa111", sidechain=True) + "\n")
+    assert (await c.collect())["_inserted"] == 1
+    # a fresh collector over the same store (restart): the stored offset means no re-read
+    assert (await _usage_collector(tmp_store, glob_).collect())["_inserted"] == 0
+    assert len(_rows(tmp_store)) == 2
+
+
+@pytest.mark.asyncio
+async def test_first_run_backfills_every_subagent_file(tmp_path, tmp_store):
+    subs = {
+        f"agent{i}": [
+            _assistant_line(f"m-{i}-{j}", f"2026-09-2{j}T10:00:00.000Z", agent=f"agent{i}", sidechain=True)
+            for j in range(3)
+        ]
+        for i in range(5)
+    }
+    glob_ = _make_tree(tmp_path, subagents=subs)
+    result = await _usage_collector(tmp_store, glob_).collect()
+    assert result["_inserted"] == 15
+    assert len({r["agent_id"] for r in _rows(tmp_store)}) == 5
+
+
+@pytest.mark.asyncio
+async def test_collect_ingests_off_the_event_loop_thread(tmp_path, tmp_store):
+    glob_ = _make_tree(tmp_path, main_lines=[_assistant_line("m1", "2026-10-01T10:00:00.000Z")])
+    c = _usage_collector(tmp_store, glob_)
+    seen = []
+    real = c._ingest
+    c._ingest = lambda: (seen.append(threading.current_thread()), real())[1]
+    await c.collect()
+    assert seen and seen[0] is not threading.main_thread()
+
+
+def _ctx(tmp_path, tz=None):
+    layout = tmp_path / "layout.json"
+    layout.write_text(json.dumps({"timezone": tz} if tz is not None else {}))
+    return SimpleNamespace(
+        config=SimpleNamespace(layout_path=layout), pricing=_simple_pricing(), usage_by_session={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_subagents_active_counts_distinct_subagents_in_last_5_minutes(tmp_path, tmp_store):
+    now = datetime(2026, 10, 1, 12, 0, 0, tzinfo=UTC)
+    main = [_assistant_line("m-main", "2026-10-01T11:59:00.000Z")]
+    glob_ = _make_tree(tmp_path, main_lines=main, subagents={
+        "aaa111": [  # three messages, one subagent
+            _assistant_line(f"a{i}", f"2026-10-01T11:5{i}:30.000Z", agent="aaa111", sidechain=True)
+            for i in (6, 7, 8)
+        ],
+        "bbb222": [_assistant_line("b1", "2026-10-01T11:58:00.000Z", agent="bbb222", sidechain=True)],
+        "ccc333": [_assistant_line("c1", "2026-10-01T11:40:00.000Z", agent="ccc333", sidechain=True)],  # idle
+    })
+    ctx = _ctx(tmp_path)
+    await _usage_collector(tmp_store, glob_, ctx=ctx, now=now).collect()
+    assert ctx.usage_by_session[PARENT]["subagents_active"] == 2
+
+
+@pytest.mark.asyncio
+async def test_subagent_cost_counts_in_totals_and_session_cost(tmp_path, tmp_store):
+    now = datetime(2026, 10, 1, 12, 0, 0, tzinfo=UTC)
+    glob_ = _make_tree(
+        tmp_path,
+        main_lines=[_assistant_line("m-main", "2026-10-01T11:00:00.000Z")],
+        subagents={"aaa111": [
+            _assistant_line("a1", "2026-10-01T11:30:00.000Z", agent="aaa111", sidechain=True),
+        ]},
+    )
+    ctx = _ctx(tmp_path)
+    result = await _usage_collector(tmp_store, glob_, ctx=ctx, now=now).collect()
+    assert result["usage"]["totals"]["today"]["messages"] == 2
+    assert ctx.usage_by_session[PARENT]["msg_count_today"] == 2
+
+
+def test_store_migrates_agent_id_column(tmp_path):
+    import sqlite3
+
+    from critdash.store import Store
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL UNIQUE,"
+        " ts TEXT NOT NULL, session_id TEXT, project TEXT, project_path TEXT, model TEXT,"
+        " input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0,"
+        " cache_read INTEGER NOT NULL DEFAULT 0, cache_write_5m INTEGER NOT NULL DEFAULT 0,"
+        " cache_write_1h INTEGER NOT NULL DEFAULT 0, speed TEXT, is_sidechain INTEGER NOT NULL DEFAULT 0,"
+        " web_searches INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0.0)"
+    )
+    conn.execute("INSERT INTO usage_events (message_id, ts) VALUES ('old', '2026-09-01T00:00:00Z')")
+    conn.commit()
+    conn.close()
+    s = Store(db)
+    cols = {r["name"] for r in s._conn.execute("PRAGMA table_info(usage_events)")}
+    assert "agent_id" in cols
+    assert s.insert_usage_events([_row_now("new", 1.0)]) == 1
+    s.close()
+
+
+# -- "today" starts at local midnight in the layout timezone --------------------
+
+EVENING_NY = datetime(2026, 10, 2, 0, 47, 0, tzinfo=UTC)  # 20:47 EDT on Oct 1
+
+
+def test_today_window_is_local_midnight_when_utc_is_already_tomorrow(tmp_path, tmp_store):
+    c = _usage_collector(tmp_store, "x", ctx=_ctx(tmp_path, "America/New_York"), now=EVENING_NY)
+    assert c._windows()["today"] == "2026-10-01T04:00:00Z"
+
+
+@pytest.mark.parametrize("now,expected", [
+    # US spring-forward 2026-03-08: midnight is still EST (UTC-5), the day is 23h long
+    (datetime(2026, 3, 8, 18, 0, tzinfo=UTC), "2026-03-08T05:00:00Z"),
+    # the day after: EDT (UTC-4)
+    (datetime(2026, 3, 9, 18, 0, tzinfo=UTC), "2026-03-09T04:00:00Z"),
+    # US fall-back 2026-11-01: midnight is still EDT (UTC-4), the day is 25h long
+    (datetime(2026, 11, 1, 18, 0, tzinfo=UTC), "2026-11-01T04:00:00Z"),
+    # 03:00 UTC on Nov 2 is still Nov 1 local (EST): same local day
+    (datetime(2026, 11, 2, 3, 0, tzinfo=UTC), "2026-11-01T04:00:00Z"),
+])
+def test_today_window_dst_transition_days(tmp_path, tmp_store, now, expected):
+    c = _usage_collector(tmp_store, "x", ctx=_ctx(tmp_path, "America/New_York"), now=now)
+    assert c._windows()["today"] == expected
+
+
+@pytest.mark.parametrize("tz", ["Not/AZone", "", None, 5])
+def test_today_window_invalid_or_missing_timezone_falls_back_to_utc(tmp_path, tmp_store, tz):
+    c = _usage_collector(tmp_store, "x", ctx=_ctx(tmp_path, tz), now=EVENING_NY)
+    assert c._windows()["today"] == "2026-10-02T00:00:00Z"
+
+
+def test_today_window_without_ctx_is_utc(tmp_store):
+    c = _usage_collector(tmp_store, "x", now=EVENING_NY)
+    assert c._windows()["today"] == "2026-10-02T00:00:00Z"
+
+
+def test_unreadable_layout_falls_back_to_utc(tmp_path, tmp_store):
+    ctx = SimpleNamespace(config=SimpleNamespace(layout_path=tmp_path / "missing.json"), pricing={})
+    c = _usage_collector(tmp_store, "x", ctx=ctx, now=EVENING_NY)
+    assert c._windows()["today"] == "2026-10-02T00:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_evening_usage_counts_today_in_local_zone_everywhere(tmp_path, tmp_store):
+    # 22:00Z Oct 1 = 18:00 EDT Oct 1; "now" is 00:47Z Oct 2 = 20:47 EDT Oct 1
+    glob_ = _make_tree(tmp_path, main_lines=[
+        _assistant_line("m-early", "2026-10-01T03:00:00.000Z"),  # 23:00 EDT Sep 30: not today
+        _assistant_line("m-eve", "2026-10-01T22:00:00.000Z"),
+    ])
+    ctx = _ctx(tmp_path, "America/New_York")
+    result = await _usage_collector(tmp_store, glob_, ctx=ctx, now=EVENING_NY).collect()
+    usage = result["usage"]
+    assert usage["totals"]["today"]["messages"] == 1
+    assert usage["cache_hit_ratio_today"] == 0.0
+    assert ctx.usage_by_session[PARENT]["msg_count_today"] == 1
+    assert ctx.usage_by_session[PARENT]["tokens_today"]["input"] == 100
+    # UTC config: nothing before Oct 2 00:00Z counts
+    ctx_utc = _ctx(tmp_path, "UTC")
+    result = await _usage_collector(tmp_store, glob_, ctx=ctx_utc, now=EVENING_NY).collect()
+    assert result["usage"]["totals"]["today"]["messages"] == 0
+    assert ctx_utc.usage_by_session[PARENT]["msg_count_today"] == 0

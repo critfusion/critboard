@@ -1,4 +1,14 @@
-"""usage collector: incrementally tail ~/.claude/projects/*/*.jsonl and roll up cost/tokens.
+"""usage collector: incrementally tail ~/.claude/projects/*/*.jsonl (and the
+subagent transcripts under */<session-id>/subagents/agent-*.jsonl) and roll up
+cost/tokens.
+
+Subagent transcripts: Claude Code writes each subagent's log at
+<project>/<parent-session-id>/subagents/agent-<agentId>.jsonl. Its lines carry
+isSidechain=true, sessionId = the PARENT session id, and agentId. They are
+ingested here (under the parent session, is_sidechain=1, same message-id
+dedupe and per-file offsets) and ONLY here: the agents/analytics collectors
+glob "<dir>/*/*.jsonl", which never matches a subagent file, so a subagent
+never becomes an agent/session record.
 
 Per SPEC:
   - Only type == "assistant" lines with a real message.model (skip the literal
@@ -16,6 +26,7 @@ Per SPEC:
 
 from __future__ import annotations
 
+import asyncio
 import glob
 import json
 import os
@@ -23,6 +34,7 @@ from datetime import UTC, datetime, timedelta
 
 from ..pricing import compute_cost_usd
 from ..store import zero_fill_hourly
+from ..tzutil import ctx_tz_name, local_day_start_utc_iso
 from . import BaseCollector
 
 _PROJECT_DIR_CACHE: dict[str, str] = {}
@@ -65,6 +77,19 @@ def project_name_from_dir(dirname: str) -> tuple[str, str]:
     full_path = decode_project_dir(dirname)
     name = os.path.basename(full_path.rstrip("/")) or dirname
     return name, full_path
+
+
+def subagents_glob_for(projects_glob: str) -> str | None:
+    """"<dir>/*/*.jsonl" -> "<dir>/*/*/subagents/*.jsonl" (None when the
+    glob does not have that shape, e.g. a test pointing at one file)."""
+    suffix = "/*/*.jsonl"
+    if projects_glob.endswith(suffix):
+        return projects_glob[: -len(suffix)] + "/*/*/subagents/*.jsonl"
+    return None
+
+
+def _is_subagent_path(path: str) -> bool:
+    return os.path.basename(os.path.dirname(path)) == "subagents"
 
 
 def parse_jsonl_bytes(data: bytes) -> list[dict]:
@@ -134,6 +159,7 @@ def extract_usage_row(doc: dict, project: str, project_path: str, pricing: dict)
         "cache_write_1h": cw_1h,
         "speed": speed,
         "is_sidechain": is_sidechain,
+        "agent_id": doc.get("agentId") or None,
         "web_searches": web_searches,
         "cost_usd": cost,
     }
@@ -264,9 +290,13 @@ class UsageCollector(BaseCollector):
     interval_s = 10.0
 
     def __init__(self, ctx=None, projects_glob: str = "~/.claude/projects/*/*.jsonl", store=None,
-                 pricing: dict | None = None, host: str = "localhost"):
+                 pricing: dict | None = None, host: str = "localhost",
+                 subagents_glob: str | None = "auto"):
         super().__init__(ctx)
         self.projects_glob = projects_glob
+        if subagents_glob == "auto":
+            subagents_glob = subagents_glob_for(projects_glob)
+        self.subagents_glob = subagents_glob
         self.store = store
         self._pricing = pricing or {}
         self.host = host
@@ -276,12 +306,32 @@ class UsageCollector(BaseCollector):
             return self.ctx.pricing
         return self._pricing
 
+    def _now(self) -> datetime:
+        return datetime.now(UTC)
+
+    def _tz_name(self) -> str:
+        return ctx_tz_name(self.ctx)
+
     async def collect(self) -> dict:
-        pattern = os.path.expanduser(self.projects_glob)
-        files = glob.glob(pattern)
+        # File reads and offset writes run in a worker thread: the first run
+        # backfills every transcript (hundreds of MB of subagent logs), and
+        # doing that on the event loop would stall every other collector.
+        # The store has its own lock and allows cross-thread use.
+        inserted = await asyncio.to_thread(self._ingest)
+
+        usage_data = self._compute_rollups()
+        self._update_ctx_session_map()
+
+        return {"usage": usage_data, "_inserted": inserted}
+
+    def _ingest(self) -> int:
+        files = glob.glob(os.path.expanduser(self.projects_glob))
+        if self.subagents_glob:
+            files += glob.glob(os.path.expanduser(self.subagents_glob))
         pricing = self._current_pricing()
 
         new_rows: list[dict] = []
+        inserted = 0
         for path in files:
             try:
                 st = os.stat(path)
@@ -302,8 +352,15 @@ class UsageCollector(BaseCollector):
                     self.store.set_offset(path, inode, size, st.st_mtime)
                 continue
 
-            dirname = os.path.basename(os.path.dirname(path))
+            subagent = _is_subagent_path(path)
+            # <project>/<session-id>/subagents/<file> vs <project>/<file>
+            project_dir = os.path.dirname(os.path.dirname(path)) if subagent else os.path.dirname(path)
+            dirname = os.path.basename(os.path.dirname(project_dir) if subagent else project_dir)
             project, project_path = project_name_from_dir(dirname)
+            file_agent_id = None
+            if subagent:
+                stem = os.path.basename(path)[: -len(".jsonl")]
+                file_agent_id = stem[len("agent-"):] if stem.startswith("agent-") else stem
 
             with open(path, "rb") as f:
                 f.seek(offset)
@@ -322,21 +379,23 @@ class UsageCollector(BaseCollector):
                 row = extract_usage_row(doc, project, project_path, pricing)
                 if row is not None:
                     row["host"] = self.host
+                    if subagent:
+                        row["is_sidechain"] = 1
+                        row["agent_id"] = row["agent_id"] or file_agent_id
                     new_rows.append(row)
 
+            # rows land before the offset moves, so a stop mid-backfill
+            # re-reads this file instead of skipping its rows
             if self.store:
+                inserted += self.store.insert_usage_events(new_rows)
                 self.store.set_offset(path, inode, new_offset, st.st_mtime)
+            new_rows = []
 
-        inserted = self.store.insert_usage_events(new_rows) if self.store else 0
-
-        usage_data = self._compute_rollups()
-        self._update_ctx_session_map()
-
-        return {"usage": usage_data, "_inserted": inserted}
+        return inserted
 
     def _windows(self) -> dict[str, str | None]:
-        now = datetime.now(UTC)
-        today_start = now.strftime("%Y-%m-%dT00:00:00Z")
+        now = self._now()
+        today_start = local_day_start_utc_iso(now, self._tz_name())
         return {
             "today": today_start,
             "7d": (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -354,7 +413,7 @@ class UsageCollector(BaseCollector):
             return {
                 "totals": {}, "by_model": [], "by_project": [], "by_agent": [], "by_host": [],
                 "by_provider": [],
-                "timeline": zero_fill_hourly([], datetime.now(UTC), 48),
+                "timeline": zero_fill_hourly([], self._now(), 48),
                 "burn": {}, "cache_hit_ratio_today": 0.0,
                 "budget": empty_budget,
             }
@@ -403,7 +462,7 @@ class UsageCollector(BaseCollector):
             for entry in _by_host_rollup(self.store, since, self.host, pricing):
                 by_host.append({**entry, "window": wname})
 
-        now = datetime.now(UTC)
+        now = self._now()
         since_48h = (now - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
         local_timeline = self.store.usage_timeline_hourly(since_48h)
         remote_timeline_rows = self.store.remote_usage_grouped(("hour", "model"), since_iso=since_48h)
@@ -511,8 +570,8 @@ class UsageCollector(BaseCollector):
     def _update_ctx_session_map(self) -> None:
         if self.ctx is None or self.store is None:
             return
-        now = datetime.now(UTC)
-        today_start = now.strftime("%Y-%m-%dT00:00:00Z")
+        now = self._now()
+        today_start = local_day_start_utc_iso(now, self._tz_name())
         since_5m = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         today_by_session: dict[str, dict] = {}

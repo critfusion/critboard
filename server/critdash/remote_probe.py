@@ -422,6 +422,14 @@ def aggregate_file(path: str, project: str) -> dict:
     }
 
 
+def _subagents_glob_for(projects_glob: str) -> str | None:
+    """Mirrors collectors/usage.py's subagents_glob_for."""
+    suffix = "/*/*.jsonl"
+    if projects_glob.endswith(suffix):
+        return projects_glob[: -len(suffix)] + "/*/*/subagents/*.jsonl"
+    return None
+
+
 def collect_usage_and_analytics(projects_glob: str, state_file: str | None = None) -> dict:
     """Backfills/incrementally-caches every jsonl file once (see
     aggregate_file's one-pass docstring), then merges the per-file bucket
@@ -440,6 +448,12 @@ def collect_usage_and_analytics(projects_glob: str, state_file: str | None = Non
     old_files = state.get("files", {})
     pattern = os.path.expanduser(projects_glob)
     paths = glob.glob(pattern)
+    # Subagent transcripts (<project>/<parent-session>/subagents/agent-*.jsonl,
+    # see collectors/usage.py's docstring): token usage and per-session
+    # sidechain buckets only -- never tool/error analytics, never agent records.
+    subagent_pattern = _subagents_glob_for(pattern)
+    subagent_paths = set(glob.glob(subagent_pattern)) if subagent_pattern else set()
+    paths += sorted(subagent_paths)
 
     new_files: dict[str, dict] = {}
     usage_merged: dict[tuple[str, str, str], dict] = {}
@@ -475,9 +489,14 @@ def collect_usage_and_analytics(projects_glob: str, state_file: str | None = Non
             # call instead of the one-time backfill this cache exists for.
             new_files[path] = cached
         else:
-            dirname = os.path.basename(os.path.dirname(path))
+            if path in subagent_paths:
+                dirname = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
+            else:
+                dirname = os.path.basename(os.path.dirname(path))
             project = project_name_from_dir(dirname)
             buckets = aggregate_file(path, project)
+            if path in subagent_paths:
+                buckets = {k: v for k, v in buckets.items() if k in ("usage", "sessions")}
             new_files[path] = {"inode": inode, "size": size, "mtime": mtime, "project": project, **buckets}
 
         # back-compat: a pre-wave-2 cache entry stored usage buckets under
@@ -935,9 +954,17 @@ def _bd_find_invocation(segment: list[str]) -> list[str] | None:
     if i >= n or segment[i] == "export":
         return None
     base = segment[i].rsplit("/", 1)[-1]
+    rest = segment[i + 1 :]
+    # Fleet claim wrappers (bd-claim <id>; bd-herdr claim <id>) run
+    # `bd update <id> --claim`, then bind the herdr pane. Both take exactly
+    # one argument -- any other arity is a usage error (exit 2), not a claim.
+    # `bd-herdr clear/bind/resolve` never touch bd's claim state.
+    if base == "bd-claim" or (base == "bd-herdr" and rest[:1] == ["claim"]):
+        ids = rest if base == "bd-claim" else rest[1:]
+        return ["update", ids[0], "--claim"] if len(ids) == 1 else None
     if base != "bd":
         return None
-    return segment[i + 1 :]
+    return rest
 
 
 def _bd_parse_call(argv: list[str]) -> tuple[str, list[str], dict] | None:
@@ -2032,7 +2059,7 @@ def merge_remote_agent_sources(herdr_agents: list[dict], session_agents: list[di
             base.update({
                 "pane": h["pane"], "workspace": h["workspace"], "title": h["title"],
                 "status": h["status"], "focused": h["focused"], "kind": h["kind"],
-                "source": "both",
+                "source": "both", "herdr_bead": h.get("herdr_bead"),
             })
             base["label"] = base["repo"] or h["title"] or h["kind"] or base["label"]
             merged.append(base)
@@ -2084,6 +2111,15 @@ def best_worktree_match(cwd: str, worktrees: list[dict]) -> dict | None:
     return best
 
 
+def _herdr_pane_bead(raw: dict) -> str | None:
+    """Mirrors collectors/agents.py's herdr_pane_bead: the bead id herdr's
+    per-pane metadata (tokens.bead) binds this pane to. ONLY the id leaves
+    this host."""
+    tokens = raw.get("tokens")
+    bead = tokens.get("bead") if isinstance(tokens, dict) else None
+    return bead if isinstance(bead, str) and _bd_validate_id(bead) else None
+
+
 def collect_agents(herdr_bin: str, worktrees: list[dict]) -> list[dict]:
     resolved = find_herdr(herdr_bin)
     if not resolved:
@@ -2123,6 +2159,7 @@ def collect_agents(herdr_bin: str, worktrees: list[dict]) -> list[dict]:
             # merge_remote_agent_sources fills bead in from the session-
             # derived record when one also exists for this session id.
             "bead": None,
+            "herdr_bead": _herdr_pane_bead(raw),
             "bead_tracked": kind in _BEAD_TRACKED_KINDS,
             "last_activity": None,
             "status_since": None,

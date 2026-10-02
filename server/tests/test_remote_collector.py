@@ -1,4 +1,6 @@
 import json
+from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -538,3 +540,60 @@ def test_availability_issue_ignores_disabled_ssh_host():
     issue = remote_mod.availability_issue(hosts)
     assert issue is not None
     assert issue.reason_code == "config_missing"
+
+
+# -- "today" is local midnight in the layout timezone (q733.12) ----------------
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 10, 2, 0, 47, tzinfo=tz)  # 20:47 EDT on Oct 1
+
+
+def _ny_layout(tmp_path):
+    layout = tmp_path / "layout.json"
+    layout.write_text(json.dumps({"timezone": "America/New_York"}))
+    return SimpleNamespace(layout_path=layout)
+
+
+def _usage_row(mid, ts):
+    return {
+        "message_id": mid, "ts": ts, "session_id": "s1", "project": "demo", "project_path": "/p",
+        "model": "default", "input": 100, "output": 0, "cache_read": 0, "cache_write_5m": 0,
+        "cache_write_1h": 0, "speed": None, "is_sidechain": 0, "web_searches": 0, "cost_usd": 1.0,
+    }
+
+
+def test_local_host_today_totals_use_local_midnight(tmp_path, monkeypatch):
+    monkeypatch.setattr(remote_mod, "datetime", _FrozenDatetime)
+    store = Store(tmp_path / "t.db")
+    store.insert_usage_events([
+        _usage_row("before", "2026-10-01T03:00:00.000Z"),  # 23:00 EDT Sep 30
+        _usage_row("evening", "2026-10-01T22:00:00.000Z"),  # 18:00 EDT Oct 1: today
+    ])
+    ctx = AppContext(config=_ny_layout(tmp_path), store=store)
+    entry = RemoteCollector(ctx=ctx, store=store, local_host="localhost")._local_host_entry("localhost")
+    assert entry["tokens_today"] == 100
+    assert entry["cost_today_usd"] == 1.0
+    store.close()
+
+
+def test_remote_host_today_totals_use_local_midnight(tmp_path, monkeypatch):
+    monkeypatch.setattr(remote_mod, "datetime", _FrozenDatetime)
+    store = Store(tmp_path / "t.db")
+    store.upsert_remote_usage_buckets([
+        {"host": "host-b", "hour": "2026-10-01T03", "model": "default", "project": "demo",
+         "input": 7, "output": 0, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0, "messages": 1},
+        {"host": "host-b", "hour": "2026-10-01T22", "model": "default", "project": "demo",
+         "input": 100, "output": 0, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0, "messages": 1},
+    ])
+    ctx = AppContext(
+        config=_ny_layout(tmp_path), store=store,
+        pricing={"models": {"default": {
+            "input": 1.0, "output": 1.0, "cache_read": 1.0, "cache_write_5m": 1.0, "cache_write_1h": 1.0,
+        }}},
+    )
+    tokens, _cost = RemoteCollector(ctx=ctx, store=store)._host_today_totals("host-b")
+    assert tokens == 100
+    store.close()

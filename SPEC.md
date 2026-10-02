@@ -80,6 +80,13 @@ Notes on real shapes observed on this host:
   `cache_creation.{ephemeral_1h_input_tokens,ephemeral_5m_input_tokens}`,
   `server_tool_use.{web_search_requests,web_fetch_requests}`.
   **`message.model` can be the literal `<synthetic>` with all-zero usage — skip those rows.**
+- Subagent transcripts live at `<projects>/<project>/<parent-session-id>/subagents/agent-<agentId>.jsonl`.
+  Their lines carry `isSidechain: true`, `sessionId` = the PARENT session id, `agentId`,
+  and `message.usage`. The usage collector ingests them (stored with `is_sidechain=1`
+  and `agent_id`, deduped by message id like any transcript, so their cost counts in
+  every total and in the parent session's `cost_today_usd`). They never create an
+  agent/session record: the agents and analytics collectors glob `<projects>/*/*.jsonl`,
+  which does not match them.
 - beads env lives at `~/.config/beads/env`; source it and set `BEADS_ACTOR=critdash`
   before every `bd` call. `bd` is configured via `config/sources.json:bd_bin`
   (default `~/.local/bin/bd`).
@@ -139,7 +146,13 @@ Notes on real shapes observed on this host:
     // ("claude", "kimi", "codex", "grok", "cursor" today). A session may
     // hold several unreleased claims at once; "bead" is the most recent of
     // them that is CURRENTLY in_progress (not simply the most recent claim
-    // outright) -- null when none of them are. See
+    // outright) -- null when none of them are. A bead bound to the agent's
+    // herdr pane (herdr's per-pane metadata `tokens.bead`, written by the
+    // `bd-claim <id>` / `bd-herdr claim <id>` wrappers) wins when that bead is
+    // in_progress; otherwise the transcript decides. Those two wrappers also
+    // count as claims in a transcript (exactly one literal id, same success
+    // rules as `bd update <id> --claim`); `bd-herdr clear` is not a release.
+    // For remote hosts only the bound bead id leaves the host. See
     // critdash/collectors/bead_sessions.py for the
     // extraction rules and critdash/collectors/agents.py's
     // _apply_bead_cross_check for the in_progress selection and
@@ -157,7 +170,8 @@ Notes on real shapes observed on this host:
     "tokens_today": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4, "total": 10},
     "cost_today_usd": 1.23,
     "msg_count_today": 42,
-    "subagents_active": 2,
+    "subagents_active": 2,            // DISTINCT subagents (agentId) of this session with
+                                      // a usage message in the last 5 minutes
     "model": "claude-opus-5"
   }],
   "worktrees": [{
@@ -173,6 +187,12 @@ Notes on real shapes observed on this host:
     "stale_days": 4
   }],
   "usage": {
+    // "today" (totals.today, per-agent tokens_today/cost_today_usd/msg_count_today,
+    // cache_hit_ratio_today, per-host tokens_today) starts at LOCAL midnight in
+    // config/layout.json's "timezone" (IANA name; DST-safe; missing/invalid = UTC),
+    // converted to the UTC instant the store compares against. Same for
+    // GET /api/history/usage?window=today. 7d/30d are rolling; the budget's
+    // month-to-date stays on the UTC calendar month.
     "totals": {                        // rolling windows
       "today":  {"input":0,"output":0,"cache_read":0,"cache_write":0,"total":0,"cost_usd":0.0,"messages":0},
       "7d":     {...}, "30d": {...}, "all": {...}

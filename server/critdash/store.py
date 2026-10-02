@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
     web_searches INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0.0,
     host TEXT NOT NULL DEFAULT 'localhost',
+    agent_id TEXT,
     UNIQUE(host, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_usage_events_ts ON usage_events(ts);
@@ -368,6 +369,12 @@ class Store:
                     "ALTER TABLE usage_events ADD COLUMN host TEXT NOT NULL DEFAULT 'localhost'"
                 )
                 self._conn.commit()
+            # migration: usage_events predates subagent ingestion. `agent_id`
+            # is the subagent's own id (NULL for a main-session message), so
+            # "subagents active" can count distinct subagents, not messages.
+            if "agent_id" not in cols:
+                self._conn.execute("ALTER TABLE usage_events ADD COLUMN agent_id TEXT")
+                self._conn.commit()
             # created here (not in the static SCHEMA block above) because a
             # pre-migration DB doesn't have the `host` column yet at the
             # point SCHEMA's executescript runs -- by this line the ALTER
@@ -405,7 +412,7 @@ class Store:
         # pre-existing single-host call sites (and their tests) are
         # unaffected -- UsageCollector stamps the configured local host name
         # explicitly, everything else falls back to the historical default.
-        rows = [{**r, "host": r.get("host") or "localhost"} for r in rows]
+        rows = [{"agent_id": None, **r, "host": r.get("host") or "localhost"} for r in rows]
         if not rows:
             return 0
         with self._lock:
@@ -413,10 +420,10 @@ class Store:
                 """INSERT OR IGNORE INTO usage_events
                    (message_id, ts, session_id, project, project_path, model,
                     input, output, cache_read, cache_write_5m, cache_write_1h,
-                    speed, is_sidechain, web_searches, cost_usd, host)
+                    speed, is_sidechain, web_searches, cost_usd, host, agent_id)
                    VALUES (:message_id, :ts, :session_id, :project, :project_path, :model,
                            :input, :output, :cache_read, :cache_write_5m, :cache_write_1h,
-                           :speed, :is_sidechain, :web_searches, :cost_usd, :host)""",
+                           :speed, :is_sidechain, :web_searches, :cost_usd, :host, :agent_id)""",
                 rows,
             )
             self._conn.commit()
@@ -811,10 +818,15 @@ class Store:
             ).fetchall()
 
     def usage_sidechain_recent_counts(self, since_iso: str) -> list[sqlite3.Row]:
+        """Per session: how many DISTINCT subagents (agent_id) wrote a usage
+        message since `since_iso`. A message without an agent_id (a sidechain
+        line from a main transcript) cannot be told apart, so it is not
+        counted."""
         with self._lock:
             return self._conn.execute(
-                """SELECT session_id, COUNT(*) AS n FROM usage_events
+                """SELECT session_id, COUNT(DISTINCT agent_id) AS n FROM usage_events
                    WHERE is_sidechain = 1 AND ts >= ? AND session_id IS NOT NULL
+                     AND agent_id IS NOT NULL
                    GROUP BY session_id""",
                 (since_iso,),
             ).fetchall()

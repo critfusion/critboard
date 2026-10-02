@@ -1230,3 +1230,162 @@ async def test_herdr_nonzero_exit_raises_classified_command_failed_with_stderr(m
     assert issue.reason_code == "command_failed"
     assert "socket connection refused" in issue.detail
     assert issue.optional is False
+
+
+# -- herdr pane binding (tokens.bead) and subagent files (q733.12) ------------
+
+_IN_PROGRESS = {"status": "in_progress", "title": "t"}
+
+
+def _herdr_bound_agent(session_id, herdr_bead, claims=(), kind="claude", last_activity=None, tracked=True):
+    return {
+        "id": session_id, "session_id": session_id, "kind": kind,
+        "bead_tracked": tracked, "bead": None, "bead_title": None,
+        "_bead_claims": list(claims), "_herdr_bead": herdr_bead, "last_activity": last_activity,
+    }
+
+
+def test_herdr_bead_wins_over_transcript_claim_when_in_progress():
+    a = _herdr_bound_agent("s1", "demo-h", claims=[("demo-t", 100.0)])
+    _apply_bead_cross_check([a], {"demo-h": _IN_PROGRESS, "demo-t": _IN_PROGRESS})
+    assert a["bead"] == "demo-h"
+    assert "_herdr_bead" not in a
+
+
+def test_herdr_bead_ignored_when_not_in_progress_falls_back_to_transcript():
+    a = _herdr_bound_agent("s1", "demo-h", claims=[("demo-t", 100.0)])
+    _apply_bead_cross_check([a], {"demo-h": {"status": "closed", "title": "x"}, "demo-t": _IN_PROGRESS})
+    assert a["bead"] == "demo-t"
+
+
+def test_herdr_bead_unknown_to_beads_data_is_ignored():
+    a = _herdr_bound_agent("s1", "demo-h")
+    _apply_bead_cross_check([a], {})
+    assert a["bead"] is None
+    _apply_bead_cross_check([_herdr_bound_agent("s2", "demo-h")], None)
+
+
+def test_herdr_bead_applies_to_a_kind_without_a_transcript_extractor():
+    a = _herdr_bound_agent("s1", "demo-h", kind="opencode", tracked=False)
+    _apply_bead_cross_check([a], {"demo-h": _IN_PROGRESS})
+    assert a["bead"] == "demo-h"
+
+
+def test_herdr_bound_pane_beats_a_newer_transcript_claim_on_the_same_bead():
+    bound = _herdr_bound_agent("s1", "demo-a", last_activity="2026-10-01T00:00:00Z")
+    other = _tracked_agent_multi("s2", [("demo-a", 9999999999.0)])
+    _apply_bead_cross_check([other, bound], {"demo-a": _IN_PROGRESS})
+    assert bound["bead"] == "demo-a"
+    assert other["bead"] is None
+
+
+def test_herdr_bound_loser_falls_back_to_its_own_transcript_claim():
+    # two panes bound to the same bead: the more recently active keeps it,
+    # the other falls through to its own in_progress transcript claim.
+    new = _herdr_bound_agent("s1", "demo-a", last_activity="2026-10-01T12:00:00Z")
+    old = _herdr_bound_agent("s2", "demo-a", claims=[("demo-b", 5.0)], last_activity="2026-10-01T01:00:00Z")
+    _apply_bead_cross_check([old, new], {"demo-a": _IN_PROGRESS, "demo-b": _IN_PROGRESS})
+    assert new["bead"] == "demo-a"
+    assert old["bead"] == "demo-b"
+
+
+def _herdr_list_with_tokens(bead):
+    return json.dumps({"result": {"agents": [{
+        "agent": "claude", "agent_status": "idle", "cwd": "/srv/demo", "pane_id": "p1",
+        "workspace_id": "w1", "focused": False, "agent_session": {"value": "sess-h"},
+        "tokens": {"bead": bead, "project": "demo"} if bead is not None else {},
+    }]}})
+
+
+def _fake_herdr(monkeypatch, text):
+    class FakeProc:
+        returncode = 0
+
+        async def communicate(self):
+            return text.encode(), b""
+
+        def kill(self):
+            pass
+
+        async def wait(self):
+            pass
+
+    async def fake_exec(*args, **kwargs):
+        return FakeProc()
+
+    monkeypatch.setattr(agents_mod.asyncio, "create_subprocess_exec", fake_exec)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token,status,expected", [
+    ("demo-h", "in_progress", "demo-h"),
+    ("demo-h", "closed", None),
+    ("not a valid id!", "in_progress", None),
+    (None, "in_progress", None),
+])
+async def test_collect_shows_herdr_bound_bead_only_when_in_progress(
+    monkeypatch, tmp_path, token, status, expected,
+):
+    _fake_herdr(monkeypatch, _herdr_list_with_tokens(token))
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {"demo-h": {"status": status, "title": "bound title"}}
+    result = await AgentsCollector(ctx=ctx, herdr_bin="herdr", store=store).collect()
+    store.close()
+    (a,) = result["agents"]
+    assert a["bead"] == expected
+    assert "_herdr_bead" not in a
+    if expected:
+        assert a["bead_title"] == "bound title"
+
+
+@pytest.mark.asyncio
+async def test_collect_herdr_bead_survives_merge_with_session_record(monkeypatch, tmp_path):
+    _fake_herdr(monkeypatch, _herdr_list_with_tokens("demo-h"))
+    proj = tmp_path / "projects" / "-demo"
+    _write_session_jsonl(proj / "sess-h.jsonl", "sess-h", "/srv/demo", "main", "claude-opus-5", mtime_age_s=5)
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {"demo-h": {"status": "in_progress", "title": "t"}}
+    result = await AgentsCollector(
+        ctx=ctx, herdr_bin="herdr", store=store, session_projects_glob=str(proj / "*.jsonl"),
+    ).collect()
+    store.close()
+    (a,) = result["agents"]
+    assert a["source"] == "both"
+    assert a["bead"] == "demo-h"
+
+
+@pytest.mark.asyncio
+async def test_collect_remote_herdr_bead_wins_and_only_the_id_is_used(monkeypatch, tmp_path):
+    async def no_herdr(*args, **kwargs):
+        raise OSError("no herdr on this host")
+
+    monkeypatch.setattr(agents_mod.asyncio, "create_subprocess_exec", no_herdr)
+    store = Store(tmp_path / "t.db")
+    ctx = AppContext(config=None, store=store)
+    ctx.latest_beads_by_id = {"demo-h": _IN_PROGRESS, "demo-t": _IN_PROGRESS}
+    ctx.remote_hosts = {"host2": {"ok": True, "agents": [{
+        "id": "r1", "kind": "claude", "status": "idle", "cwd": "/srv/demo", "session_id": "r1",
+        "bead_claims": ["demo-t"], "herdr_bead": "demo-h", "bead_tracked": True,
+        "last_activity": "2026-10-01T00:00:00Z", "host": "host2", "stale": False,
+    }]}}
+    result = await AgentsCollector(ctx=ctx, herdr_bin="herdr", store=store).collect()
+    store.close()
+    (a,) = result["agents"]
+    assert a["bead"] == "demo-h"
+    assert "herdr_bead" not in a and "_herdr_bead" not in a
+
+
+def test_subagent_transcript_never_becomes_an_agent_record(tmp_path):
+    # <project>/<parent-session>/subagents/agent-<id>.jsonl, freshly written
+    proj = tmp_path / "-home-user-work-demo"
+    _write_session_jsonl(
+        proj / "parent-1.jsonl", "parent-1", "/home/user/work/demo", "main", "claude-opus-5", 5,
+    )
+    _write_session_jsonl(
+        proj / "parent-1" / "subagents" / "agent-abc123.jsonl", "parent-1", "/home/user/work/demo",
+        "main", "claude-opus-5", 5,
+    )
+    recs = scan_session_agents(str(tmp_path / "*" / "*.jsonl"), window_s=900)
+    assert [r["session_id"] for r in recs] == ["parent-1"]

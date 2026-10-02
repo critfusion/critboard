@@ -61,6 +61,7 @@ import json
 import os
 from datetime import UTC, datetime
 
+from ..tzutil import ctx_tz_name, local_day_start_utc_iso
 from . import BaseCollector
 from .agents import agent_label, best_worktree_match, short_cwd
 from .analytics import classify_error, make_example
@@ -407,7 +408,7 @@ class KimiCollector(BaseCollector):
 
         usage_by_session: dict[str, dict] = {}
         if self.store is not None:
-            today_start = now.strftime("%Y-%m-%dT00:00:00Z")
+            today_start = local_day_start_utc_iso(now, ctx_tz_name(self.ctx))
             for row in self.store.kimi_usage_by_session(today_start, host=self.host):
                 usage_by_session[row["session_id"]] = {
                     "tokens": row["tokens"], "messages": row["messages"], "last_ts": row["last_ts"],

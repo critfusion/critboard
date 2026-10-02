@@ -23,10 +23,11 @@ Kimi's OWN per-message cost that is undefined.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from .pricing import compute_cost_usd
 from .store import Store, dense_bucket_keys
+from .tzutil import DEFAULT_TZ, local_day_start
 
 _WINDOW_RE = re.compile(r"^(\d+)(h|d)$")
 _TOP_N_SERIES = 10
@@ -36,17 +37,21 @@ class InvalidWindowError(ValueError):
     """A window string that cannot be parsed as 'today' or '<N>h'/'<N>d'."""
 
 
-def parse_window(window: str, now: datetime) -> tuple[datetime, datetime]:
+def parse_window(window: str, now: datetime, tz_name: str = DEFAULT_TZ) -> tuple[datetime, datetime]:
     """Returns (since, until) for a window string; `until` is always `now`.
 
-    'today' is calendar-anchored (UTC midnight up to `now`). Any '<N>h' or
+    'today' is calendar-anchored (local midnight in `tz_name`, UTC by default,
+    up to `now`; returned as a UTC datetime). Any '<N>h' or
     '<N>d' (N > 0) -- including the previously-hardcoded '24h'/'7d'/'30d' and
     the previously-broken '90d' -- is a fixed-length lookback ending at
     `now`. Anything else raises InvalidWindowError rather than silently
     falling back to a default, so a caller asking for an unsupported window
     finds out immediately instead of quietly getting the wrong data."""
     if window == "today":
-        since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if tz_name == DEFAULT_TZ:
+            since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            since = local_day_start(now, tz_name).astimezone(UTC)
         return since, now
     m = _WINDOW_RE.match(window)
     if m:

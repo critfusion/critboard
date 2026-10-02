@@ -48,6 +48,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..pricing import compute_cost_usd
+from ..tzutil import ctx_tz_name, local_day_start_utc_iso
 from . import BaseCollector, CollectorIssue, now_iso
 
 _PROBE_PATH = Path(__file__).resolve().parent.parent / "remote_probe.py"
@@ -295,7 +296,7 @@ class RemoteCollector(BaseCollector):
         n_worktrees = sum(1 for w in worktrees if (w.get("host") or self.local_host) == name)
         tokens_today, cost_today = 0, 0.0
         if self.store is not None:
-            today_start = datetime.now(UTC).strftime("%Y-%m-%dT00:00:00Z")
+            today_start = local_day_start_utc_iso(datetime.now(UTC), ctx_tz_name(self.ctx))
             totals = self.store.usage_totals(today_start, host=name)
             tokens_today = totals["total"]
             cost_today = totals["cost_usd"]
@@ -404,7 +405,7 @@ class RemoteCollector(BaseCollector):
     def _host_today_totals(self, name: str) -> tuple[int, float]:
         if self.store is None:
             return 0, 0.0
-        today_start = datetime.now(UTC).strftime("%Y-%m-%dT00:00:00Z")
+        today_start = local_day_start_utc_iso(datetime.now(UTC), ctx_tz_name(self.ctx))
         rows = self.store.remote_usage_grouped(("model",), since_iso=today_start, host=name)
         pricing = self.ctx.pricing if self.ctx is not None else {}
         total_tokens = 0

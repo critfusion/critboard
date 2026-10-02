@@ -1088,6 +1088,29 @@ _PARITY_CLAUDE_SCENARIOS: tuple[tuple[str, tuple[tuple[str, str, str, bool], ...
         ("t1", "bd update demo-a --claim", _CLAIM_OK, False),
         ("t2", "bd update demo-b --claim", "✓ Updated issue: demo-b — t", False),
     )),
+    ("bd_claim_wrapper", (("t1", "bd-claim demo-a", _CLAIM_OK, False),)),
+    ("bd_herdr_claim_wrapper", (("t1", "bd-herdr claim demo-a", _CLAIM_OK, False),)),
+    ("wrapper_abs_path_actor_prefix", (
+        ("t1", "BEADS_ACTOR=y /home/user/.local/bin/bd-claim demo-a", _CLAIM_OK, False),
+    )),
+    ("wrapper_failed_claim", (("t1", "bd-claim demo-a", "already claimed by other", False),)),
+    ("wrapper_is_error", (("t1", "bd-herdr claim demo-a", _CLAIM_OK, True),)),
+    ("wrapper_two_ids_usage_error", (("t1", "bd-claim demo-a demo-b", _CLAIM_OK, False),)),
+    ("wrapper_missing_id", (("t1", "bd-herdr claim", _CLAIM_OK, False),)),
+    ("wrapper_variable_id", (("t1", "bd-claim $BID", _CLAIM_OK, False),)),
+    ("wrapper_clear_does_not_release", (
+        ("t1", "bd-claim demo-a", _CLAIM_OK, False),
+        ("t2", "bd-herdr clear %7", "cleared beads metadata on %7", False),
+    )),
+    ("wrapper_bind_not_a_claim", (("t1", "bd-herdr bind %7 demo-a", "bound", False),)),
+    ("wrapper_then_close", (
+        ("t1", "bd-claim demo-a", _CLAIM_OK, False),
+        ("t2", "bd close demo-a", _CLOSE_OK, False),
+    )),
+    ("wrapper_quoted_handoff_not_counted", (
+        ("t1", 'bd update demo-b -d "run\nbd-claim demo-a\nbd-herdr claim demo-a"', _CLAIM_OK, False),
+        ("t2", 'echo "bd-claim demo-a"', "bd-claim demo-a", False),
+    )),
 )
 
 
@@ -1452,3 +1475,81 @@ def test_build_result_backfills_bead_for_herdr_only_stale_claude_pane(tmp_path, 
     assert len(matching) == 1
     assert matching[0]["bead_claims"] == ["demo-a"]
     json.dumps(result)  # still JSON-serializable
+
+
+# -- subagent transcripts + herdr pane bead (q733.12) -------------------------
+
+
+def _sub_usage_line(mid, ts, session, agent):
+    return json.dumps({
+        "type": "assistant", "uuid": mid, "timestamp": ts, "sessionId": session, "isSidechain": True,
+        "agentId": agent,
+        "message": {"id": mid, "model": "claude-opus-5", "content": [
+            {"type": "tool_use", "id": "toolu_x", "name": "Edit", "input": {"file_path": "a.py"}},
+        ], "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 0,
+                     "cache_creation_input_tokens": 0}},
+    })
+
+
+def test_remote_usage_includes_subagent_files_as_sidechain_session_buckets(tmp_path):
+    proj = tmp_path / "projects" / "-home-user-work-demo"
+    main = proj / "parent-1.jsonl"
+    main.parent.mkdir(parents=True)
+    main.write_text(_sub_usage_line("m-main", "2026-10-01T10:00:00.000Z", "parent-1", "x").replace(
+        '"isSidechain": true', '"isSidechain": false') + "\n")
+    sub = proj / "parent-1" / "subagents" / "agent-aaa111.jsonl"
+    sub.parent.mkdir(parents=True)
+    sub.write_text(
+        _sub_usage_line("m-sub1", "2026-10-01T10:01:00.000Z", "parent-1", "aaa111") + "\n"
+        + _sub_usage_line("m-sub2", "2026-10-01T10:02:00.000Z", "parent-1", "aaa111") + "\n"
+    )
+    pattern = str(tmp_path / "projects" / "*" / "*.jsonl")
+    state_file = str(tmp_path / "state.json")
+    out = rp.collect_usage_and_analytics(pattern, state_file=state_file)
+    assert sum(b["messages"] for b in out["usage_buckets"]) == 3
+    assert {b["project"] for b in out["usage_buckets"]} == {"demo"}
+    sidechain = [b for b in out["session_buckets"] if b["is_sidechain"] == 1]
+    assert [(b["session_id"], b["messages"]) for b in sidechain] == [("parent-1", 2)]
+    # subagent tool calls never feed the tool analytics (local analytics skips these files too)
+    assert sum(b["calls"] for b in out["tool_buckets"]) == 1
+    # unchanged on the next probe (cached), still counted once
+    again = rp.collect_usage_and_analytics(pattern, state_file=state_file)
+    assert sum(b["messages"] for b in again["usage_buckets"]) == 3
+
+
+def test_remote_session_scan_ignores_subagent_files(tmp_path):
+    proj = tmp_path / "projects" / "-home-user-work-demo"
+    sub = proj / "parent-1" / "subagents" / "agent-aaa111.jsonl"
+    sub.parent.mkdir(parents=True)
+    sub.write_text(_sub_usage_line("m1", "2026-10-01T10:01:00.000Z", "parent-1", "aaa111") + "\n")
+    assert rp.scan_session_agents(str(tmp_path / "projects" / "*" / "*.jsonl"), 10**9) == []
+
+
+def test_collect_agents_ships_only_a_valid_herdr_bead_id(monkeypatch):
+    herdr_json = json.dumps({"result": {"agents": [
+        {"agent": "claude", "agent_session": {"value": "s1"}, "cwd": "/srv/demo",
+         "tokens": {"bead": "demo-h", "project": "demo"}},
+        {"agent": "claude", "agent_session": {"value": "s2"}, "cwd": "/srv/demo",
+         "tokens": {"bead": "bad id; rm -rf"}},
+        {"agent": "claude", "agent_session": {"value": "s3"}, "cwd": "/srv/demo"},
+    ]}})
+
+    class FakeProc:
+        returncode = 0
+        stdout = herdr_json.encode()
+        stderr = b""
+
+    monkeypatch.setattr(rp.subprocess, "run", lambda *a, **k: FakeProc())
+    monkeypatch.setattr(rp, "find_herdr", lambda b: "herdr")
+    by_sid = {a["session_id"]: a for a in rp.collect_agents("herdr", [])}
+    assert by_sid["s1"]["herdr_bead"] == "demo-h"
+    assert by_sid["s2"]["herdr_bead"] is None
+    assert by_sid["s3"]["herdr_bead"] is None
+
+
+def test_remote_merge_carries_herdr_bead_onto_the_session_record():
+    herdr = [{"session_id": "s1", "pane": "p", "workspace": "w", "title": "t", "status": "idle",
+              "focused": False, "kind": "claude", "herdr_bead": "demo-h"}]
+    session = [{"session_id": "s1", "repo": "demo", "label": "demo", "kind": "claude"}]
+    (merged,) = rp.merge_remote_agent_sources(herdr, session)
+    assert merged["herdr_bead"] == "demo-h"

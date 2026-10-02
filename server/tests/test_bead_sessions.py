@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from critdash.collectors.bead_sessions import (
     BEAD_TRACKED_KINDS,
     resolve_session_bead,
@@ -237,6 +239,85 @@ def test_claude_echo_and_grep_not_counted(tmp_path):
     p = write(tmp_path / "s.jsonl", claude_lines(
         ("t1", "grep -- '--claim' notes.txt", "notes.txt:1: --claim seen", False),
         ("t2", 'echo "bd update demo-a --claim"', "bd update demo-a --claim", False),
+    ))
+    assert resolve_session_bead("claude", [p], {}) == []
+
+
+BOUND_OK = CLAIM_OK + "\nbound %7 \u2192 demo-a (name=claude-demo, title='a: t')"
+
+
+def test_claude_bd_claim_wrapper_counts_as_claim(tmp_path):
+    p = write(tmp_path / "s.jsonl", claude_lines(("t1", "bd-claim demo-a", BOUND_OK, False)))
+    claims = resolve_session_bead("claude", [p], {})
+    assert _first(claims) == "demo-a"
+    assert claims[0][1] is not None
+
+
+def test_claude_bd_herdr_claim_counts_as_claim(tmp_path):
+    p = write(tmp_path / "s.jsonl", claude_lines(("t1", "bd-herdr claim demo-a", BOUND_OK, False)))
+    assert _ids(resolve_session_bead("claude", [p], {})) == ["demo-a"]
+
+
+def test_claude_claim_wrappers_with_path_actor_prefix_and_compound(tmp_path):
+    p = write(tmp_path / "s.jsonl", claude_lines(
+        ("t1", "BEADS_ACTOR=demo-actor-z /home/user/.local/bin/bd-claim demo-a", BOUND_OK, False),
+        ("t2", "cd /srv/demo && timeout 30 /home/user/.local/bin/bd-herdr claim demo-b 2>&1 | tail -2",
+         CLAIM_OK_B, False),
+    ))
+    assert _ids(resolve_session_bead("claude", [p], {})) == ["demo-b", "demo-a"]
+
+
+@pytest.mark.parametrize("cmd", [
+    "bd-claim demo-a demo-b",  # the script takes exactly one id: usage error, exit 2
+    "bd-herdr claim demo-a demo-b",
+    "bd-herdr claim",
+    "bd-claim",
+    "bd-claim $BID",
+    "bd-claim $(cat f)",
+    "bd-claim --help",
+    "bd-herdr bind %7 demo-a",  # bind only decorates the pane
+    "bd-herdr resolve claude demo-a",
+    "bd-herdr clear %7",
+])
+def test_claude_claim_wrapper_non_claims_not_counted(tmp_path, cmd):
+    p = write(tmp_path / "s.jsonl", claude_lines(("t1", cmd, BOUND_OK, False)))
+    assert resolve_session_bead("claude", [p], {}) == []
+
+
+@pytest.mark.parametrize("out,is_error", [
+    (ALREADY_CLAIMED, True),
+    ("Error: already claimed by demo-actor-other", False),
+    (CLAIM_OK, True),
+])
+def test_claude_failed_wrapper_claim_not_counted(tmp_path, out, is_error):
+    p = write(tmp_path / "s.jsonl", claude_lines(("t1", "bd-claim demo-a", out, is_error)))
+    assert resolve_session_bead("claude", [p], {}) == []
+
+
+def test_claude_bd_herdr_clear_does_not_release_the_bead(tmp_path):
+    # clear only wipes the pane's display metadata; the bead stays claimed.
+    p = write(tmp_path / "s.jsonl", claude_lines(
+        ("t1", "bd-claim demo-a", BOUND_OK, False),
+        ("t2", "bd-herdr clear %7", "cleared beads metadata on %7", False),
+    ))
+    assert _ids(resolve_session_bead("claude", [p], {})) == ["demo-a"]
+
+
+def test_claude_wrapper_claim_then_close_releases(tmp_path):
+    p = write(tmp_path / "s.jsonl", claude_lines(
+        ("t1", "bd-claim demo-a", BOUND_OK, False),
+        ("t2", "bd close demo-a", CLOSE_OK, False),
+    ))
+    assert resolve_session_bead("claude", [p], {}) == []
+
+
+def test_claude_quoted_handoff_text_with_wrapper_claims_not_counted(tmp_path):
+    p = write(tmp_path / "s.jsonl", claude_lines(
+        ("t1", 'bd update demo-b -d "next session: run\nbd-claim demo-a\nbd-herdr claim demo-a"',
+         CLAIM_OK_B, False),
+        ("t2", 'echo "bd-claim demo-a"', "bd-claim demo-a", False),
+        ("t3", "cat <<EOF\nbd-herdr claim demo-a\nEOF\n", "ok", False),
+        ("t4", "grep -n 'bd-claim' notes.txt", "notes.txt:1: bd-claim", False),
     ))
     assert resolve_session_bead("claude", [p], {}) == []
 

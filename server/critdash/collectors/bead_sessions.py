@@ -465,9 +465,17 @@ def _find_bd_invocation(segment: list[str]) -> list[str] | None:
         # on ";" above).
         return None
     base = segment[i].rsplit("/", 1)[-1]
+    rest = segment[i + 1 :]
+    # Fleet claim wrappers (bd-claim <id>; bd-herdr claim <id>) run
+    # `bd update <id> --claim`, then bind the herdr pane. Both take exactly
+    # one argument -- any other arity is a usage error (exit 2), not a claim.
+    # `bd-herdr clear/bind/resolve` never touch bd's claim state.
+    if base == "bd-claim" or (base == "bd-herdr" and rest[:1] == ["claim"]):
+        ids = rest if base == "bd-claim" else rest[1:]
+        return ["update", ids[0], "--claim"] if len(ids) == 1 else None
     if base != "bd":
         return None
-    return segment[i + 1 :]
+    return rest
 
 
 def _parse_bd_call(argv: list[str]) -> tuple[str, list[str], dict] | None:
