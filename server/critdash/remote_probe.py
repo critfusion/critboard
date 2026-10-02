@@ -458,7 +458,9 @@ def collect_usage_and_analytics(projects_glob: str, state_file: str | None = Non
     state = load_state(state_file)
     old_files = state.get("files", {})
     pattern = os.path.expanduser(projects_glob)
-    paths = glob.glob(pattern)
+    # sorted: "first file wins" in the cross-file dedupe must not depend on
+    # the filesystem's directory order.
+    paths = sorted(glob.glob(pattern))
     # Subagent transcripts (<project>/<parent-session>/subagents/agent-*.jsonl,
     # see collectors/usage.py's docstring): token usage and per-session
     # sidechain buckets only -- never tool/error analytics, never agent records.

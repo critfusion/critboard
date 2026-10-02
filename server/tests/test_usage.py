@@ -676,8 +676,10 @@ def test_kimi_data_present_does_not_change_claude_totals(tmp_store):
     assert before["by_project"] == after["by_project"]
     assert before["by_agent"] == after["by_agent"]
     assert before["by_host"] == after["by_host"]
-    assert before["burn"] == after["burn"]
-    assert before["budget"] == after["budget"]
+    # burn/budget project from the wall clock, and the two collects run at
+    # different instants -- compare numerically, not to the last digit.
+    assert before["burn"] == pytest.approx(after["burn"], rel=1e-4)
+    assert before["budget"] == pytest.approx(after["budget"], rel=1e-4)
 
 
 # -- subagent transcripts, local-midnight "today" (q733.12) -------------------
@@ -1069,6 +1071,8 @@ def test_remote_usage_grouped_whole_hour_since_keeps_its_own_hour(tmp_store):
     ("2026-10-02T05:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 10),  # -05:00: day 10-02 is mostly inside
     ("2026-10-02T00:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 10),  # UTC: exact
     ("2026-10-01T11:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 11),  # +13:00: 10-01 is 13h inside
+    ("2026-10-01T12:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 11),  # boundary: exactly half inside counts
+    ("2026-10-01T12:00:01Z", {"2026-10-01": 1, "2026-10-02": 10}, 10),  # one second under half does not
 ])
 def test_remote_kimi_day_bucket_counts_when_most_of_it_is_in_window(tmp_store, since, kimi_days, expected):
     tmp_store.upsert_remote_kimi_usage_buckets([
