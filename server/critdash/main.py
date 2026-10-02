@@ -654,7 +654,7 @@ def build_app() -> FastAPI:
     @app.get("/api/history/agents")
     async def history_agents(window: str = "24h"):
         try:
-            since = _window_to_since(window)
+            since = _window_to_since(window, _read_layout_timezone(config))
         except InvalidWindowError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         rows = store.agent_status_history(since)
@@ -1240,8 +1240,8 @@ def _window_to_delta(window: str) -> timedelta:
     return until - since
 
 
-def _window_to_since(window: str) -> str:
-    since, _until = parse_window(window, datetime.now(UTC))
+def _window_to_since(window: str, tz_name: str = "UTC") -> str:
+    since, _until = parse_window(window, datetime.now(UTC), tz_name)
     return since.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

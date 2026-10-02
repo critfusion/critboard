@@ -813,7 +813,7 @@ class Store:
                 """SELECT session_id, model, ts FROM (
                        SELECT session_id, model, ts,
                               ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY ts DESC) AS rn
-                       FROM usage_events WHERE session_id IS NOT NULL
+                       FROM usage_events WHERE session_id IS NOT NULL AND is_sidechain = 0
                    ) WHERE rn = 1"""
             ).fetchall()
 

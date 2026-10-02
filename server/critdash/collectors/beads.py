@@ -50,6 +50,7 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..tzutil import ctx_tz_name, local_day_start_utc_iso
 from . import BaseCollector, CollectorIssue, now_iso
 
 _BD_DEPENDENCY_REMEDY = "Install the bd CLI, or ignore this panel if you do not use beads."
@@ -743,9 +744,9 @@ class BeadsCollector(BaseCollector):
         items = [transform_item(i, blocked_by, blocks) for i in items_raw]
 
         summary = stats_raw.get("summary", {})
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        today_start = local_day_start_utc_iso(datetime.now(UTC), ctx_tz_name(self.ctx))
         closed_today = sum(
-            1 for i in items if i["status"] == "closed" and (i.get("closed_at") or "").startswith(today)
+            1 for i in items if i["status"] == "closed" and (i.get("closed_at") or "") >= today_start
         )
         stats = {
             "open": summary.get("open_issues", 0),

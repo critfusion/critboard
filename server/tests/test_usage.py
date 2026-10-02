@@ -929,3 +929,15 @@ async def test_evening_usage_counts_today_in_local_zone_everywhere(tmp_path, tmp
     result = await _usage_collector(tmp_store, glob_, ctx=ctx_utc, now=EVENING_NY).collect()
     assert result["usage"]["totals"]["today"]["messages"] == 0
     assert ctx_utc.usage_by_session[PARENT]["msg_count_today"] == 0
+
+
+def test_last_activity_and_model_ignore_subagent_rows(tmp_store):
+    main = _row_now("m-main", 1.0)
+    main.update(session_id="s1", model="claude-opus-5", ts="2026-10-01T10:00:00.000Z")
+    sub = _row_now("m-sub", 1.0)
+    sub.update(session_id="s1", model="claude-sonnet-5", ts="2026-10-01T11:00:00.000Z",
+               is_sidechain=1, agent_id="aaa111")
+    tmp_store.insert_usage_events([main, sub])
+    (row,) = tmp_store.usage_last_activity_by_session()
+    assert row["model"] == "claude-opus-5"
+    assert row["ts"] == "2026-10-01T10:00:00.000Z"

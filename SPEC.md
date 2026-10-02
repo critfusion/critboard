@@ -107,6 +107,7 @@ Notes on real shapes observed on this host:
     "agents":  {"ok": false, "last_ok": "…", "last_run": "…", "duration_ms": 12, "error": "herdr: exit 1", "stale": true}
   },
   "beads": {
+    // closed_today counts beads closed since local midnight (layout timezone).
     "stats": {"open": 12, "in_progress": 3, "blocked": 2, "closed_today": 5, "ready": 7},
     "items": [{
       "id": "demo-fleet-78jr.10",

@@ -1138,3 +1138,18 @@ def test_history_usage_today_window_starts_at_local_midnight(monkeypatch):
     monkeypatch.setattr(main_mod, "_read_layout_timezone", lambda config: "UTC")
     utc = client.get("/api/history/usage?window=today&bucket=hour").json()
     assert len(utc) == 1
+
+
+def test_window_to_since_today_honors_timezone(monkeypatch):
+    from datetime import UTC, datetime
+
+    from critdash import main as main_mod
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 2, 0, 47, tzinfo=UTC)
+
+    monkeypatch.setattr(main_mod, "datetime", _Frozen)
+    assert main_mod._window_to_since("today", "America/New_York") == "2026-10-01T04:00:00Z"
+    assert main_mod._window_to_since("today") == "2026-10-02T00:00:00Z"

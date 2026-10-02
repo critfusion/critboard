@@ -836,3 +836,35 @@ def test_validate_beads_dir_rejects_directory_bd_only_echoes_back(tmp_path):
 
     assert issue is not None
     assert issue.optional is False
+
+
+@pytest.mark.asyncio
+async def test_closed_today_counts_from_local_midnight(tmp_path, monkeypatch):
+    import json as _json
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 2, 0, 47, tzinfo=tz)  # 20:47 EDT on Oct 1
+
+    items = [
+        {"id": "demo-a", "title": "a", "status": "closed", "closed_at": "2026-10-01T22:00:00Z"},
+        {"id": "demo-b", "title": "b", "status": "closed", "closed_at": "2026-10-01T03:00:00Z"},
+        {"id": "demo-c", "title": "c", "status": "open"},
+    ]
+
+    async def fake_run(cmd, timeout=20.0):
+        return _json.dumps(items) if " list " in cmd else ("[]" if " ready " in cmd else "{}")
+
+    monkeypatch.setattr(beads_mod, "_run", fake_run)
+    monkeypatch.setattr(beads_mod, "datetime", _Frozen)
+    env_path = tmp_path / "env"
+    env_path.write_text("")
+    layout = tmp_path / "layout.json"
+    layout.write_text(_json.dumps({"timezone": "America/New_York"}))
+    ctx = SimpleNamespace(config=SimpleNamespace(layout_path=layout), latest_beads_by_id=None)
+    collector = BeadsCollector(ctx=ctx, bd_bin=sys.executable, beads_env=str(env_path))
+    result = await collector.collect()
+    assert result["beads"]["stats"]["closed_today"] == 1
