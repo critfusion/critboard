@@ -180,6 +180,7 @@ if [ "$ground_truth_mode" -eq 1 ]; then
             dashboard fleet medium profile smoke handoff critboard
             __pycache__ readme.md
             needs-codex needs-grok needs-claude needs-opencode
+            needs-cursor needs-kimi needs-review approved
             grok-review waiting-review
             bryan
             security
