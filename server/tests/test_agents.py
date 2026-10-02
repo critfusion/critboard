@@ -1330,6 +1330,9 @@ async def test_collect_shows_herdr_bound_bead_only_when_in_progress(
     store = Store(tmp_path / "t.db")
     ctx = AppContext(config=None, store=store)
     ctx.latest_beads_by_id = {"demo-h": {"status": status, "title": "bound title"}}
+    if token:
+        # a malformed token must be rejected by shape, not by being unknown to beads data
+        ctx.latest_beads_by_id[token] = {"status": status, "title": "bound title"}
     result = await AgentsCollector(ctx=ctx, herdr_bin="herdr", store=store).collect()
     store.close()
     (a,) = result["agents"]
