@@ -1586,7 +1586,8 @@ def _id_tree(tmp_path):
     subs = proj / "parent-1" / "subagents"
     subs.mkdir(parents=True)
     (subs / "agent-aaa111.jsonl").write_text(
-        _sub_usage_line("m2", "2026-10-01T10:01:00.000Z", "parent-1", "aaa111") + "\n"  # also in the parent file
+        # also in the parent file
+        _sub_usage_line("m2", "2026-10-01T10:01:00.000Z", "parent-1", "aaa111") + "\n"
         + _sub_usage_line("m3", "2026-10-01T10:02:00.000Z", "parent-1", "aaa111") + "\n"
     )
     (subs / "agent-bbb222.jsonl").write_text(
@@ -1643,7 +1644,12 @@ def test_cache_entry_without_msgs_for_a_subagent_file_is_reparsed(tmp_path, monk
 
     calls = []
     orig = rp.aggregate_file
-    monkeypatch.setattr(rp, "aggregate_file", lambda path, project: (calls.append(path), orig(path, project))[1])
+
+    def spy(path, project):
+        calls.append(path)
+        return orig(path, project)
+
+    monkeypatch.setattr(rp, "aggregate_file", spy)
     out = rp.collect_usage_and_analytics(pattern, state_file=state)
     assert sorted(p.rsplit("/", 1)[-1] for p in calls) == ["agent-aaa111.jsonl", "agent-bbb222.jsonl"]
     assert sum(b["messages"] for b in out["usage_buckets"]) == 3

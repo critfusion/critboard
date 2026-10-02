@@ -953,7 +953,12 @@ async def test_collect_rollups_and_ctx_map_run_off_the_event_loop_thread(tmp_pat
     seen = {}
     for name in ("_compute_rollups", "_update_ctx_session_map"):
         real = getattr(c, name)
-        setattr(c, name, lambda real=real, name=name: (seen.setdefault(name, threading.current_thread()), real())[1])
+
+        def spy(real=real, name=name):
+            seen.setdefault(name, threading.current_thread())
+            return real()
+
+        setattr(c, name, spy)
     await c.collect()
     assert set(seen) == {"_compute_rollups", "_update_ctx_session_map"}
     assert all(t is not threading.main_thread() for t in seen.values())
@@ -987,7 +992,8 @@ async def test_ingest_inserts_rows_before_the_offset_advances(tmp_path, tmp_stor
     """Crash safety: a stop after the insert but before the offset save must
     re-read the file (rows deduped), and a stop before the insert must not
     leave the offset past rows that were never stored."""
-    lines = [_assistant_line("m1", "2026-10-01T10:00:00.000Z"), _assistant_line("m2", "2026-10-01T10:01:00.000Z")]
+    lines = [_assistant_line("m1", "2026-10-01T10:00:00.000Z"),
+             _assistant_line("m2", "2026-10-01T10:01:00.000Z")]
     glob_ = _make_tree(tmp_path, main_lines=lines)
     path = str(tmp_path / PROJ_DIR / f"{PARENT}.jsonl")
 
@@ -1008,8 +1014,9 @@ async def test_ingest_inserts_rows_before_the_offset_advances(tmp_path, tmp_stor
 
 
 @pytest.mark.asyncio
-async def test_ingest_failed_insert_leaves_offset_unset_and_rerun_loses_nothing(tmp_path, tmp_store, monkeypatch):
-    lines = [_assistant_line("m1", "2026-10-01T10:00:00.000Z"), _assistant_line("m2", "2026-10-01T10:01:00.000Z")]
+async def test_failed_insert_leaves_offset_unset_and_rerun_loses_nothing(tmp_path, tmp_store, monkeypatch):
+    lines = [_assistant_line("m1", "2026-10-01T10:00:00.000Z"),
+             _assistant_line("m2", "2026-10-01T10:01:00.000Z")]
     glob_ = _make_tree(tmp_path, main_lines=lines)
     path = str(tmp_path / PROJ_DIR / f"{PARENT}.jsonl")
 
@@ -1050,7 +1057,9 @@ async def test_remote_hourly_today_window_is_exact_for_a_half_hour_zone(tmp_path
 
 
 def test_remote_usage_grouped_whole_hour_since_keeps_its_own_hour(tmp_store):
-    tmp_store.upsert_remote_usage_buckets([_remote_bucket("2026-10-01T18", 10), _remote_bucket("2026-10-01T17", 1)])
+    tmp_store.upsert_remote_usage_buckets(
+        [_remote_bucket("2026-10-01T18", 10), _remote_bucket("2026-10-01T17", 1)]
+    )
     rows = tmp_store.remote_usage_grouped(("model",), since_iso="2026-10-01T18:00:00Z")
     assert rows[0]["output"] == 10
 
@@ -1061,7 +1070,7 @@ def test_remote_usage_grouped_whole_hour_since_keeps_its_own_hour(tmp_store):
     ("2026-10-02T00:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 10),  # UTC: exact
     ("2026-10-01T11:00:00Z", {"2026-10-01": 1, "2026-10-02": 10}, 11),  # +13:00: 10-01 is 13h inside
 ])
-def test_remote_kimi_totals_count_a_day_bucket_when_most_of_it_is_in_the_window(tmp_store, since, kimi_days, expected):
+def test_remote_kimi_day_bucket_counts_when_most_of_it_is_in_window(tmp_store, since, kimi_days, expected):
     tmp_store.upsert_remote_kimi_usage_buckets([
         {"host": "host-b", "day": d, "model": "kimi", "tokens": t, "turns": 1} for d, t in kimi_days.items()
     ])
