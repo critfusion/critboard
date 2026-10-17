@@ -242,6 +242,39 @@ Notes on real shapes observed on this host:
   `commit`/`branch`/`dirty` are this checkout's git identity, all `null` outside a git checkout (e.g. a tarball
   install) -- never an error for that case.
 
+### Opt-in modules: Infrastructure / Workflow / Knowledge (all off by default)
+
+A default install is the board with agents and beads, exactly as before. Extra views exist only
+when `config/sources.json` (machine-local, never tracked) sets `modules.<name>.enabled` to the JSON
+boolean `true`. `config/sources.example.json` ships every module `false`. Config is re-read per
+request, so a change needs no restart.
+
+- `GET /api/modules` -> `{"enabled": ["knowledge", ...]}`, in nav order (infrastructure, workflow,
+  knowledge). `[]` on a default install.
+- UI: with `[]` there is no navigation at all and the page is unchanged. With one or more, a view bar
+  `Live | <enabled views>` appears. The view is the `?view=<name>` query parameter (never the hash:
+  the hash is the bead/agent deep link). Switching only toggles `hidden`; it never rebuilds the Live
+  grid or closes the detail popup, so unsaved text survives. The TODAY/7D/30D filter belongs to Live
+  and is hidden on other views. `infrastructure` and `workflow` are reserved: enabling them shows a
+  placeholder until their phases land.
+- `modules.knowledge` is a read-only window onto BookStack. Server-side only: the API token id and
+  secret come from `bookstack.token_file` (one line `<id>:<secret>`, mode 600; refused if group or
+  others can read it) and never reach the browser, a response body or a log. Redirects are not
+  followed. No page content is cached: every response is a live fetch and carries `fetched_at`.
+  - `GET /api/knowledge/status` -> probes BookStack. `{"ok":true,"status":{...}}` or an error body.
+  - `GET /api/knowledge/search?q=` (max 200 chars) -> `{"results":[{id,name,book,updated_at,preview}]}`.
+  - `GET /api/knowledge/page/{id}` -> `{id,name,book,text,updated_at,provenance:{tags,created_by,
+    updated_by,revision_count},edit_url,open_url}`. `text` is plain text made from BookStack's HTML;
+    page tags are the provenance block. No tags is shown as "origin unknown".
+  - Failure body: `{"ok":false,"error":{"code","message","http_status"},"status":{"ok","last_success",
+    "down_since","error"}}`. Codes: `unreachable`, `auth_failed` (BookStack 401/403), `upstream_error`
+    -> HTTP 502. `not_found` -> 404 (not an outage). `not_configured`, `token_file_missing`,
+    `token_file_permissions`, `token_file_invalid` -> 503 (operator setup, not an outage clock).
+    `down_since` is the first failure since the last success; `last_success` is null until one works.
+  - Module off -> all three answer 404. A request with an `Origin` host that differs from `Host` gets
+    403 (CORS elsewhere is open; this keeps another site from reading wiki content).
+  - Read-only: editing is the "Edit in BookStack" link to BookStack's own editor.
+
 ### Bead reply — send back / close (off by default)
 
 Lets the bead popup add a reply comment to a human-labelled bead and either **send it back** (wake

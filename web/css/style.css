@@ -1749,3 +1749,107 @@ table.dtable th .sort-indicator {
   }
   .settings-input { flex-basis: 100%; }
 }
+
+/* ---------- opt-in module views (js/views.js) ----------
+   Everything below applies only when a module is enabled in
+   config/sources.json. With none enabled these elements stay `hidden` and
+   the page is the plain board. */
+
+#grid-wrap[hidden], #window-selector[hidden], .view-nav[hidden], .view-host[hidden], .view-section[hidden] {
+  display: none;
+}
+
+.view-nav {
+  display: flex;
+  gap: 2px;
+  padding: 8px 16px 0;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+}
+
+.view-nav a {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-dim);
+  text-decoration: none;
+  padding: 8px 14px;
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  white-space: nowrap;
+}
+
+.view-nav a:hover { color: var(--color-text); background: var(--color-bg-panel-hover); }
+.view-nav a:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: -2px; }
+
+.view-nav a[aria-current="page"] {
+  color: var(--color-accent-cyan);
+  background: var(--color-bg-panel);
+  border-color: var(--color-border);
+  margin-bottom: -1px;
+  border-bottom: 1px solid var(--color-bg-panel);
+}
+
+.view-host { padding: 16px; max-width: 2560px; margin: 0 auto; }
+.view-placeholder { color: var(--color-text-dim); }
+
+.kb-search { display: flex; gap: 8px; margin-bottom: 10px; }
+.kb-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-bright);
+  border-radius: var(--radius-card);
+  padding: 8px 10px;
+}
+.kb-search button {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-bright);
+  border-radius: var(--radius-card);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.kb-status { font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--color-text-dim); margin-bottom: 10px; min-height: 1.4em; }
+.kb-status.kb-down, .kb-down { color: var(--color-status-crit); }
+.kb-layout { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+.kb-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.kb-result {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  font: inherit; color: var(--color-text);
+  background: var(--color-bg-panel); border: 1px solid var(--color-border);
+  border-radius: var(--radius-card); padding: 8px 10px; cursor: pointer;
+}
+.kb-result:hover { background: var(--color-bg-panel-hover); }
+.kb-result:focus-visible, .kb-search input:focus-visible, .kb-search button:focus-visible, .kb-detail a:focus-visible {
+  outline: 2px solid var(--color-accent-cyan); outline-offset: 1px;
+}
+.kb-result-name { font-weight: 700; }
+.kb-result-book, .kb-result-preview, .kb-meta { color: var(--color-text-dim); font-size: var(--font-size-sm); }
+.kb-detail {
+  background: var(--color-bg-panel); border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel); padding: var(--density-panel-padding) 16px; min-width: 0;
+}
+.kb-detail:empty { display: none; }
+.kb-stale { opacity: 0.55; }
+.kb-title { margin: 0 0 6px; font-size: var(--font-size-lg); }
+.kb-provenance { border: 1px solid var(--color-border-bright); border-radius: var(--radius-card); padding: 8px 10px; margin: 10px 0; }
+.kb-provenance h3 { margin: 0 0 6px; font-size: var(--font-size-sm); color: var(--color-accent-amber); text-transform: uppercase; }
+.kb-tags { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 6px; }
+.kb-tags dt { color: var(--color-text-dim); }
+.kb-tags dd { margin: 0; overflow-wrap: anywhere; }
+.kb-unknown { color: var(--color-accent-amber); }
+.kb-links { display: flex; gap: 14px; flex-wrap: wrap; }
+.kb-links a { color: var(--color-accent-cyan); }
+.kb-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 12px 0; line-height: 1.5; }
+
+@media (max-width: 640px) {
+  .view-nav { padding: 6px 12px 0; }
+  .view-nav a { padding: 10px 12px; min-height: 44px; }
+  .view-host { padding: 10px; }
+  .kb-layout { grid-template-columns: minmax(0, 1fr); }
+}

@@ -554,6 +554,53 @@ needed. It also still requires `allow_config_writes` (default `true`) --
 set that `false` instead, or in addition, if this dashboard is reachable by
 more than just you and you want it fully read-only from the browser.
 
+### 9. Opt-in modules (optional; none on by default)
+
+Skip this section for a normal install. The board has no Knowledge,
+Infrastructure or Workflow views until you turn one on. To turn on the
+read-only BookStack view:
+
+1. In BookStack, create an API token for a user whose role can only view.
+2. Save `<token_id>:<token_secret>` as one line in a file only you can read:
+   `install -m 600 /dev/null ~/.config/critboard-bookstack.token`, then write the line into it.
+3. In `config/sources.json` (not the example file) set:
+
+```json
+"modules": {
+  "knowledge": {
+    "enabled": true,
+    "bookstack": {
+      "base_url": "https://wiki.example.com",
+      "token_file": "~/.config/critboard-bookstack.token"
+    }
+  }
+}
+```
+
+4. Reaching the board by a name other than `localhost`, `127.0.0.1`, the
+   `bind_host` address or a `hosts[].name` (a reverse proxy or DNS name)?
+   The Knowledge routes refuse unknown `Host` names (DNS-rebinding guard), so
+   list the name, hostname only, no port, in `allowed_hosts`:
+
+```json
+"knowledge": {
+  "enabled": true,
+  "allowed_hosts": ["board.example.net"],
+  "bookstack": { "...": "..." }
+}
+```
+
+   If you bind to `0.0.0.0` (or `::`), CritBoard cannot tell which names reach
+   it, so the bind address itself is not trusted: every name you browse with
+   (other than the loopback names) must be in `allowed_hosts`. A refused
+   address shows "CritBoard refused this address" in the Knowledge view, with
+   the exact name to add.
+
+Reload the page. A view bar appears with Live and Knowledge. If the file is
+readable by others, or `base_url` is missing, the Knowledge view says what to
+fix. Set `enabled` back to `false` (or delete the key) to remove the view.
+See SPEC.md, "Opt-in modules", for the endpoints.
+
 ## Running it day to day
 
 | Command | What it does |
@@ -621,6 +668,11 @@ if a key is missing entirely. Notable ones for a fresh install:
   `collector_redetect_interval_s` (default 60s) -- installing `bd` later
   brings that panel alive with no restart. Force one on or off regardless of
   detection with e.g. `{"beads": {"enabled": false}}`.
+- `modules` -- opt-in Infrastructure / Workflow / Knowledge views. All
+  `enabled: false` by default; a default install shows no view bar. See
+  step 9 above. `modules.knowledge.allowed_hosts` (list of hostnames, no
+  port, default none) admits extra `Host` names to the Knowledge routes;
+  needed behind a proxy/DNS name or when bound to `0.0.0.0`.
 - `allow_self_update` -- `false` by default. Gates the "Update now" button
   in the update banner, which pulls and runs new code from `update_repo`.
   Settable from the settings panel (gear icon) as "Allow self-update" --

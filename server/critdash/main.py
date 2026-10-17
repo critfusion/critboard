@@ -12,8 +12,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,6 +46,9 @@ from .collectors.worktrees import WorktreesCollector
 from .config import Config, load_config
 from .ctx import AppContext
 from .history import InvalidWindowError, bucket_count, build_grouped_history, parse_window
+from .knowledge import BookStackAdapter, KnowledgeError
+from .knowledge import now_iso as knowledge_now_iso
+from .modules import enabled_modules, module_config
 from .pricing import compute_cost_usd
 from .state import SnapshotStore
 from .store import Store, zero_fill_daily, zero_fill_hourly
@@ -1220,6 +1224,109 @@ def build_app() -> FastAPI:
         config.sources.update(updates)
 
         return JSONResponse(_update_settings_view())
+
+    # ---- opt-in modules (see modules.py; off unless sources.json enables) ----
+    knowledge = BookStackAdapter(config.sources)
+    app.state.knowledge = knowledge  # exposed for tests: inject a fake transport
+
+    @app.get("/api/modules")
+    async def get_modules():
+        config.reload_sources()
+        return JSONResponse({"enabled": enabled_modules(config.sources)})
+
+    def _knowledge_allowed_hosts() -> set[str]:
+        """Loopback, the bind host (unless a wildcard), the configured host
+        and host-list names, plus modules.knowledge.allowed_hosts (names
+        only, no port). A wildcard bind (0.0.0.0) cannot know which names
+        reach it: list those in allowed_hosts."""
+        src = config.sources
+        names = {"localhost", "127.0.0.1", "::1", str(src.get("host") or "")}
+        bind = str(src.get("bind_host") or "")
+        if bind not in ("0.0.0.0", "::", ""):
+            names.add(bind)
+        names.update(str(h.get("name") or "") for h in src.get("hosts") or [] if isinstance(h, dict))
+        extra = (module_config(src, "knowledge") or {}).get("allowed_hosts")
+        if isinstance(extra, list):
+            names.update(str(x) for x in extra)
+        return {n.strip("[]").lower() for n in names if n}
+
+    def _knowledge_refused(code: str, message: str) -> JSONResponse:
+        return JSONResponse(
+            {"ok": False, "error": {"code": code, "message": message, "http_status": 403},
+             "status": knowledge.status()},
+            status_code=403, headers={"Cache-Control": "no-store"},
+        )
+
+    def _knowledge_gate(request: Request) -> JSONResponse | None:
+        """None = allowed; else the 403 body in the normal ok:false shape."""
+        config.reload_sources()
+        if module_config(config.sources, "knowledge") is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+        # CORS above allows any origin, so a page on another site could read
+        # these responses. Browsers send Origin on cross-site requests: refuse
+        # any whose Origin host differs from the Host the request came to.
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).netloc != request.headers.get("host"):
+            return _knowledge_refused("origin_not_allowed", "cross-origin request refused")
+        # DNS rebinding: an attacker's name that resolves to this machine
+        # passes the Origin==Host check above (both are the attacker's name).
+        # Refuse any Host that is not one of ours. Knowledge routes only.
+        host = (urlsplit("//" + (request.headers.get("host") or "")).hostname or "").lower()
+        if host not in _knowledge_allowed_hosts():
+            return _knowledge_refused("host_not_allowed", "host not allowed")
+        return None
+
+    _KNOWLEDGE_HTTP = {
+        "not_found": 404, "not_configured": 503, "token_file_missing": 503,
+        "token_file_permissions": 503, "token_file_invalid": 503,
+    }
+
+    def _knowledge_error(err: KnowledgeError) -> JSONResponse:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": {"code": err.code, "message": err.message, "http_status": err.http_status},
+                "status": knowledge.status(),
+            },
+            status_code=_KNOWLEDGE_HTTP.get(err.code, 502),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    def _knowledge_ok(data: dict) -> JSONResponse:
+        return JSONResponse(
+            {"ok": True, **data, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/knowledge/status")
+    async def knowledge_status(request: Request):
+        if (refused := _knowledge_gate(request)) is not None:
+            return refused
+        try:
+            await knowledge.probe()
+        except KnowledgeError as err:
+            return _knowledge_error(err)
+        return _knowledge_ok({})
+
+    @app.get("/api/knowledge/search")
+    async def knowledge_search(request: Request, q: str = Query("", max_length=200)):
+        if (refused := _knowledge_gate(request)) is not None:
+            return refused
+        try:
+            return _knowledge_ok(await knowledge.search(q))
+        except KnowledgeError as err:
+            return _knowledge_error(err)
+
+    @app.get("/api/knowledge/page/{page_id}")
+    async def knowledge_page(request: Request, page_id: int):
+        if (refused := _knowledge_gate(request)) is not None:
+            return refused
+        if page_id < 1:
+            raise HTTPException(status_code=404, detail="Not Found")
+        try:
+            return _knowledge_ok(await knowledge.page(page_id))
+        except KnowledgeError as err:
+            return _knowledge_error(err)
 
     web_dir = config.dashboard_root / "web"
     if web_dir.exists():
