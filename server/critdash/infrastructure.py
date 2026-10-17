@@ -203,7 +203,7 @@ def compute_status(declared: str, live_check: str, updated_at: str | None,
         status = "needs-verification"
         reason = "Marked current, but no readable Live check date"
     elif status == "unknown":
-        reason = "No status recorded"
+        reason = "Status is unknown or not recorded"
     return {
         "status": status,
         "status_reason": reason,
