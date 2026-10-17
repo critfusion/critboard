@@ -32,6 +32,8 @@ from urllib.parse import quote
 
 import httpx
 
+from .infrastructure import book_slug as cfg_book_slug
+from .infrastructure import degraded_record, parse_record, stale_after_days
 from .modules import module_config
 
 logger = logging.getLogger("critdash.knowledge")
@@ -49,6 +51,8 @@ MAX_PAGE_BYTES = 8_000_000
 HTML_INPUT_MAX_CHARS = 1_000_000
 PREVIEW_INPUT_MAX_CHARS = 10_000
 DEADLINE_FACTOR = 2.0
+INFRA_MAX_PAGES = 50
+INFRA_CONCURRENCY = 5
 
 _BLOCK_TAGS = {
     "p", "div", "br", "li", "ul", "ol", "tr", "table", "blockquote", "pre",
@@ -64,7 +68,7 @@ def now_iso() -> str:
 class KnowledgeError(Exception):
     """code: not_configured | token_file_missing | token_file_permissions |
     token_file_invalid | unreachable | auth_failed | upstream_error |
-    upstream_too_large | not_found. http_status is the status BookStack returned, if any."""
+    upstream_too_large | not_found | book_not_found. http_status is the status BookStack returned, if any."""
 
     def __init__(self, code: str, message: str, http_status: int | None = None):
         self.code = code
@@ -211,7 +215,10 @@ class BookStackAdapter:
                         raise KnowledgeError("upstream_too_large", "BookStack response too large", 200)
                 return 200, bytes(buf)
 
-    async def _get(self, path: str, params: dict | None = None, max_bytes: int = MAX_SEARCH_BYTES) -> dict:
+    async def _get(self, path: str, params: dict | None = None, max_bytes: int = MAX_SEARCH_BYTES,
+                   record_ok: bool = True) -> dict:
+        """record_ok=False: a success (or a 404) does not clear the failure state.
+        A multi-call read records ok once, when every call worked."""
         try:
             base, timeout = self._settings()
             token = read_token(self._token_path())
@@ -246,6 +253,8 @@ class BookStackAdapter:
             if not isinstance(body, dict):
                 raise KnowledgeError("upstream_error", "BookStack returned an unexpected body", 200)
         except KnowledgeError as err:
+            if err.code == "not_found" and not record_ok:
+                raise
             # Config/token-file problems are the operator's to fix, not an
             # outage of BookStack: do not start an outage clock for them.
             if err.code in ("not_configured", "token_file_missing", "token_file_permissions",
@@ -260,7 +269,8 @@ class BookStackAdapter:
             err = KnowledgeError("unreachable", "BookStack did not respond")
             self._record_failure(err)
             raise err from None
-        self._record_ok()
+        if record_ok:
+            self._record_ok()
         return body
 
     # ---- operations ----
@@ -335,6 +345,85 @@ class BookStackAdapter:
             },
             "edit_url": edit_url,
             "open_url": f"{base}/link/{page_id}",
+        }
+
+    async def infrastructure(self, now: datetime | None = None) -> dict:
+        """Records from the pages of one book (modules.infrastructure). One
+        deadline covers the whole read. Any failure fails the whole call: a
+        partial list is never returned as if it were the full inventory."""
+        if module_config(self._sources, "knowledge") is None:
+            raise KnowledgeError(
+                "not_configured", "infrastructure reads BookStack through modules.knowledge: enable it first"
+            )
+        _, timeout = self._settings()
+        try:
+            return await asyncio.wait_for(self._infrastructure(now or datetime.now(UTC)),
+                                          timeout * DEADLINE_FACTOR)
+        except TimeoutError:
+            logger.warning("bookstack infrastructure read exceeded its overall deadline")
+            err = KnowledgeError("unreachable", "BookStack did not finish in time")
+            self._record_failure(err)
+            raise err from None
+
+    async def _infrastructure(self, now: datetime) -> dict:
+        base, _ = self._settings()
+        cfg = module_config(self._sources, "infrastructure") or {}
+        slug, stale_days = cfg_book_slug(cfg), stale_after_days(cfg)
+        try:
+            found = await self._get("/api/books", {"filter[slug]": slug, "count": 5}, record_ok=False)
+            book = next((b for b in found.get("data") or []
+                         if isinstance(b, dict) and b.get("slug") == slug and _is_int(b.get("id"))), None)
+            if book is None:
+                raise KnowledgeError("not_found", "no such book")
+            listing = await self._get(
+                "/api/pages", {"filter[book_id]": book["id"], "count": INFRA_MAX_PAGES, "sort": "+name"},
+                record_ok=False,
+            )
+        except KnowledgeError as err:
+            if err.code != "not_found":
+                raise
+            # BookStack answered, but the book (or its listing) is not there:
+            # a setup problem, kept in status.error, not an outage.
+            self._record_ok()
+            missing = KnowledgeError("book_not_found", f"no BookStack book with slug '{slug}'")
+            self.last_error = {"code": missing.code, "message": missing.message, "http_status": None}
+            raise missing from None
+        ids = [p["id"] for p in listing.get("data") or [] if isinstance(p, dict) and _is_int(p.get("id"))]
+        total = listing.get("total") if _is_int(listing.get("total")) else len(ids)
+        sem = asyncio.Semaphore(INFRA_CONCURRENCY)
+
+        async def read(page_id: int):
+            async with sem:
+                try:
+                    page = await self._get(f"/api/pages/{page_id}", max_bytes=MAX_PAGE_BYTES, record_ok=False)
+                except KnowledgeError as err:
+                    if err.code == "not_found":  # deleted since the listing
+                        return None
+                    raise
+            # Parse now and drop the raw page: only the small record is kept.
+            try:
+                rec = await asyncio.to_thread(
+                    parse_record, page, base_url=base, book_slug=slug, now=now, stale_days=stale_days)
+                rec["id"] = page_id  # the listing's int, not whatever the page body claims
+                return rec
+            except Exception:  # noqa: BLE001 - one odd page must not take the view down
+                logger.warning("infrastructure page %s could not be parsed", page_id)
+                return degraded_record(page_id, page.get("name"))
+
+        results = await asyncio.gather(*(read(i) for i in ids[:INFRA_MAX_PAGES]), return_exceptions=True)
+        for item in results:
+            if isinstance(item, BaseException):
+                raise item
+        self._record_ok()  # every call worked
+        records = [r for r in results if r is not None]
+        records.sort(key=lambda r: (r["kind"].lower(), r["title"].lower()))
+        return {
+            "book": {"name": str(book.get("name") or ""), "slug": slug,
+                     "url": f"{base}/books/{quote(slug, safe='')}"},
+            "records": records,
+            "total": total,
+            "truncated": total > len(ids[:INFRA_MAX_PAGES]),
+            "stale_after_days": stale_days,
         }
 
 

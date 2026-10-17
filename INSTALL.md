@@ -601,6 +601,38 @@ readable by others, or `base_url` is missing, the Knowledge view says what to
 fix. Set `enabled` back to `false` (or delete the key) to remove the view.
 See SPEC.md, "Opt-in modules", for the endpoints.
 
+### 9b. Infrastructure view (optional, read-only, needs step 9)
+
+The Infrastructure view lists the pages of one BookStack book as records:
+purpose, owner, environment, source, last verified, runbooks, backups,
+related items. It reads BookStack through the `modules.knowledge` settings
+above, so turn Knowledge on first. CritBoard never writes to the wiki and
+keeps no copy of it.
+
+1. In BookStack, make a book (its URL slug is the `book_slug`) with one page
+   per host, service or repository. Each page starts with a Provenance table
+   and carries tags. The exact contract is in SPEC.md, "Infrastructure record
+   contract".
+2. In `config/sources.json` add, next to `knowledge`:
+
+```json
+"infrastructure": {
+  "enabled": true,
+  "book_slug": "infrastructure",
+  "stale_after_days": 90
+}
+```
+
+3. Reload the page. The view bar gains Infrastructure. Every fact the wiki
+   does not state shows as `unknown`. A record whose Live check (or, with no
+   Live check, last page edit) is older than `stale_after_days` shows as
+   `STALE`. A record marked `current` with no readable Live check date shows
+   as `NEEDS VERIFICATION`. If BookStack is down the view says so, with the
+   time it went down and the last time a request worked.
+
+If Knowledge is off or has no `bookstack` settings, the view says
+`not_configured`. If no book has the slug, it says so and names the slug.
+
 ## Running it day to day
 
 | Command | What it does |
@@ -670,7 +702,8 @@ if a key is missing entirely. Notable ones for a fresh install:
   detection with e.g. `{"beads": {"enabled": false}}`.
 - `modules` -- opt-in Infrastructure / Workflow / Knowledge views. All
   `enabled: false` by default; a default install shows no view bar. See
-  step 9 above. `modules.knowledge.allowed_hosts` (list of hostnames, no
+  steps 9 and 9b above. `modules.infrastructure` takes `book_slug` and
+  `stale_after_days`. `modules.knowledge.allowed_hosts` (list of hostnames, no
   port, default none) admits extra `Host` names to the Knowledge routes;
   needed behind a proxy/DNS name or when bound to `0.0.0.0`.
 - `allow_self_update` -- `false` by default. Gates the "Update now" button

@@ -1847,9 +1847,56 @@ table.dtable th .sort-indicator {
 .kb-links a { color: var(--color-accent-cyan); }
 .kb-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 12px 0; line-height: 1.5; }
 
+/* ---- Infrastructure view. Status is always a word in the badge; the border
+   style (solid / dashed) and colour back it up. unknown and stale are dashed. ---- */
+.infra-bar { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+.infra-bar .kb-status { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.infra-refresh {
+  font-family: var(--font-mono); color: var(--color-text); background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-bright); border-radius: var(--radius-card);
+  padding: 8px 14px; min-height: 36px; cursor: pointer; flex: 0 0 auto;
+}
+.infra-refresh:disabled { opacity: 0.5; cursor: default; }
+.infra-refresh:focus-visible, .infra-rec a:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+.infra-summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.infra-kind { margin: 18px 0 8px; font-size: var(--font-size-sm); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-accent-cyan); }
+.infra-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.infra-rec {
+  background: var(--color-bg-panel); border: 1px solid var(--color-border); border-left-width: 4px;
+  border-radius: var(--radius-card); padding: 10px 12px; min-width: 0;
+}
+.infra-rec-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+.infra-rec-title { margin: 0; font-size: var(--font-size-md, 1em); overflow-wrap: anywhere; }
+.infra-rec a { color: var(--color-accent-cyan); }
+.infra-reason { margin: 6px 0 0; font-size: var(--font-size-sm); color: var(--color-accent-amber); }
+.infra-conflict { font-weight: 700; }
+.infra-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 8px 0 0; font-size: var(--font-size-sm); }
+.infra-fields dt { color: var(--color-text-dim); }
+.infra-fields dd { margin: 0; overflow-wrap: anywhere; }
+.infra-list { list-style: none; margin: 0; padding: 0; }
+.infra-unknown { color: var(--color-accent-amber); font-style: italic; }
+.infra-badge {
+  display: inline-block; flex: 0 0 auto; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700;
+  padding: 2px 7px; border-radius: 3px; border: 1px solid currentColor; white-space: nowrap;
+}
+.infra-badge-current { color: var(--color-status-ok); }
+.infra-badge-needs-verification { color: var(--color-status-warn); }
+.infra-badge-contradicted { color: #fff; background: var(--color-status-crit); border-color: var(--color-status-crit); }
+.infra-badge-stale { color: var(--color-status-warn); border-style: dashed; border-width: 2px; background: repeating-linear-gradient(135deg, transparent 0 5px, rgba(242,169,59,0.18) 5px 10px); }
+.infra-badge-unknown { color: var(--color-text-dim); border-style: dashed; border-width: 2px; }
+.infra-st-current { border-left-color: var(--color-status-ok); }
+.infra-st-needs-verification { border-left-color: var(--color-status-warn); }
+.infra-st-contradicted { border-left-color: var(--color-status-crit); }
+.infra-st-stale { border-left-color: var(--color-status-warn); border-left-style: dashed; border-style: dashed; }
+.infra-st-unknown { border-left-color: var(--color-status-idle); border-style: dashed; }
+.infra-outdated { opacity: 0.55; }
+
 @media (max-width: 640px) {
   .view-nav { padding: 6px 12px 0; }
   .view-nav a { padding: 10px 12px; min-height: 44px; }
   .view-host { padding: 10px; }
   .kb-layout { grid-template-columns: minmax(0, 1fr); }
+  .infra-cards { grid-template-columns: minmax(0, 1fr); }
+  .infra-bar { flex-direction: column; align-items: stretch; }
+  .infra-refresh { min-height: 44px; }
 }

@@ -8,6 +8,7 @@
 // Live grid and never touches the detail modal, so an unsaved bead reply
 // draft, a typed search and the scroll state of each view survive a switch.
 
+import { mountInfrastructure } from "./infrastructure_view.js";
 import { mountKnowledge } from "./knowledge_view.js";
 import {
   VIEW_LABELS, availableViews, neighbourView, resolveView, searchWithView, showNav, viewFromSearch,
@@ -17,6 +18,7 @@ import { el } from "./utils.js";
 const mounted = {}; // view -> { section, onShow }
 
 function mountView(view, section) {
+  if (view === "infrastructure") return mountInfrastructure(section);
   if (view === "knowledge") return mountKnowledge(section);
   // Reserved names: switchable, no data source in this version.
   section.appendChild(el("p", { class: "view-placeholder" },

@@ -6,6 +6,9 @@ import {
   availableViews, neighbourView, resolveView, searchWithView, showNav, viewFromSearch,
 } from "./nav.js";
 import { describeProblem } from "./knowledge_text.js";
+import {
+  groupByKind, safeHref, statusCounts, statusKey, statusLabel, verifiedText,
+} from "./infra_text.js";
 
 let passed = 0;
 function test(name, fn) {
@@ -133,6 +136,69 @@ test("origin refusal says cross-origin, not a BookStack error", () => {
 test("oversize page has its own wording", () => {
   const msg = describeProblem({ code: "upstream_too_large", message: "x", http_status: 200 }, { down_since: null, last_success: null }, fmt);
   assert.match(msg, /^BookStack page is larger than CritBoard's limit/);
+});
+
+// ---- Infrastructure view ----
+test("Infrastructure appears in the nav only when the server lists it", () => {
+  assert.deepEqual(availableViews([]), ["live"]);
+  assert.equal(showNav(availableViews([])), false);
+  assert.deepEqual(availableViews(["knowledge"]), ["live", "knowledge"]);
+  const v = availableViews(["infrastructure"]);
+  assert.deepEqual(v, ["live", "infrastructure"]);
+  assert.equal(showNav(v), true);
+  assert.equal(resolveView("infrastructure", availableViews([])), "live");
+  assert.equal(resolveView("infrastructure", v), "infrastructure");
+  assert.equal(searchWithView("", "infrastructure"), "?view=infrastructure");
+});
+
+test("Infrastructure sits before Knowledge in nav order", () => {
+  assert.deepEqual(availableViews(["knowledge", "infrastructure"]), ["live", "infrastructure", "knowledge"]);
+});
+
+test("setup problem wording names the module label", () => {
+  const msg = describeProblem({ code: "book_not_found", message: "no book" }, null, fmt, "", "Infrastructure");
+  assert.equal(msg, "Infrastructure module setup problem: no book");
+  assert.equal(describeProblem({ code: "not_configured", message: "m" }, null, fmt), "Knowledge module setup problem: m");
+});
+
+test("status labels are words; an unrecognised status reads UNKNOWN", () => {
+  assert.equal(statusLabel("stale"), "STALE");
+  assert.equal(statusLabel("needs-verification"), "NEEDS VERIFICATION");
+  for (const junk of [undefined, null, "", "fresh", "__proto__", "toString"]) {
+    assert.equal(statusKey(junk), "unknown", String(junk));
+    assert.equal(statusLabel(junk), "UNKNOWN");
+  }
+});
+
+test("only http(s) URLs become links", () => {
+  assert.equal(safeHref("https://wiki.example.com/x"), "https://wiki.example.com/x");
+  for (const bad of ["javascript:alert(1)", "data:text/html,x", "//evil.example.net", "/books/x", "ftp://a.example.net", "", null, undefined, "https://a b"]) {
+    assert.equal(safeHref(bad), null, String(bad));
+  }
+});
+
+test("records group by kind; unknown kind is its own last group, not dropped", () => {
+  const g = groupByKind([
+    { id: 1, kind: "service" }, { id: 2, kind: "unknown" }, { id: 3, kind: "host" },
+    { id: 4 }, { id: 5, kind: "host" },
+  ]);
+  assert.deepEqual(g.map((x) => x.kind), ["host", "service", "unknown"]);
+  assert.deepEqual(g[0].records.map((r) => r.id), [3, 5]);
+  assert.deepEqual(g[2].records.map((r) => r.id), [2, 4]);
+  assert.deepEqual(groupByKind(undefined), []);
+});
+
+test("status counts include every key and unknown for junk", () => {
+  const c = statusCounts([{ status: "stale" }, { status: "stale" }, { status: "wat" }, {}]);
+  assert.deepEqual(c, { current: 0, "needs-verification": 0, contradicted: 0, stale: 2, unknown: 2 });
+});
+
+test("an edit date is never worded as a verification", () => {
+  const f = (iso) => `<${iso}>`;
+  assert.equal(verifiedText({ verified_basis: "live_check", last_verified: "T1" }, f), "Live check <T1>");
+  assert.match(verifiedText({ verified_basis: "page_updated", age_from: "T2", last_verified: "unknown" }, f), /^Never live-checked\. Page last edited <T2>/);
+  assert.match(verifiedText({ verified_basis: "none" }, f), /^Never live-checked/);
+  assert.match(verifiedText({ verified_basis: "live_check", last_verified: "unknown" }, f), /^Never live-checked/);
 });
 
 console.log(`nav.test.mjs: ${passed} passed`);
