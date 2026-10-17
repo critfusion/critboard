@@ -24,7 +24,7 @@ async function api(path) {
 
 function problemText(body) {
   if (body.error && body.error.code === "local") return body.error.message;
-  return describeProblem(body.error, body.status, fmt);
+  return describeProblem(body.error, body.status, fmt, location.hostname);
 }
 
 export function mountKnowledge(root) {

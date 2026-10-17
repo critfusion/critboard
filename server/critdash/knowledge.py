@@ -64,7 +64,7 @@ def now_iso() -> str:
 class KnowledgeError(Exception):
     """code: not_configured | token_file_missing | token_file_permissions |
     token_file_invalid | unreachable | auth_failed | upstream_error |
-    not_found. http_status is the status BookStack returned, if any."""
+    upstream_too_large | not_found. http_status is the status BookStack returned, if any."""
 
     def __init__(self, code: str, message: str, http_status: int | None = None):
         self.code = code
@@ -203,12 +203,12 @@ class BookStackAdapter:
                     return resp.status_code, b""
                 declared = resp.headers.get("content-length", "")
                 if declared.isdigit() and int(declared) > max_bytes:
-                    raise KnowledgeError("upstream_error", "BookStack response too large", 200)
+                    raise KnowledgeError("upstream_too_large", "BookStack response too large", 200)
                 buf = bytearray()
                 async for chunk in resp.aiter_bytes():
                     buf += chunk
                     if len(buf) > max_bytes:
-                        raise KnowledgeError("upstream_error", "BookStack response too large", 200)
+                        raise KnowledgeError("upstream_too_large", "BookStack response too large", 200)
                 return 200, bytes(buf)
 
     async def _get(self, path: str, params: dict | None = None, max_bytes: int = MAX_SEARCH_BYTES) -> dict:
@@ -292,6 +292,17 @@ class BookStackAdapter:
         return {"results": results, "total": body.get("total", len(results))}
 
     async def page(self, page_id: int) -> dict:
+        # Two sequential upstream calls: one overall deadline for the pair.
+        _, timeout = self._settings()
+        try:
+            return await asyncio.wait_for(self._page(page_id), timeout * DEADLINE_FACTOR)
+        except TimeoutError:
+            logger.warning("bookstack page read exceeded its overall deadline")
+            err = KnowledgeError("unreachable", "BookStack did not finish in time")
+            self._record_failure(err)
+            raise err from None
+
+    async def _page(self, page_id: int) -> dict:
         base, _ = self._settings()
         page = await self._get(f"/api/pages/{page_id}", max_bytes=MAX_PAGE_BYTES)
         book_id = page.get("book_id") if _is_int(page.get("book_id")) else None

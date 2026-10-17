@@ -117,4 +117,22 @@ test("setup problems are not described as outages; missing page is not a problem
   assert.equal(describeProblem(null, null, fmt), null);
 });
 
+test("host refusal tells the operator which name to add", () => {
+  const msg = describeProblem({ code: "host_not_allowed", message: "x", http_status: 403 }, null, fmt, "board.example.net");
+  assert.match(msg, /^CritBoard refused this address/);
+  assert.match(msg, /add 'board\.example\.net' to modules\.knowledge\.allowed_hosts in config\/sources\.json$/);
+  assert.doesNotMatch(msg, /BookStack/);
+});
+
+test("origin refusal says cross-origin, not a BookStack error", () => {
+  const msg = describeProblem({ code: "origin_not_allowed", message: "x", http_status: 403 }, null, fmt, "h");
+  assert.match(msg, /cross-origin request refused/);
+  assert.doesNotMatch(msg, /BookStack/);
+});
+
+test("oversize page has its own wording", () => {
+  const msg = describeProblem({ code: "upstream_too_large", message: "x", http_status: 200 }, { down_since: null, last_success: null }, fmt);
+  assert.match(msg, /^BookStack page is larger than CritBoard's limit/);
+});
+
 console.log(`nav.test.mjs: ${passed} passed`);

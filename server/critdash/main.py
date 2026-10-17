@@ -1250,7 +1250,15 @@ def build_app() -> FastAPI:
             names.update(str(x) for x in extra)
         return {n.strip("[]").lower() for n in names if n}
 
-    def _knowledge_gate(request: Request) -> None:
+    def _knowledge_refused(code: str, message: str) -> JSONResponse:
+        return JSONResponse(
+            {"ok": False, "error": {"code": code, "message": message, "http_status": 403},
+             "status": knowledge.status()},
+            status_code=403, headers={"Cache-Control": "no-store"},
+        )
+
+    def _knowledge_gate(request: Request) -> JSONResponse | None:
+        """None = allowed; else the 403 body in the normal ok:false shape."""
         config.reload_sources()
         if module_config(config.sources, "knowledge") is None:
             raise HTTPException(status_code=404, detail="Not Found")
@@ -1259,13 +1267,14 @@ def build_app() -> FastAPI:
         # any whose Origin host differs from the Host the request came to.
         origin = request.headers.get("origin")
         if origin and urlsplit(origin).netloc != request.headers.get("host"):
-            raise HTTPException(status_code=403, detail="cross-origin request refused")
+            return _knowledge_refused("origin_not_allowed", "cross-origin request refused")
         # DNS rebinding: an attacker's name that resolves to this machine
         # passes the Origin==Host check above (both are the attacker's name).
         # Refuse any Host that is not one of ours. Knowledge routes only.
         host = (urlsplit("//" + (request.headers.get("host") or "")).hostname or "").lower()
         if host not in _knowledge_allowed_hosts():
-            raise HTTPException(status_code=403, detail="host not allowed")
+            return _knowledge_refused("host_not_allowed", "host not allowed")
+        return None
 
     _KNOWLEDGE_HTTP = {
         "not_found": 404, "not_configured": 503, "token_file_missing": 503,
@@ -1291,7 +1300,8 @@ def build_app() -> FastAPI:
 
     @app.get("/api/knowledge/status")
     async def knowledge_status(request: Request):
-        _knowledge_gate(request)
+        if (refused := _knowledge_gate(request)) is not None:
+            return refused
         try:
             await knowledge.probe()
         except KnowledgeError as err:
@@ -1300,7 +1310,8 @@ def build_app() -> FastAPI:
 
     @app.get("/api/knowledge/search")
     async def knowledge_search(request: Request, q: str = Query("", max_length=200)):
-        _knowledge_gate(request)
+        if (refused := _knowledge_gate(request)) is not None:
+            return refused
         try:
             return _knowledge_ok(await knowledge.search(q))
         except KnowledgeError as err:
@@ -1308,7 +1319,8 @@ def build_app() -> FastAPI:
 
     @app.get("/api/knowledge/page/{page_id}")
     async def knowledge_page(request: Request, page_id: int):
-        _knowledge_gate(request)
+        if (refused := _knowledge_gate(request)) is not None:
+            return refused
         if page_id < 1:
             raise HTTPException(status_code=404, detail="Not Found")
         try:
