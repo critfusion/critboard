@@ -421,3 +421,43 @@ def test_role_marker_must_end_at_whitespace_or_end_of_title():
     assert wf.observed_sessions([_agent(title="role:coder\trepo")])[0]["role"] == "coder"
     for title in ("role:coder-x", "role:reviewer_2", "role:worker.v2", "role:coders"):
         assert wf.observed_sessions([_agent(title=title)])[0]["role"] == "unknown", title
+
+
+# ---------------- review round 4: bounds fail closed ----------------
+
+def _names(n, prefix="coder"):
+    return ",".join(f"{prefix}{i:03d}" for i in range(n))
+
+
+def test_long_coder_list_with_the_reviewer_in_the_tail_fails_closed():
+    a = _gate(["waiting-review", f"coder:{_names(30)}", "reviewer:coder029", "approver:app-a"])
+    assert a["review_gate"] == "missing" and "too_many_names" in a["gate_missing"]
+
+
+def test_long_reviewer_and_approver_lists_fail_closed():
+    a = _gate(["waiting-review", f"reviewer:{_names(30, 'rev')}", "approver:app-a"])
+    assert a["review_gate"] == "missing" and a["gate_missing"] == ["too_many_names"]
+    a = _gate(["waiting-review", "reviewer:rev-a", f"approver:{_names(30, 'app')}"])
+    assert a["review_gate"] == "missing" and a["gate_missing"] == ["too_many_names"]
+
+
+def test_names_are_split_before_any_cap_and_the_limit_is_exact():
+    ok = _gate(["waiting-review", f"coder:{_names(wf.MAX_NAMES, 'c')}", "reviewer:rev-a", "approver:app-a"])
+    assert wf.MAX_NAMES == 20 and ok["review_gate"] == "named"
+    assert len(ok["coder"].split(", ")) == 20
+    over = _gate(["waiting-review", f"coder:{_names(21, 'c')}", "reviewer:rev-a", "approver:app-a"])
+    assert over["gate_missing"] == ["too_many_names"]
+    # a long value with its names well inside the limit is still read in full
+    spread = _gate(["waiting-review", "coder:" + ",".join("n" * 40 + str(i) for i in range(10)),
+                    "reviewer:" + "n" * 40 + "9", "approver:app-a"])
+    assert spread["gate_missing"] == ["independent_reviewer"]
+
+
+def test_a_name_over_the_length_cap_fails_closed():
+    a = _gate(["waiting-review", "coder:" + "x" * 300, "reviewer:rev-a", "approver:app-a"])
+    assert a["review_gate"] == "missing" and a["gate_missing"] == ["too_many_names"]
+
+
+def test_overflow_does_not_mark_a_bead_that_needs_no_review():
+    a = _gate(["bug", f"coder:{_names(30)}"])
+    assert a["review_gate"] == "no_review_marked" and a["gate_missing"] == []

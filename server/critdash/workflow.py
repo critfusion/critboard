@@ -25,6 +25,8 @@ from .infrastructure import MAX_TEXT_CHARS, UNKNOWN
 DEFAULT_TTL_S = 1800
 MIN_TTL_S, MAX_TTL_S = 60, 86400
 MAX_OWNER_REPORTS = 50
+MAX_NAMES = 20       # per label kind (coder / reviewer / approver / reviewed)
+MAX_NAME_CHARS = 200
 ROLES = ("orchestrator", "coder", "reviewer", "worker")
 BASES = ("provider-observed", "owner-reported", "unknown")
 # Family prefix of a model id -> provider. Only what the id itself states.
@@ -151,17 +153,23 @@ def observed_sessions(agents) -> list[dict]:
 # ---------------- assignments ----------------
 
 def _bead_people(labels) -> dict:
-    out: dict = {"coders": [], "reviewers": [], "approvers": [], "reviewed_refs": []}
+    # `overflow` lists the kinds that lost a name to a bound. A dropped name
+    # could be the one that breaks independence, so the gate fails closed.
+    out: dict = {"coders": [], "reviewers": [], "approvers": [], "reviewed_refs": [], "overflow": set()}
     for label in labels if isinstance(labels, list) else []:
         name, sep, value = str(label).partition(":")
         field = _BEAD_LABEL_FIELDS.get(name.strip().lower())
-        value = value.strip()[:200]
+        value = value.strip()
         if not field or not sep or not value:
             continue
         field = "coders" if field == "coder" else field
-        for part in (v.strip() for v in value.split(",")):
-            if part and part not in out[field]:
-                out[field].append(part)
+        for part in (v.strip() for v in value.split(",")):  # split first, then bound each name
+            if not part or part in out[field]:
+                continue
+            if len(part) > MAX_NAME_CHARS or len(out[field]) >= MAX_NAMES:
+                out["overflow"].add(field)
+                continue
+            out[field].append(part)
     return out
 
 
@@ -193,6 +201,8 @@ def assignments(beads, agents) -> list[dict]:
         coders = {n.lower() for n in (*people["coders"], assignee) if n}
         missing: list[str] = []
         if needs:
+            if people["overflow"] & {"coders", "reviewers", "approvers"}:
+                missing.append("too_many_names")
             if not coders:
                 missing.append("coder_unknown")
             if not people["reviewers"]:

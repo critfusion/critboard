@@ -24,6 +24,7 @@ export const GATE_MISSING_WORDS = {
   independent_reviewer: "reviewer is the coder",
   independent_approver: "approver is the coder (self-approval)",
   coder_unknown: "coder unknown",
+  too_many_names: "too many or too long names in a label (checks cannot be completed)",
 };
 
 export function gateMissingText(missing) {

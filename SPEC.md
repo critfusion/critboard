@@ -328,7 +328,10 @@ request, so a change needs no restart.
     `independent_reviewer` (a reviewer is the coder), `independent_approver` (an approver is the coder:
     self-approval is not allowed) or `coder_unknown`). The coder names are every `coder:` label value (several labels and comma lists all count) and the
     trimmed assignee (blank means none); a reviewer or approver equal to either is not independent. Label values may be comma
-    separated (`reviewer:a,b`) and each name is checked. No coder name at all is `coder_unknown`. Missing items sort first. The view treats
+    separated (`reviewer:a,b`) and each name is checked. No coder name at all is `coder_unknown`.
+    Bounds: each label value is split first; a name is at most 200 characters and each of coder, reviewer,
+    approver and reviewed keeps at most 20 names. A dropped name (too many, or too long) adds
+    `too_many_names` to `gate_missing` on a bead that needs review: the gate fails closed. Missing items sort first. The view treats
     any unknown gate value as missing.
   - `availability`: `{ttl_s, rows[], note}`. Each row: `provider, basis, state, values, observed_at,
     expires_at, expired, detail`. `expires_at = observed_at + ttl_s`. `basis` is `provider-observed` (the

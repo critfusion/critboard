@@ -255,6 +255,7 @@ test("an observed row with no readable expires_at is treated as expired", () => 
 
 test("the new gate parts are named in words", () => {
   assert.equal(gateMissingText(["independent_approver", "coder_unknown"]), "approver is the coder (self-approval); coder unknown");
+  assert.match(gateMissingText(["too_many_names"]), /^too many or too long names/);
 });
 
 test("reading text is only built from numbers", () => {
