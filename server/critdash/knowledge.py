@@ -369,16 +369,25 @@ class BookStackAdapter:
         base, _ = self._settings()
         cfg = module_config(self._sources, "infrastructure") or {}
         slug, stale_days = cfg_book_slug(cfg), stale_after_days(cfg)
-        found = await self._get("/api/books", {"filter[slug]": slug, "count": 5}, record_ok=False)
-        book = next((b for b in found.get("data") or []
-                     if isinstance(b, dict) and b.get("slug") == slug and _is_int(b.get("id"))), None)
-        if book is None:
-            self._record_ok()  # BookStack answered; the book is just missing
-            raise KnowledgeError("book_not_found", f"no BookStack book with slug '{slug}'")
-        listing = await self._get(
-            "/api/pages", {"filter[book_id]": book["id"], "count": INFRA_MAX_PAGES, "sort": "+name"},
-            record_ok=False,
-        )
+        try:
+            found = await self._get("/api/books", {"filter[slug]": slug, "count": 5}, record_ok=False)
+            book = next((b for b in found.get("data") or []
+                         if isinstance(b, dict) and b.get("slug") == slug and _is_int(b.get("id"))), None)
+            if book is None:
+                raise KnowledgeError("not_found", "no such book")
+            listing = await self._get(
+                "/api/pages", {"filter[book_id]": book["id"], "count": INFRA_MAX_PAGES, "sort": "+name"},
+                record_ok=False,
+            )
+        except KnowledgeError as err:
+            if err.code != "not_found":
+                raise
+            # BookStack answered, but the book (or its listing) is not there:
+            # a setup problem, kept in status.error, not an outage.
+            self._record_ok()
+            missing = KnowledgeError("book_not_found", f"no BookStack book with slug '{slug}'")
+            self.last_error = {"code": missing.code, "message": missing.message, "http_status": None}
+            raise missing from None
         ids = [p["id"] for p in listing.get("data") or [] if isinstance(p, dict) and _is_int(p.get("id"))]
         total = listing.get("total") if _is_int(listing.get("total")) else len(ids)
         sem = asyncio.Semaphore(INFRA_CONCURRENCY)
@@ -393,7 +402,10 @@ class BookStackAdapter:
                     raise
             # Parse now and drop the raw page: only the small record is kept.
             try:
-                return parse_record(page, base_url=base, book_slug=slug, now=now, stale_days=stale_days)
+                rec = await asyncio.to_thread(
+                    parse_record, page, base_url=base, book_slug=slug, now=now, stale_days=stale_days)
+                rec["id"] = page_id  # the listing's int, not whatever the page body claims
+                return rec
             except Exception:  # noqa: BLE001 - one odd page must not take the view down
                 logger.warning("infrastructure page %s could not be parsed", page_id)
                 return degraded_record(page_id, page.get("name"))

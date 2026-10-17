@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from datetime import UTC, datetime
 
 import httpx
@@ -243,6 +244,22 @@ def test_conflicting_table_and_tag_status_worse_wins_with_a_visible_note(table, 
     assert merge_status(table, tag) == (winner, f"status conflict: table {table}, tag {tag}")
 
 
+def test_repeated_status_tags_merge_worse_wins_with_a_conflict_note():
+    r = _record(markdown="no table", tags=[{"name": "status", "value": "current"}, {"name": "status", "value": "contradicted"}])
+    assert r["status"] == "contradicted"
+    assert r["status_conflict"] == "status conflict: tag current, tag contradicted"
+    r = _record(tags=[{"name": "status", "value": "stale"}, {"name": "status", "value": "needs-verification"}])
+    assert r["status"] == "stale" and "table current" in r["status_conflict"]
+    assert "tag stale" in r["status_conflict"] and "tag needs-verification" in r["status_conflict"]
+
+
+def test_repeated_identical_or_unreadable_status_tags_are_no_conflict():
+    r = _record(markdown="no table", tags=[{"name": "status", "value": "stale"}, {"name": "status", "value": "Stale"},
+                                          {"name": "status", "value": "sparkly"}])
+    assert r["status"] == "stale" and r["status_conflict"] is None
+    assert merge_status("unknown", "current", "contradicted")[0] == "contradicted"
+
+
 def test_agreeing_or_absent_statuses_have_no_conflict_note():
     assert merge_status("current", "current") == ("current", None)
     assert merge_status("unknown", "stale") == ("stale", None)
@@ -287,6 +304,11 @@ def test_only_http_urls_and_wiki_paths_become_links():
         "source"]["repo_href"] == "https://git.example.com/example-org/repo"
 
 
+def test_updated_at_and_slug_are_bounded():
+    r = _record(updated_at="2026-10-01T00:00:00Z" + "9" * 900, slug="s" * 900)
+    assert len(r["updated_at"]) == 500 and len(r["url"].rsplit("/page/", 1)[1]) == 500
+
+
 def test_page_slug_is_quoted_in_the_url():
     assert _record(slug="a b/../c")["url"].endswith("/page/a%20b%2F..%2Fc")
 
@@ -307,6 +329,8 @@ class FakeWiki:
         self.big_page = None
         self.gone: set[int] = set()
         self.fail_page = None
+        self.books_404 = False
+        self.listing_404 = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -315,6 +339,10 @@ class FakeWiki:
         if self.mode == "500":
             return httpx.Response(500, json={})
         path, q = request.url.path, dict(request.url.params)
+        if path == "/api/books" and self.books_404:
+            return httpx.Response(404, json={})
+        if path == "/api/pages" and self.listing_404:
+            return httpx.Response(404, json={})
         if path == "/api/books":
             hit = [self.book] if self.book and q.get("filter[slug]") == self.book["slug"] else []
             return httpx.Response(200, json={"data": hit, "total": len(hit)})
@@ -495,6 +523,46 @@ def test_unparseable_page_becomes_a_degraded_record_not_a_500(infra, wiki, monke
     bad = next(r for r in body["records"] if r["id"] == 2)
     assert bad["status"] == "unknown" and bad["status_reason"] == "unreadable record"
     assert bad["title"] == "host-2" and bad["kind"] == "unknown"
+
+
+def test_record_id_is_the_listings_int_not_the_page_bodys(infra, wiki):
+    wiki.pages[2]["id"] = "not-an-int"
+    wiki.pages[3]["id"] = {"x": 1}
+    body = infra.get("/api/infrastructure").json()
+    assert [r["id"] for r in body["records"]] == [1, 2, 3]
+
+
+def test_records_are_parsed_off_the_event_loop(infra, monkeypatch):
+    real, on_loop = knowledge_mod.parse_record, []
+
+    def spy(page, **kw):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:  # no loop in this thread: a worker thread
+            on_loop.append(False)
+        return real(page, **kw)
+
+    monkeypatch.setattr(knowledge_mod, "parse_record", spy)
+    assert infra.get("/api/infrastructure").json()["ok"] is True
+    assert on_loop == [False] * 3
+
+
+@pytest.mark.parametrize("flag", ["books_404", "listing_404"])
+def test_404_on_book_lookup_or_listing_is_book_not_found_with_status(infra, wiki, flag):
+    setattr(wiki, flag, True)
+    resp = infra.get("/api/infrastructure")
+    body = resp.json()
+    assert resp.status_code == 503 and body["ok"] is False
+    assert body["error"]["code"] == "book_not_found"
+    assert body["status"]["error"]["code"] == "book_not_found" and body["status"]["down_since"] is None
+    setattr(wiki, flag, False)
+    assert infra.get("/api/infrastructure").json()["status"]["error"] is None
+
+
+def test_missing_book_is_recorded_in_status_error(infra, wiki):
+    wiki.book = None
+    assert infra.get("/api/infrastructure").json()["status"]["error"]["code"] == "book_not_found"
 
 
 def test_raw_pages_are_not_kept_after_parsing(infra, wiki):

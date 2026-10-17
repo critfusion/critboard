@@ -96,6 +96,7 @@ def parse_tags(tags) -> dict:
     out: dict = {name: UNKNOWN for name in _TAG_SCALARS}
     for name in _TAG_LISTS.values():
         out[name] = []
+    out["statuses"] = []  # every readable `status` tag, in page order
     for tag in (tags if isinstance(tags, list) else [])[:MAX_TAGS]:
         if not isinstance(tag, dict):
             continue
@@ -103,6 +104,8 @@ def parse_tags(tags) -> dict:
         value = _clean(str(tag.get("value") or ""))
         if value == UNKNOWN:
             continue
+        if name == "status":
+            out["statuses"].append(value)
         if name in _TAG_SCALARS and out[name] == UNKNOWN:
             out[name] = value
         elif name in _TAG_LISTS and value not in out[_TAG_LISTS[name]]:
@@ -140,15 +143,22 @@ def _normal_status(raw: str) -> str:
     return s if s in STATUSES else UNKNOWN
 
 
-def merge_status(table: str, tag: str) -> tuple[str, str | None]:
-    """Declared status from the table and the `status` tag (both raw text).
-    Table absent -> the tag. Both present and different -> the worse one,
-    plus a visible conflict note."""
-    t, g = _normal_status(table), _normal_status(tag)
-    if t == UNKNOWN or g == UNKNOWN or t == g:
-        return (g if t == UNKNOWN else t), None
-    worse = min(t, g, key=_STATUS_WORSE_FIRST.index)
-    return worse, f"status conflict: table {t}, tag {g}"
+def merge_status(table: str, *tags: str) -> tuple[str, str | None]:
+    """Declared status from the table and every `status` tag (raw text).
+    Unreadable ones are ignored. One distinct readable value -> that value.
+    Several that differ -> the worst, plus a visible conflict note."""
+    found: list[tuple[str, str]] = []
+    for source, raw in (("table", table), *(("tag", t) for t in tags)):
+        value = _normal_status(raw)
+        if value != UNKNOWN and (source, value) not in found:
+            found.append((source, value))
+    values = {v for _, v in found}
+    if not values:
+        return UNKNOWN, None
+    if len(values) == 1:
+        return found[0][1], None
+    worst = min(values, key=_STATUS_WORSE_FIRST.index)
+    return worst, "status conflict: " + ", ".join(f"{src} {val}" for src, val in found)
 
 
 def compute_status(declared: str, live_check: str, updated_at: str | None,
@@ -202,13 +212,13 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
     """One BookStack page (GET /api/pages/{id} body) -> one record."""
     prov = parse_provenance_table(str(page.get("markdown") or ""))
     tags = parse_tags(page.get("tags"))
-    updated_at = page.get("updated_at") if isinstance(page.get("updated_at"), str) else None
-    declared, conflict = merge_status(prov["status"], tags["status"])
+    updated_at = page["updated_at"][:MAX_TEXT_CHARS] if isinstance(page.get("updated_at"), str) else None
+    declared, conflict = merge_status(prov["status"], *tags["statuses"])
     state = compute_status(declared, prov["live_check"], updated_at, now, stale_days)
     state["status_conflict"] = conflict
     klass = prov["class"] if prov["class"] != UNKNOWN else tags["class"]
-    slug = page.get("slug")
-    url = (f"{base_url}/books/{quote(book_slug, safe='')}/page/{quote(str(slug), safe='')}"
+    slug = str(page["slug"])[:MAX_TEXT_CHARS] if page.get("slug") else None
+    url = (f"{base_url}/books/{quote(book_slug, safe='')}/page/{quote(slug, safe='')}"
            if slug else None)
     updated_by = page.get("updated_by")
     repo = prov["source_repo"]

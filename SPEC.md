@@ -288,8 +288,8 @@ request, so a change needs no restart.
     `GET /api/pages/{id}` per page (5 at a time). At most 50 pages; `truncated` is true and `total`
     says how many exist when there are more. One overall deadline of 2 x `timeout_s` covers the whole
     read. Any failure (outage, auth, oversize page) fails the whole call: a partial list is never returned
-    as the inventory. A page deleted between the listing and its read is skipped. No book with the slug ->
-    `book_not_found` (503, setup problem, not an outage). The shared `status` block records a success only
+    as the inventory. A page deleted between the listing and its read is skipped. No book with the slug, or a 404 on the book lookup or page listing ->
+    `book_not_found` (503, setup problem, not an outage; also kept in `status.error` until the next good read). The shared `status` block records a success only
     when the whole read worked: a failed page is not cleared by a later page that answered. Nothing is cached.
   - Records are sorted by `kind`, then title. `kind` `unknown` sorts after the named kinds.
 
@@ -310,15 +310,16 @@ and the view shows `unknown`). The server never guesses a value.
   `related` is text: it names other assets, services or repos.
 - Bounds: each table cell, tag value, title and editor name is cut at 500 characters; only the first 50
   tags of a page are read. A page that cannot be parsed becomes a record with status `unknown` and reason
-  `unreadable record`; it never fails the read. Each page is parsed as it arrives and the raw page is dropped.
+  `unreadable record`; it never fails the read. Each page is parsed (in a worker thread) as it arrives and the raw page is dropped. `id` is the listing's integer;
+  `updated_at` and the page slug are cut at 500 characters too.
 - Also returned: `title`, `url` (`<base_url>/books/<book_slug>/page/<page slug>`), `updated_at`,
   `updated_by` (name).
 - `status` is one of `current`, `needs-verification`, `contradicted`, `stale`, `unknown`:
   - The table `Status` is read without regard to case; spaces and `_` count as `-`. Other text -> `unknown`.
-  - The `status` tag is read the same way. If the table has no readable status, the tag is used. If both are
-    readable and differ, the worse one wins (`contradicted` > `stale` > `needs-verification` > `unknown` >
-    `current`) and the record carries `status_conflict: "status conflict: table X, tag Y"`, which the view
-    shows. `Class` falls back to the `class` tag the same way (table first).
+  - The `status` tag is read the same way, and may repeat. All readable values (table and every tag) are
+    merged. If only the tags are readable, they are used. If the readable values differ, the worst one wins (`contradicted` > `stale` > `needs-verification` > `unknown` >
+    `current`) and the record carries `status_conflict: "status conflict: table X, tag Y"` (one `tag Z` per differing
+    value), which the view shows. `Class` falls back to the `class` tag the same way (table first).
   - Age counts from the `Live check` date (`verified_basis: "live_check"`). With no readable date
     (absent, `unknown`, or text that does not start with `YYYY-MM-DD`, or a date more than one day
     ahead) it counts from the page's `updated_at` (`verified_basis: "page_updated"`); with neither,
