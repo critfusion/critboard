@@ -1869,6 +1869,7 @@ table.dtable th .sort-indicator {
 .infra-rec-title { margin: 0; font-size: var(--font-size-md, 1em); overflow-wrap: anywhere; }
 .infra-rec a { color: var(--color-accent-cyan); }
 .infra-reason { margin: 6px 0 0; font-size: var(--font-size-sm); color: var(--color-accent-amber); }
+.infra-conflict { font-weight: 700; }
 .infra-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 8px 0 0; font-size: var(--font-size-sm); }
 .infra-fields dt { color: var(--color-text-dim); }
 .infra-fields dd { margin: 0; overflow-wrap: anywhere; }

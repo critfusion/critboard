@@ -284,12 +284,13 @@ request, so a change needs no restart.
     "stale_after_days","fetched_at","status":{...}}`. Same gate as `/api/knowledge/*` (module off -> 404;
     foreign Host or Origin -> 403 `host_not_allowed` / `origin_not_allowed`), same `ok:false` error shape
     and `status` block (`ok`, `last_success`, `down_since`, `error`). No token or token path in any body.
-  - Reads: `GET /api/books?filter[slug]=`, `GET /api/pages?filter[book_id]=&count=50`, then
+  - Reads: `GET /api/books?filter[slug]=`, `GET /api/pages?filter[book_id]=&count=50&sort=+name`, then
     `GET /api/pages/{id}` per page (5 at a time). At most 50 pages; `truncated` is true and `total`
     says how many exist when there are more. One overall deadline of 2 x `timeout_s` covers the whole
     read. Any failure (outage, auth, oversize page) fails the whole call: a partial list is never returned
     as the inventory. A page deleted between the listing and its read is skipped. No book with the slug ->
-    `book_not_found` (503, setup problem, not an outage). Nothing is cached.
+    `book_not_found` (503, setup problem, not an outage). The shared `status` block records a success only
+    when the whole read worked: a failed page is not cleared by a later page that answered. Nothing is cached.
   - Records are sorted by `kind`, then title. `kind` `unknown` sorts after the named kinds.
 
 #### Infrastructure record contract
@@ -299,17 +300,25 @@ and the view shows `unknown`). The server never guesses a value.
 
 - Provenance table: the first table on the page, with header `| Field | Value |`. Rows (field names
   match without regard to case): `Source repo`, `Source path`, `Source git SHA`, `Live check`,
-  `Class`, `Status`. No such table, a missing row, an empty cell, or `-`, `n/a`, `none`, `tbd`, `?`
+  `Class`, `Status`. A page with no `markdown` (saved in BookStack's WYSIWYG editor) has no readable
+  table: its provenance shows as `unknown`. No such table, a missing row, an empty cell, or `-`, `n/a`, `none`, `tbd`, `?`
   -> `unknown`. A row with fewer than two cells is skipped.
 - Tags (name/value, name matches without regard to case): `kind` (host, service, repo, ...), `owner`,
-  `environment`, `purpose` (first non-empty wins), and `runbook`, `backup`, `related` (may repeat;
+  `environment`, `purpose`, `status`, `class` (first non-empty wins), and `runbook`, `backup`, `related` (may repeat;
   duplicates collapse). A `runbook` or `backup` value is a link only if it is an `http(s)` URL or a
   path that starts with a single `/` (joined to the wiki base_url). Anything else is shown as text.
   `related` is text: it names other assets, services or repos.
+- Bounds: each table cell, tag value, title and editor name is cut at 500 characters; only the first 50
+  tags of a page are read. A page that cannot be parsed becomes a record with status `unknown` and reason
+  `unreadable record`; it never fails the read. Each page is parsed as it arrives and the raw page is dropped.
 - Also returned: `title`, `url` (`<base_url>/books/<book_slug>/page/<page slug>`), `updated_at`,
   `updated_by` (name).
 - `status` is one of `current`, `needs-verification`, `contradicted`, `stale`, `unknown`:
   - The table `Status` is read without regard to case; spaces and `_` count as `-`. Other text -> `unknown`.
+  - The `status` tag is read the same way. If the table has no readable status, the tag is used. If both are
+    readable and differ, the worse one wins (`contradicted` > `stale` > `needs-verification` > `unknown` >
+    `current`) and the record carries `status_conflict: "status conflict: table X, tag Y"`, which the view
+    shows. `Class` falls back to the `class` tag the same way (table first).
   - Age counts from the `Live check` date (`verified_basis: "live_check"`). With no readable date
     (absent, `unknown`, or text that does not start with `YYYY-MM-DD`, or a date more than one day
     ahead) it counts from the page's `updated_at` (`verified_basis: "page_updated"`); with neither,

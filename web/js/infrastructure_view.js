@@ -78,6 +78,7 @@ function card(r) {
   return el("article", { class: `infra-rec infra-st-${key}` }, [
     el("header", { class: "infra-rec-head" }, [el("h4", { class: "infra-rec-title" }, title), badge]),
     r.status_reason ? el("p", { class: "infra-reason" }, r.status_reason) : null,
+    r.status_conflict ? el("p", { class: "infra-reason infra-conflict" }, r.status_conflict) : null,
     el("dl", { class: "infra-fields" }, [
       ...row("Purpose", textOrUnknown(r.purpose)),
       ...row("Owner", textOrUnknown(r.owner)),
@@ -113,8 +114,8 @@ export function mountInfrastructure(root) {
   let lastGood = null; // body of the last successful fetch
 
   function render(body) {
-    groups.replaceChildren(...groupByKind(body.records).map(({ kind, records }) => {
-      const id = `infra-kind-${kind.replace(/[^a-z0-9]+/gi, "-")}`;
+    groups.replaceChildren(...groupByKind(body.records).map(({ kind, records }, i) => {
+      const id = `infra-kind-${i}`;
       const h = el("h3", { class: "infra-kind", id }, `${kind} (${records.length})`);
       const sec = el("section", { class: "infra-group", "aria-labelledby": id }, [h, el("div", { class: "infra-cards" }, records.map(card))]);
       return sec;

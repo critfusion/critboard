@@ -21,6 +21,7 @@ from critdash.infrastructure import (
     parse_record,
     parse_tags,
     parse_when,
+    merge_status,
 )
 
 NOW = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
@@ -116,6 +117,28 @@ def test_missing_tags_are_unknown_and_lists_empty():
     assert tags["runbooks"] == tags["backups"] == tags["related"] == []
 
 
+def test_non_list_tags_are_no_tags():
+    for junk in (5, "x", {"name": "kind"}, None, True):
+        tags = parse_tags(junk)
+        assert tags["kind"] == "unknown" and tags["related"] == []
+    assert _record(tags=5)["kind"] == "unknown"
+
+
+def test_tag_values_and_tag_count_are_bounded():
+    long = "x" * 900
+    tags = parse_tags([{"name": "purpose", "value": long}] + [{"name": "related", "value": f"r{i}"} for i in range(80)])
+    assert len(tags["purpose"]) == 500
+    assert len(tags["related"]) == 49  # only the first 50 tags of the page are read
+    late = parse_tags([{"name": "x", "value": "1"}] * 50 + [{"name": "owner", "value": "late"}])
+    assert late["owner"] == "unknown"
+
+
+def test_table_cells_title_and_editor_are_bounded():
+    md = "| Field | Value |\n|---|---|\n| Source repo | " + "y" * 900 + " |\n"
+    r = _record(markdown=md, name="t" * 900, updated_by={"name": "e" * 900})
+    assert len(r["source"]["repo"]) == 500 and len(r["title"]) == 500 and len(r["updated_by"]) == 500
+
+
 def test_duplicate_repeats_collapse_and_scalar_first_wins():
     tags = parse_tags([
         {"name": "Kind", "value": "host"}, {"name": "kind", "value": "service"},
@@ -130,7 +153,8 @@ def test_parse_when_forms():
     assert parse_when("2026-10-01", NOW) == datetime(2026, 10, 1, tzinfo=UTC)
     assert parse_when("2026-10-01T10:00:00Z", NOW) == datetime(2026, 10, 1, 10, tzinfo=UTC)
     assert parse_when("2026-10-01 (checked by hand)", NOW) == datetime(2026, 10, 1, tzinfo=UTC)
-    for bad in ("never", "", None, "2026-02-30", "10/01/2026", "2027-06-01"):
+    for bad in ("never", "", None, "2026-02-30", "10/01/2026", "2027-06-01",
+                "0001-01-01T00:00:00+05:00", "9999-12-31T23:00:00-05:00"):
         assert parse_when(bad, NOW) is None, bad
 
 
@@ -192,6 +216,46 @@ def test_unrecognised_or_missing_status_is_unknown_and_no_dates_stay_unknown():
     assert _status(declared="Needs_Verification")["status"] == "needs-verification"
 
 
+# ---------------- status and class tags ----------------
+
+def test_status_tag_is_used_when_the_table_has_none():
+    md = "| Field | Value |\n|---|---|\n| Live check | 2026-10-10 |\n"
+    r = _record(markdown=md, tags=[{"name": "status", "value": "needs-verification"}])
+    assert r["status"] == "needs-verification" and r["status_conflict"] is None
+    r = _record(markdown="no table", tags=[{"name": "status", "value": "contradicted"}])
+    assert r["status"] == "contradicted"
+
+
+def test_class_tag_fills_in_when_the_table_has_no_class():
+    r = _record(markdown="no table", tags=[{"name": "class", "value": "CK"}])
+    assert r["source"]["class"] == "CK"
+    assert _record(tags=[{"name": "class", "value": "CK"}])["source"]["class"] == "host"  # table wins
+
+
+@pytest.mark.parametrize("table,tag,winner", [
+    ("current", "needs-verification", "needs-verification"),
+    ("needs-verification", "current", "needs-verification"),
+    ("current", "contradicted", "contradicted"),
+    ("contradicted", "stale", "contradicted"),
+    ("stale", "needs-verification", "stale"),
+])
+def test_conflicting_table_and_tag_status_worse_wins_with_a_visible_note(table, tag, winner):
+    assert merge_status(table, tag) == (winner, f"status conflict: table {table}, tag {tag}")
+
+
+def test_agreeing_or_absent_statuses_have_no_conflict_note():
+    assert merge_status("current", "current") == ("current", None)
+    assert merge_status("unknown", "stale") == ("stale", None)
+    assert merge_status("stale", "unknown") == ("stale", None)
+    assert merge_status("sparkly", "also-junk") == ("unknown", None)
+
+
+def test_conflict_note_reaches_the_record_and_current_is_not_shown_when_a_tag_disagrees():
+    r = _record(tags=[{"name": "status", "value": "needs-verification"}])  # table says current, Live check fresh
+    assert r["status"] == "needs-verification"
+    assert r["status_conflict"] == "status conflict: table current, tag needs-verification"
+
+
 # ---------------- whole record ----------------
 
 def test_record_fields():
@@ -242,6 +306,7 @@ class FakeWiki:
         self.book = SYN_INFRA_BOOK
         self.big_page = None
         self.gone: set[int] = set()
+        self.fail_page = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -261,6 +326,8 @@ class FakeWiki:
             pid = int(path.rsplit("/", 1)[1])
             if pid in self.gone:
                 return httpx.Response(404, json={})
+            if self.fail_page == pid:
+                return httpx.Response(500, json={})
             if self.big_page == pid:
                 return httpx.Response(200, content=b'{"markdown": "' + b"x" * (knowledge_mod.MAX_PAGE_BYTES + 10) + b'"}')
             return httpx.Response(200, json=self.pages[pid])
@@ -359,6 +426,7 @@ def test_oversize_page_fails_the_whole_read(infra, wiki):
     body = resp.json()
     assert body["ok"] is False and body["error"]["code"] == "upstream_too_large"
     assert "records" not in body
+    assert body["status"]["ok"] is False and body["status"]["down_since"]
 
 
 def test_outage_reports_down_since_and_last_success_and_no_records(infra, wiki):
@@ -377,7 +445,61 @@ def test_outage_reports_down_since_and_last_success_and_no_records(infra, wiki):
 def test_upstream_500_is_reported(infra, wiki):
     wiki.mode = "500"
     resp = infra.get("/api/infrastructure")
-    assert resp.status_code == 502 and resp.json()["error"]["code"] == "upstream_error"
+    body = resp.json()
+    assert resp.status_code == 502 and body["error"]["code"] == "upstream_error"
+    assert body["status"]["ok"] is False and body["status"]["down_since"]
+
+
+def test_one_failing_page_among_several_is_not_wiped_from_status(tmp_path, monkeypatch):
+    wiki = FakeWiki(n=8)
+    wiki.fail_page = 3
+    client, _ = _make_client(tmp_path, monkeypatch, _infra_modules)
+    client.app.state.knowledge._transport = httpx.MockTransport(wiki)
+    for _ in range(3):  # concurrent order varies; the later pages that answer must not clear it
+        resp = client.get("/api/infrastructure")
+        body = resp.json()
+        assert resp.status_code == 502 and body["ok"] is False and "records" not in body
+        assert body["status"]["ok"] is False and body["status"]["down_since"]
+        assert body["status"]["error"]["code"] == "upstream_error"
+    wiki.fail_page = None
+    assert client.get("/api/infrastructure").json()["status"]["down_since"] is None
+
+
+def test_deleted_page_does_not_clear_an_earlier_failure(tmp_path, monkeypatch):
+    wiki = FakeWiki(n=4)
+    wiki.fail_page, wiki.gone = 1, {2, 3, 4}
+    client, _ = _make_client(tmp_path, monkeypatch, _infra_modules)
+    client.app.state.knowledge._transport = httpx.MockTransport(wiki)
+    body = client.get("/api/infrastructure").json()
+    assert body["ok"] is False and body["status"]["ok"] is False and body["status"]["down_since"]
+
+
+def test_pages_are_listed_with_a_stable_sort(infra, wiki):
+    infra.get("/api/infrastructure")
+    listing = [r for r in wiki.requests if r.url.path == "/api/pages"]
+    assert len(listing) == 1 and dict(listing[0].url.params)["sort"] == "+name"
+
+
+def test_unparseable_page_becomes_a_degraded_record_not_a_500(infra, wiki, monkeypatch):
+    real = knowledge_mod.parse_record
+
+    def flaky(page, **kw):
+        if page["id"] == 2:
+            raise RuntimeError("synthetic parser bug")
+        return real(page, **kw)
+
+    monkeypatch.setattr(knowledge_mod, "parse_record", flaky)
+    resp = infra.get("/api/infrastructure")
+    body = resp.json()
+    assert resp.status_code == 200 and body["ok"] is True and len(body["records"]) == 3
+    bad = next(r for r in body["records"] if r["id"] == 2)
+    assert bad["status"] == "unknown" and bad["status_reason"] == "unreadable record"
+    assert bad["title"] == "host-2" and bad["kind"] == "unknown"
+
+
+def test_raw_pages_are_not_kept_after_parsing(infra, wiki):
+    body = infra.get("/api/infrastructure").json()
+    assert "markdown" not in json.dumps(body)
 
 
 def test_whole_read_shares_one_overall_deadline(tmp_path, monkeypatch):

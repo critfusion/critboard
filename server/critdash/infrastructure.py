@@ -30,7 +30,11 @@ _TABLE_FIELDS = {
     "class": "class",
     "status": "status",
 }
-_TAG_SCALARS = ("kind", "owner", "environment", "purpose")
+MAX_TEXT_CHARS = 500
+MAX_TAGS = 50
+# Worse first. When the table and a tag disagree, the earlier one wins.
+_STATUS_WORSE_FIRST = ("contradicted", "stale", "needs-verification", "unknown", "current")
+_TAG_SCALARS = ("kind", "owner", "environment", "purpose", "status", "class")
 _TAG_LISTS = {"runbook": "runbooks", "backup": "backups", "related": "related"}
 
 
@@ -48,7 +52,7 @@ def book_slug(cfg: dict) -> str:
 
 def _clean(value: str) -> str:
     """Cell/tag text -> value, or UNKNOWN when it says nothing."""
-    text = (value or "").strip().strip("`*").strip()
+    text = (value or "").strip().strip("`*").strip()[:MAX_TEXT_CHARS]
     return UNKNOWN if text.lower() in _EMPTY_VALUES else text
 
 
@@ -92,7 +96,7 @@ def parse_tags(tags) -> dict:
     out: dict = {name: UNKNOWN for name in _TAG_SCALARS}
     for name in _TAG_LISTS.values():
         out[name] = []
-    for tag in tags or []:
+    for tag in (tags if isinstance(tags, list) else [])[:MAX_TAGS]:
         if not isinstance(tag, dict):
             continue
         name = str(tag.get("name") or "").strip().lower()
@@ -120,7 +124,10 @@ def parse_when(text: str | None, now: datetime) -> datetime | None:
             when = datetime.fromisoformat(m.group(1))
         except ValueError:
             return None
-    when = when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+    try:
+        when = when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+    except OverflowError:  # 0001-01-01 or 9999-12-31 with an offset
+        return None
     return None if when > now + timedelta(days=1) else when
 
 
@@ -131,6 +138,17 @@ def _iso(when: datetime) -> str:
 def _normal_status(raw: str) -> str:
     s = re.sub(r"[\s_]+", "-", raw.strip().lower())
     return s if s in STATUSES else UNKNOWN
+
+
+def merge_status(table: str, tag: str) -> tuple[str, str | None]:
+    """Declared status from the table and the `status` tag (both raw text).
+    Table absent -> the tag. Both present and different -> the worse one,
+    plus a visible conflict note."""
+    t, g = _normal_status(table), _normal_status(tag)
+    if t == UNKNOWN or g == UNKNOWN or t == g:
+        return (g if t == UNKNOWN else t), None
+    worse = min(t, g, key=_STATUS_WORSE_FIRST.index)
+    return worse, f"status conflict: table {t}, tag {g}"
 
 
 def compute_status(declared: str, live_check: str, updated_at: str | None,
@@ -185,7 +203,10 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
     prov = parse_provenance_table(str(page.get("markdown") or ""))
     tags = parse_tags(page.get("tags"))
     updated_at = page.get("updated_at") if isinstance(page.get("updated_at"), str) else None
-    state = compute_status(prov["status"], prov["live_check"], updated_at, now, stale_days)
+    declared, conflict = merge_status(prov["status"], tags["status"])
+    state = compute_status(declared, prov["live_check"], updated_at, now, stale_days)
+    state["status_conflict"] = conflict
+    klass = prov["class"] if prov["class"] != UNKNOWN else tags["class"]
     slug = page.get("slug")
     url = (f"{base_url}/books/{quote(book_slug, safe='')}/page/{quote(str(slug), safe='')}"
            if slug else None)
@@ -193,7 +214,7 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
     repo = prov["source_repo"]
     return {
         "id": page.get("id"),
-        "title": str(page.get("name") or "") or UNKNOWN,
+        "title": str(page.get("name") or "")[:MAX_TEXT_CHARS] or UNKNOWN,
         "url": url,
         "kind": tags["kind"],
         "owner": tags["owner"],
@@ -207,11 +228,26 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
             "repo_href": repo if re.match(r"https?://[^\s]+$", repo, re.I) else None,
             "path": prov["source_path"],
             "git_sha": prov["source_git_sha"],
-            "class": prov["class"],
+            "class": klass,
             "live_check": prov["live_check"],
-            "declared_status": prov["status"],
+            "declared_status": declared,
         },
         **state,
         "updated_at": updated_at or UNKNOWN,
-        "updated_by": str(updated_by["name"]) if isinstance(updated_by, dict) and updated_by.get("name") else UNKNOWN,
+        "updated_by": str(updated_by["name"])[:MAX_TEXT_CHARS] if isinstance(updated_by, dict) and updated_by.get("name") else UNKNOWN,
+    }
+
+
+def degraded_record(page_id, name) -> dict:
+    """Stand-in for a page that could not be parsed: nothing is claimed."""
+    return {
+        "id": page_id if isinstance(page_id, int) and not isinstance(page_id, bool) else None,
+        "title": str(name or "")[:MAX_TEXT_CHARS] or UNKNOWN,
+        "url": None, "kind": UNKNOWN, "owner": UNKNOWN, "environment": UNKNOWN, "purpose": UNKNOWN,
+        "runbooks": [], "backups": [], "related": [],
+        "source": {"repo": UNKNOWN, "repo_href": None, "path": UNKNOWN, "git_sha": UNKNOWN,
+                   "class": UNKNOWN, "live_check": UNKNOWN, "declared_status": UNKNOWN},
+        "status": "unknown", "status_reason": "unreadable record", "status_conflict": None,
+        "last_verified": UNKNOWN, "verified_basis": "none", "age_from": UNKNOWN,
+        "updated_at": UNKNOWN, "updated_by": UNKNOWN,
     }
