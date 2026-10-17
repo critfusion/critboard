@@ -1891,6 +1891,28 @@ table.dtable th .sort-indicator {
 .infra-st-unknown { border-left-color: var(--color-status-idle); border-style: dashed; }
 .infra-outdated { opacity: 0.55; }
 
+/* ---- Workflow view. Four separate panels. A missing review gate is a solid
+   red badge with a thick border; stale and unknown readings are dashed. Each
+   state is a word in the badge too. ---- */
+.wf-panels { display: flex; flex-direction: column; gap: 18px; }
+.wf-panel { border: 1px solid var(--color-border-bright); border-radius: var(--radius-card); padding: 10px 12px; }
+.wf-title { margin: 0; font-size: var(--font-size-sm); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-accent-cyan); }
+.wf-sub { margin: 2px 0 10px; font-size: var(--font-size-sm); color: var(--color-text-dim); }
+.wf-notice { margin: 0 0 8px; }
+.wf-estimate { font-style: italic; }
+.wf-gate-alert { margin: 0 0 8px; font-weight: 700; color: var(--color-status-crit); }
+.wf-gate-missing { border-left: 5px solid var(--color-status-crit); }
+.wf-gate-badge-missing { color: #fff; background: var(--color-status-crit); border-color: var(--color-status-crit); }
+.wf-gate-badge-named { color: var(--color-status-warn); }
+.wf-gate-badge-no_review_marked { color: var(--color-text-dim); border-style: dashed; }
+.wf-av-stale { border-style: dashed; border-left-style: dashed; border-left-color: var(--color-status-warn); opacity: 0.8; }
+.wf-av-unknown { border-style: dashed; border-left-color: var(--color-status-idle); }
+.wf-av-fresh { border-left-color: var(--color-status-ok); }
+.wf-av-badge-stale { color: var(--color-status-warn); border-style: dashed; border-width: 2px; background: repeating-linear-gradient(135deg, transparent 0 5px, rgba(242,169,59,0.18) 5px 10px); }
+.wf-av-badge-unknown { color: var(--color-text-dim); border-style: dashed; border-width: 2px; }
+.wf-av-badge-fresh { color: var(--color-status-ok); }
+.wf-panel a:focus-visible { outline: 2px solid var(--color-accent-cyan); outline-offset: 1px; }
+
 @media (max-width: 640px) {
   .view-nav { padding: 6px 12px 0; }
   .view-nav a { padding: 10px 12px; min-height: 44px; }

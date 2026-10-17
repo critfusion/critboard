@@ -48,3 +48,16 @@ def test_views_are_set_up_only_through_setup_views():
     assert app_js.count("setupViews(") == 1
     assert "resolveInitialHash()" in app_js
     assert app_js.index("setupViews(") < app_js.index("modal.resolveInitialHash()")
+
+
+def test_workflow_view_is_mounted_by_views_js_and_has_no_placeholder_path():
+    views = (WEB / "js" / "views.js").read_text()
+    assert 'view === "workflow"' in views and "mountWorkflow" in views
+    # the placeholder branch comes after every real mount
+    assert views.index('view === "workflow"') < views.index("view-placeholder")
+
+
+def test_workflow_view_never_writes_server_text_as_html():
+    for name in ("workflow_view.js", "workflow_text.js"):
+        text = (WEB / "js" / name).read_text()
+        assert "innerHTML" not in text and "html:" not in text, name
