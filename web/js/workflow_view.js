@@ -200,6 +200,7 @@ export function mountWorkflow(root) {
       ? body.error.message
       : describeProblem(body.error, body.status, fmt, location.hostname, "Workflow") || "Workflow data could not be read";
     if (lastGood) {
+      render(lastGood); // judged against the clock now: expired numbers do not come back
       panels.classList.add("infra-outdated");
       status.textContent = `${problem}. Showing the copy fetched ${fmt(lastGood.fetched_at)}; it may be out of date.`;
     } else {
@@ -209,6 +210,7 @@ export function mountWorkflow(root) {
   }
 
   async function load() {
+    if (lastGood) render(lastGood); // a copy shown again may have expired while hidden
     refresh.disabled = true;
     status.className = "kb-status";
     status.textContent = "Loading...";

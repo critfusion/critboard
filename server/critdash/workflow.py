@@ -32,7 +32,7 @@ _MODEL_PROVIDERS = {"claude": "anthropic", "gpt": "openai", "grok": "xai", "kimi
                     "gemini": "google"}
 _BEAD_LABEL_FIELDS = {"coder": "coder", "reviewer": "reviewers", "approver": "approvers",
                       "reviewed": "reviewed_refs"}
-_ROLE_RE = re.compile(r"^\s*role:\s*(" + "|".join(ROLES) + r")\b", re.I)
+_ROLE_RE = re.compile(r"^\s*role:\s*(" + "|".join(ROLES) + r")(?=\s|$)", re.I)
 
 
 def policy_book_slug(cfg: dict) -> str:
@@ -151,19 +151,17 @@ def observed_sessions(agents) -> list[dict]:
 # ---------------- assignments ----------------
 
 def _bead_people(labels) -> dict:
-    out: dict = {"coder": None, "reviewers": [], "approvers": [], "reviewed_refs": []}
+    out: dict = {"coders": [], "reviewers": [], "approvers": [], "reviewed_refs": []}
     for label in labels if isinstance(labels, list) else []:
         name, sep, value = str(label).partition(":")
         field = _BEAD_LABEL_FIELDS.get(name.strip().lower())
         value = value.strip()[:200]
         if not field or not sep or not value:
             continue
-        if field == "coder":
-            out["coder"] = out["coder"] or value
-        else:
-            for part in (v.strip() for v in value.split(",")):
-                if part and part not in out[field]:
-                    out[field].append(part)
+        field = "coders" if field == "coder" else field
+        for part in (v.strip() for v in value.split(",")):
+            if part and part not in out[field]:
+                out[field].append(part)
     return out
 
 
@@ -188,11 +186,11 @@ def assignments(beads, agents) -> list[dict]:
             continue
         labels = b.get("labels")
         people = _bead_people(labels)
-        assignee = b.get("assignee") if isinstance(b.get("assignee"), str) and b.get("assignee") else None
-        coder = people["coder"] or assignee
+        assignee = b["assignee"].strip() or None if isinstance(b.get("assignee"), str) else None
+        coder = ", ".join(people["coders"]) or assignee
         needs = _needs_review(labels)
-        # Both names count as the coder: the `coder:` label and the assignee.
-        coders = {n.lower() for n in (people["coder"], assignee) if n}
+        # Every name counts as the coder: all `coder:` label values and the assignee.
+        coders = {n.lower() for n in (*people["coders"], assignee) if n}
         missing: list[str] = []
         if needs:
             if not coders:
@@ -210,7 +208,7 @@ def assignments(beads, agents) -> list[dict]:
             "id": _text(b.get("id")), "title": _text(b.get("title")),
             "assignee": assignee or UNKNOWN,
             "coder": coder or UNKNOWN,
-            "coder_basis": "label" if people["coder"] else "assignee" if assignee else "none",
+            "coder_basis": "label" if people["coders"] else "assignee" if assignee else "none",
             "reviewers": people["reviewers"], "approvers": people["approvers"],
             "reviewed_refs": people["reviewed_refs"],
             "needs_review": needs, "review_gate": gate, "gate_missing": missing,

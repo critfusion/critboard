@@ -312,7 +312,8 @@ request, so a change needs no restart.
     last_activity, cost_estimate_today_usd, cost_basis:"estimate"`. Each of `role`, `runner`, `model`,
     `provider`, `account`, `host`, `coordinated` is its own field and is the string `unknown` when the data
     does not state it; one unknown never changes another. `role` is read only from a session title that starts with
-    `role:<name>` (orchestrator, coder, reviewer, worker); a role word elsewhere in a title is not read. `provider` is read from the model id
+    `role:<name>` (orchestrator, coder, reviewer, worker) that ends at whitespace or at the end of the title
+    (`role:coder-x` is `unknown`); a role word elsewhere in a title is not read. `provider` is read from the model id
     (`provider/model`, or a known family prefix). `account` and `coordinated` have no collector yet and are
     always `unknown`. `cost_estimate_today_usd` is priced from local token counts: an estimate, not spend,
     not remaining quota.
@@ -325,8 +326,8 @@ request, so a change needs no restart.
     not a claim that none is needed), `named` (a reviewer and an approver are named; the review itself is
     not verified), or `missing` (review needed and `gate_missing` lists `reviewer`, `approver` or
     `independent_reviewer` (a reviewer is the coder), `independent_approver` (an approver is the coder:
-    self-approval is not allowed) or `coder_unknown`). The coder names are the `coder:` label and the
-    assignee; a reviewer or approver equal to either is not independent. Label values may be comma
+    self-approval is not allowed) or `coder_unknown`). The coder names are every `coder:` label value (several labels and comma lists all count) and the
+    trimmed assignee (blank means none); a reviewer or approver equal to either is not independent. Label values may be comma
     separated (`reviewer:a,b`) and each name is checked. No coder name at all is `coder_unknown`. Missing items sort first. The view treats
     any unknown gate value as missing.
   - `availability`: `{ttl_s, rows[], note}`. Each row: `provider, basis, state, values, observed_at,

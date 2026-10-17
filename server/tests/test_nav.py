@@ -63,7 +63,11 @@ def test_workflow_view_never_writes_server_text_as_html():
         assert "innerHTML" not in text and "html:" not in text, name
 
 
-def test_workflow_view_rechecks_expiry_at_render_and_on_a_timer():
-    view = (WEB / "js" / "workflow_view.js").read_text()
-    assert "effectiveRow(raw, nowMs)" in view and "Date.now()" in view
-    assert "setInterval(() => { if (lastGood && !root.hidden) render(lastGood); }, RERENDER_MS)" in view and "RERENDER_MS = 60000" in view
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed on this host")
+def test_workflow_view_node_test_passes():
+    # fake DOM + fake clock: expiry at render, one 60 s timer, re-show after expiry
+    result = subprocess.run(
+        ["node", str(WEB / "js" / "workflow_view.test.mjs")], capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "passed" in result.stdout

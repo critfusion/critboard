@@ -670,7 +670,8 @@ What it shows, and what it will not claim:
   `coder:<name>`, `reviewer:<name>`, `approver:<name>`, `reviewed:<ref>`.
   A value may list several names, comma separated (`reviewer:a,b`). A
   reviewer or approver who is the coder (the `coder:` label or the assignee)
-  is not independent, and a bead with no coder at all is also missing.
+  is not independent, and a bead with no coder at all is also missing. Several
+  `coder:` labels or a comma list all count as coders; a blank assignee is no assignee.
 - Availability readings expire after `availability_ttl_s` seconds (60 to
   86400, default 1800). An expired reading shows `STALE` and its numbers are
   hidden. `owner_reported` is a list of

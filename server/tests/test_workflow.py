@@ -392,3 +392,32 @@ def test_owner_reports_are_capped():
             for i in range(60)]
     assert wf.MAX_OWNER_REPORTS == 50
     assert len(_avail([], owner=many)) == 50
+
+
+# ---------------- review round 3 ----------------
+
+def test_every_coder_label_value_counts_as_a_coder():
+    a = _gate(["waiting-review", "coder:cb,cc", "reviewer:cc", "approver:app-a"])
+    assert a["review_gate"] == "missing" and a["gate_missing"] == ["independent_reviewer"]
+    a = _gate(["waiting-review", "coder:cb", "coder:cc", "reviewer:rev-a", "approver:CC"])
+    assert a["gate_missing"] == ["independent_approver"]
+    a = _gate(["waiting-review", "coder:cb", "coder:cc", "reviewer:cb", "approver:app-a"])
+    assert a["gate_missing"] == ["independent_reviewer"]
+    ok = _gate(["waiting-review", "coder:cb,cc", "reviewer:rev-a", "approver:app-a"])
+    assert ok["coder"] == "cb, cc" and ok["coder_basis"] == "label"
+
+
+def test_assignee_is_stripped_and_blank_means_no_coder():
+    a = _gate(["waiting-review", "reviewer:actor-a", "approver:app-a"], assignee=" actor-a ")
+    assert a["gate_missing"] == ["independent_reviewer"] and a["coder"] == "actor-a" and a["assignee"] == "actor-a"
+    for blank in ("   ", "\t", ""):
+        a = _gate(["waiting-review", "reviewer:rev-a", "approver:app-a"], assignee=blank)
+        assert a["gate_missing"] == ["coder_unknown"] and a["coder"] == "unknown" and a["assignee"] == "unknown"
+        assert a["coder_basis"] == "none"
+
+
+def test_role_marker_must_end_at_whitespace_or_end_of_title():
+    assert wf.observed_sessions([_agent(title="role:coder")])[0]["role"] == "coder"
+    assert wf.observed_sessions([_agent(title="role:coder\trepo")])[0]["role"] == "coder"
+    for title in ("role:coder-x", "role:reviewer_2", "role:worker.v2", "role:coders"):
+        assert wf.observed_sessions([_agent(title=title)])[0]["role"] == "unknown", title
