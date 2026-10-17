@@ -21,7 +21,8 @@ def _run(tmp_path, content):
     (repo / "note.txt").write_text(content)
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     return subprocess.run(
-        ["bash", "scripts/check-public.sh"], cwd=repo, capture_output=True, text=True, timeout=60, check=False,
+        ["bash", "scripts/check-public.sh"], cwd=repo,
+        capture_output=True, text=True, timeout=60, check=False,
     )
 
 
