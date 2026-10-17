@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -17,6 +17,7 @@ from test_knowledge import BASE, TOKEN, _enabled, _make_client
 
 from critdash import knowledge as knowledge_mod
 from critdash.infrastructure import (
+    DECLARED_UNKNOWN,
     compute_status,
     parse_provenance_table,
     parse_record,
@@ -262,9 +263,27 @@ def test_repeated_identical_or_unreadable_status_tags_are_no_conflict():
 
 def test_agreeing_or_absent_statuses_have_no_conflict_note():
     assert merge_status("current", "current") == ("current", None)
-    assert merge_status("unknown", "stale") == ("stale", None)
+    assert merge_status("unknown", "stale") == ("stale", None)  # bare "unknown" = absent at this level
     assert merge_status("stale", "unknown") == ("stale", None)
     assert merge_status("sparkly", "also-junk") == ("unknown", None)
+
+
+def test_declared_unknown_is_a_real_value_worse_than_current():
+    assert merge_status("current", DECLARED_UNKNOWN) == ("unknown", "status conflict: table current, tag unknown")
+    assert merge_status(DECLARED_UNKNOWN, "current") == ("unknown", "status conflict: table unknown, tag current")
+    assert merge_status(DECLARED_UNKNOWN, "stale")[0] == "stale"  # stale is still worse
+    assert merge_status(DECLARED_UNKNOWN, DECLARED_UNKNOWN) == ("unknown", None)
+
+
+def test_parse_separates_declared_unknown_from_absent_and_junk():
+    md = "| Field | Value |\n|---|---|\n| Status | Unknown |\n"
+    assert parse_provenance_table(md)["status"] == DECLARED_UNKNOWN
+    for cell in ("", "tbd", "-", "sparkly"):
+        out = parse_provenance_table(f"| Field | Value |\n|---|---|\n| Status | {cell} |\n")
+        assert out["status"] != DECLARED_UNKNOWN
+    tags = parse_tags([{"name": "status", "value": " `Unknown` "}, {"name": "status", "value": ""},
+                       {"name": "status", "value": "tbd"}, {"name": "status", "value": "junk"}])
+    assert tags["statuses"] == [DECLARED_UNKNOWN, "junk"]
 
 
 def test_conflict_note_reaches_the_record_and_current_is_not_shown_when_a_tag_disagrees():
@@ -653,3 +672,40 @@ def test_example_config_ships_infrastructure_off_with_defaults():
     example = json.loads((config_mod.DASHBOARD_ROOT / "config" / "sources.example.json").read_text())
     assert example["modules"]["infrastructure"] == {"enabled": False, "book_slug": "infrastructure", "stale_after_days": 90}
     assert config_mod.DEFAULT_SOURCES["modules"]["infrastructure"] == example["modules"]["infrastructure"]
+
+
+# ---- declared `unknown` through the real route (recent readable Live check) ----
+
+def _routed(infra, wiki, table_status, tags):
+    day = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    rows = "| Field | Value |\n|---|---|\n" + f"| Live check | {day} |\n"
+    if table_status is not None:
+        rows += f"| Status | {table_status} |\n"
+    wiki.pages[1]["markdown"] = rows
+    wiki.pages[1]["tags"] = [{"name": "status", "value": t} for t in tags]
+    resp = infra.get("/api/infrastructure")
+    assert resp.status_code == 200
+    return next(r for r in resp.json()["records"] if r["id"] == 1)
+
+
+@pytest.mark.parametrize("table,tags,note", [
+    ("current", ["unknown"], "status conflict: table current, tag unknown"),
+    ("unknown", ["current"], "status conflict: table unknown, tag current"),
+    (None, ["current", "unknown"], "status conflict: tag current, tag unknown"),
+    (None, ["unknown", "current"], "status conflict: tag unknown, tag current"),
+])
+def test_declared_unknown_beats_current_with_a_conflict_note_via_the_route(infra, wiki, table, tags, note):
+    r = _routed(infra, wiki, table, tags)
+    assert r["status"] == "unknown" and r["status_conflict"] == note
+
+
+@pytest.mark.parametrize("table,tags,status", [
+    ("current", [], "current"),
+    (None, ["current"], "current"),
+    ("current", ["", "tbd", "sparkly"], "current"),   # empty/invalid tags are absent, not unknown
+    ("current", ["needs-verification"], "needs-verification"),
+])
+def test_status_controls_via_the_route(infra, wiki, table, tags, status):
+    r = _routed(infra, wiki, table, tags)
+    assert r["status"] == status
+    assert (r["status_conflict"] is not None) == (tags == ["needs-verification"])

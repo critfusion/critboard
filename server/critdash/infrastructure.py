@@ -56,6 +56,19 @@ def _clean(value: str) -> str:
     return UNKNOWN if text.lower() in _EMPTY_VALUES else text
 
 
+# A status the page explicitly declares as `unknown` is a real value (worse than
+# `current`); an empty, `tbd` or junk status is absent. `_clean` folds both to
+# UNKNOWN, so the status fields carry this marker for the declared one.
+DECLARED_UNKNOWN = "unknown (declared)"
+
+
+def _status_text(value: str) -> str:
+    """Status cell/tag text -> cleaned text; DECLARED_UNKNOWN for a literal unknown."""
+    if re.sub(r"[\s_]+", "-", (value or "").strip().strip("`*").strip().lower()) == UNKNOWN:
+        return DECLARED_UNKNOWN
+    return _clean(value)
+
+
 def _cells(line: str) -> list[str]:
     line = line.strip()
     if line.startswith("|"):
@@ -87,7 +100,7 @@ def parse_provenance_table(markdown: str) -> dict[str, str]:
             continue  # malformed row or the |---|---| separator
         key = _TABLE_FIELDS.get(re.sub(r"[`*_]", "", cells[0]).strip().lower())
         if key:
-            out[key] = _clean(cells[1])
+            out[key] = _status_text(cells[1]) if key == "status" else _clean(cells[1])
     return out
 
 
@@ -101,7 +114,11 @@ def parse_tags(tags) -> dict:
         if not isinstance(tag, dict):
             continue
         name = str(tag.get("name") or "").strip().lower()
-        value = _clean(str(tag.get("value") or ""))
+        raw = str(tag.get("value") or "")
+        value = _clean(raw)
+        if name == "status" and _status_text(raw) == DECLARED_UNKNOWN:
+            out["statuses"].append(DECLARED_UNKNOWN)
+            continue
         if value == UNKNOWN:
             continue
         if name == "status":
@@ -145,12 +162,13 @@ def _normal_status(raw: str) -> str:
 
 def merge_status(table: str, *tags: str) -> tuple[str, str | None]:
     """Declared status from the table and every `status` tag (raw text).
-    Unreadable ones are ignored. One distinct readable value -> that value.
+    Unreadable ones are ignored; a declared `unknown` (DECLARED_UNKNOWN) is a
+    real value, worse than `current`. One distinct readable value -> that value.
     Several that differ -> the worst, plus a visible conflict note."""
     found: list[tuple[str, str]] = []
     for source, raw in (("table", table), *(("tag", t) for t in tags)):
-        value = _normal_status(raw)
-        if value != UNKNOWN and (source, value) not in found:
+        value = UNKNOWN if raw == DECLARED_UNKNOWN else _normal_status(raw)
+        if (value != UNKNOWN or raw == DECLARED_UNKNOWN) and (source, value) not in found:
             found.append((source, value))
     values = {v for _, v in found}
     if not values:
@@ -185,7 +203,7 @@ def compute_status(declared: str, live_check: str, updated_at: str | None,
         status = "needs-verification"
         reason = "Marked current, but no readable Live check date"
     elif status == "unknown":
-        reason = "No status recorded"
+        reason = "Status is unknown or not recorded"
     return {
         "status": status,
         "status_reason": reason,

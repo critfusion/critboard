@@ -373,7 +373,9 @@ and the view shows `unknown`). The server never guesses a value.
   - The `status` tag is read the same way, and may repeat. All readable values (table and every tag) are
     merged. If only the tags are readable, they are used. If the readable values differ, the worst one wins (`contradicted` > `stale` > `needs-verification` > `unknown` >
     `current`) and the record carries `status_conflict: "status conflict: table X, tag Y"` (one `tag Z` per differing
-    value), which the view shows. `Class` falls back to the `class` tag the same way (table first).
+    value), which the view shows. A status written as `unknown` is a real
+    value (worse than `current`, so `current` + `unknown` gives `unknown` and a conflict note); an empty,
+    `tbd` or unrecognised status is absent and is ignored. `Class` falls back to the `class` tag the same way (table first).
   - Age counts from the `Live check` date (`verified_basis: "live_check"`). With no readable date
     (absent, `unknown`, or text that does not start with `YYYY-MM-DD`, or a date more than one day
     ahead) it counts from the page's `updated_at` (`verified_basis: "page_updated"`); with neither,
