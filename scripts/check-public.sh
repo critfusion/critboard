@@ -399,6 +399,19 @@ for f in "${FILES[@]+"${FILES[@]}"}"; do
         '\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b' \
         "tailnet-range (RFC 6598) address" -P
 
+    # machine-specific shared-tree paths under /srv, and secret-manager
+    # references (op://<vault>/<item>). Neither belongs in a public file
+    # (use ~/repos/example and a plain placeholder instead).
+    grep_pattern "$f" '/srv/(work|data|git)/' \
+        "real-looking /srv/<work|data|git> path (use a placeholder like ~/repos/example)" -P
+    grep_pattern "$f" 'op://' \
+        "secret-manager reference (never ship a vault or item reference)"
+
+    # internal-only hostnames: *.internal, *.lan, *.home.arpa, *.ts.net,
+    # *.corp. Use example.com, example.org or 192.0.2.x in fixtures/docs.
+    grep_pattern "$f" '[A-Za-z0-9-]+\.(internal|lan|home\.arpa|ts\.net|corp)\b' \
+        "internal-only hostname (use example.com / 192.0.2.x)" -P
+
     # common live-credential shapes
     grep_pattern "$f" 'sk-[A-Za-z0-9]{16,}' "OpenAI-style API key (sk-...)"
     grep_pattern "$f" 'ghp_[A-Za-z0-9]{20,}' "GitHub personal access token (ghp_...)"

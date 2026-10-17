@@ -554,6 +554,34 @@ needed. It also still requires `allow_config_writes` (default `true`) --
 set that `false` instead, or in addition, if this dashboard is reachable by
 more than just you and you want it fully read-only from the browser.
 
+### 9. Opt-in modules (optional; none on by default)
+
+Skip this section for a normal install. The board has no Knowledge,
+Infrastructure or Workflow views until you turn one on. To turn on the
+read-only BookStack view:
+
+1. In BookStack, create an API token for a user whose role can only view.
+2. Save `<token_id>:<token_secret>` as one line in a file only you can read:
+   `install -m 600 /dev/null ~/.config/critboard-bookstack.token`, then write the line into it.
+3. In `config/sources.json` (not the example file) set:
+
+```json
+"modules": {
+  "knowledge": {
+    "enabled": true,
+    "bookstack": {
+      "base_url": "https://wiki.example.com",
+      "token_file": "~/.config/critboard-bookstack.token"
+    }
+  }
+}
+```
+
+Reload the page. A view bar appears with Live and Knowledge. If the file is
+readable by others, or `base_url` is missing, the Knowledge view says what to
+fix. Set `enabled` back to `false` (or delete the key) to remove the view.
+See SPEC.md, "Opt-in modules", for the endpoints.
+
 ## Running it day to day
 
 | Command | What it does |
@@ -621,6 +649,9 @@ if a key is missing entirely. Notable ones for a fresh install:
   `collector_redetect_interval_s` (default 60s) -- installing `bd` later
   brings that panel alive with no restart. Force one on or off regardless of
   detection with e.g. `{"beads": {"enabled": false}}`.
+- `modules` -- opt-in Infrastructure / Workflow / Knowledge views. All
+  `enabled: false` by default; a default install shows no view bar. See
+  step 9 above.
 - `allow_self_update` -- `false` by default. Gates the "Update now" button
   in the update banner, which pulls and runs new code from `update_repo`.
   Settable from the settings panel (gear icon) as "Allow self-update" --

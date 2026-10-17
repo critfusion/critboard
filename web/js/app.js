@@ -3,6 +3,7 @@ import { get, setPath, fmtRelTime, el, applyTheme } from "./utils.js";
 import * as modal from "./modal.js";
 import { setupSettingsGear } from "./settings.js";
 import { isUpdateBannerActive } from "./banner_priority.js";
+import { setupViews } from "./views.js";
 
 // ---------------- data source resolution ----------------
 // Three ways to run against a fixture instead of the live API (documented
@@ -892,6 +893,9 @@ async function boot() {
     console.error("initial snapshot load failed", e);
     setConn("offline");
   }
+
+  // Opt-in modules (Knowledge etc.). Adds nothing unless sources.json enables one.
+  await setupViews().catch((e) => console.error("view setup failed", e));
 
   modal.resolveInitialHash();
 
