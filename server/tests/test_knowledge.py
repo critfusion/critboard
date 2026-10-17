@@ -7,9 +7,11 @@ copied from any real wiki. wiki.example.com is a reserved example domain.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import time
 
 import httpx
 import pytest
@@ -17,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from critdash import config as config_mod
 from critdash import main as main_mod
+from critdash import knowledge as knowledge_mod
 from critdash.knowledge import html_to_text
 
 BASE = "https://wiki.example.com"
@@ -104,7 +107,8 @@ def _make_client(tmp_path, monkeypatch, modules, token_mode=0o600, token_text=TO
 
 def _enabled(token_file, **bookstack):
     bs = {"base_url": BASE, "token_file": token_file, **bookstack}
-    return {"knowledge": {"enabled": True, "bookstack": bs}}
+    # the in-process TestClient sends Host: testserver
+    return {"knowledge": {"enabled": True, "allowed_hosts": ["testserver"], "bookstack": bs}}
 
 
 @pytest.fixture
@@ -362,7 +366,8 @@ def test_malformed_token_file(tmp_path, monkeypatch, text):
 
 
 def test_enabled_without_base_url_is_not_configured(tmp_path, monkeypatch):
-    modules = {"knowledge": {"enabled": True, "bookstack": {"base_url": "", "token_file": ""}}}
+    modules = {"knowledge": {"enabled": True, "allowed_hosts": ["testserver"],
+                          "bookstack": {"base_url": "", "token_file": ""}}}
     client, _ = _make_client(tmp_path, monkeypatch, modules)
     resp = client.get("/api/knowledge/status")
     assert resp.status_code == 503
@@ -382,3 +387,180 @@ def test_cross_origin_request_is_refused(kb, fake):
 def test_same_origin_request_is_allowed(kb):
     resp = kb.get("/api/knowledge/status", headers={"Origin": "http://testserver"})
     assert resp.status_code == 200
+
+
+# ---------------- DNS rebinding: Host allowlist ----------------
+
+def test_foreign_host_with_matching_origin_is_refused(kb, fake):
+    resp = kb.get("/api/knowledge/page/42",
+                  headers={"Host": "evil.example.net", "Origin": "http://evil.example.net"})
+    assert resp.status_code == 403
+    assert fake.requests == []
+
+
+def test_foreign_host_without_origin_is_refused(kb, fake):
+    assert kb.get("/api/knowledge/status", headers={"Host": "evil.example.net"}).status_code == 403
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("host", ["localhost:9999", "127.0.0.1:9999", "[::1]:9999", "LOCALHOST"])
+def test_loopback_hosts_are_allowed(kb, host):
+    assert kb.get("/api/knowledge/status", headers={"Host": host}).status_code == 200
+
+
+def test_allowed_hosts_option_admits_a_configured_name(tmp_path, monkeypatch, fake):
+    def mods(tf):
+        m = _enabled(tf)
+        m["knowledge"]["allowed_hosts"] = ["board.example.net"]
+        return m
+    client, _ = _make_client(tmp_path, monkeypatch, mods)
+    client.app.state.knowledge._transport = httpx.MockTransport(fake)
+    assert client.get("/api/knowledge/status", headers={"Host": "board.example.net:9999"}).status_code == 200
+    assert client.get("/api/knowledge/status", headers={"Host": "evil.example.net"}).status_code == 403
+
+
+def test_host_check_is_scoped_to_knowledge_routes(kb):
+    assert kb.get("/api/modules", headers={"Host": "evil.example.net"}).status_code == 200
+
+
+# ---------------- upstream size / time bounds ----------------
+
+def test_oversize_search_body_is_upstream_error_fast(kb, fake):
+    big = b'{"data": [], "pad": "' + b"x" * (knowledge_mod.MAX_SEARCH_BYTES + 10) + b'"}'
+    kb.app.state.knowledge._transport = httpx.MockTransport(lambda r: httpx.Response(200, content=big))
+    resp = kb.get("/api/knowledge/search?q=x")
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "upstream_error"
+
+
+def test_oversize_page_body_is_upstream_error(kb):
+    big = b'{"html": "' + b"x" * (knowledge_mod.MAX_PAGE_BYTES + 10) + b'"}'
+    kb.app.state.knowledge._transport = httpx.MockTransport(lambda r: httpx.Response(200, content=big))
+    resp = kb.get("/api/knowledge/page/42")
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "upstream_error"
+
+
+def test_body_is_not_read_past_the_ceiling(kb):
+    """A body with no Content-Length is cut off at the ceiling, not buffered whole."""
+    pulled = []
+
+    class Endless(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for _ in range(10_000):
+                pulled.append(1)
+                yield b"x" * 100_000
+
+    kb.app.state.knowledge._transport = httpx.MockTransport(lambda r: httpx.Response(200, stream=Endless()))
+    resp = kb.get("/api/knowledge/search?q=x")
+    assert resp.json()["error"]["code"] == "upstream_error"
+    assert len(pulled) <= knowledge_mod.MAX_SEARCH_BYTES // 100_000 + 2
+
+
+def test_slow_drip_is_bounded_by_an_overall_deadline(tmp_path, monkeypatch):
+    class Drip(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for _ in range(1000):
+                await asyncio.sleep(0.3)  # each op well inside any per-op timeout
+                yield b" "
+
+    client, _ = _make_client(tmp_path, monkeypatch, lambda tf: _enabled(tf, timeout_s=1))
+    client.app.state.knowledge._transport = httpx.MockTransport(lambda r: httpx.Response(200, stream=Drip()))
+    start = time.monotonic()
+    resp = client.get("/api/knowledge/search?q=x")
+    assert time.monotonic() - start < 3
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "unreachable"
+
+
+def test_event_loop_stays_responsive_during_a_slow_parse(tmp_path, monkeypatch, fake):
+    client, _ = _make_client(tmp_path, monkeypatch, _enabled)
+    client.app.state.knowledge._transport = httpx.MockTransport(fake)
+    real = knowledge_mod.html_to_text
+
+    def slow(html):
+        time.sleep(1.0)
+        return real(html)
+
+    monkeypatch.setattr(knowledge_mod, "html_to_text", slow)
+
+    async def run():
+        transport = httpx.ASGITransport(app=client.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            t0 = time.monotonic()
+            done = {}
+
+            async def other():
+                await asyncio.sleep(0.2)  # let the page request reach the parse
+                r = await ac.get("/api/modules")
+                done["other"] = time.monotonic() - t0
+                return r
+
+            page, o = await asyncio.gather(ac.get("/api/knowledge/page/42"), other())
+            done["page"] = time.monotonic() - t0
+            return page, o, done
+
+    page, o, done = asyncio.run(run())
+    assert page.status_code == 200 and o.status_code == 200
+    assert done["page"] >= 1.0
+    assert done["other"] < 0.8  # answered while the 1 s parse was still running
+
+
+def test_parser_input_is_capped_before_parsing(kb, fake, monkeypatch):
+    seen = []
+    real = knowledge_mod.html_to_text
+    monkeypatch.setattr(knowledge_mod, "html_to_text", lambda h: (seen.append(len(h)), real(h))[1])
+    fake.page = {**SYN_PAGE, "html": "<p>" + "a" * (knowledge_mod.HTML_INPUT_MAX_CHARS * 2) + "</p>"}
+    data = kb.get("/api/knowledge/page/42").json()
+    assert max(seen) <= knowledge_mod.HTML_INPUT_MAX_CHARS
+    assert data["truncated"] is True
+
+
+# ---------------- token file / type edge cases ----------------
+
+def test_binary_token_file_is_token_file_invalid_not_500(tmp_path, monkeypatch):
+    client, _ = _make_client(tmp_path, monkeypatch, _enabled)
+    (tmp_path / "bookstack.token").write_bytes(b"\xff\xfe\x80\x81:\xc3\x28")
+    resp = client.get("/api/knowledge/status")
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "token_file_invalid"
+
+
+def test_boolean_ids_are_not_integers(kb, fake):
+    fake.page = {**SYN_PAGE, "book_id": True}
+    data = kb.get("/api/knowledge/page/42").json()
+    assert data["book"]["id"] is None
+    assert not any(r.url.path.startswith("/api/books/") for r in fake.requests)
+    kb.app.state.knowledge._transport = httpx.MockTransport(lambda r: httpx.Response(200, json={
+        "total": 1, "data": [{"id": True, "type": "page", "name": "bool id"}]}))
+    assert kb.get("/api/knowledge/search?q=x").json()["results"] == []
+
+
+# ---------------- text cap ----------------
+
+def test_page_text_over_the_cap_is_truncated_and_flagged(kb, fake):
+    n = knowledge_mod.PAGE_TEXT_MAX_CHARS
+    fake.page = {**SYN_PAGE, "html": "<p>" + "a" * (n + 500) + "</p>"}
+    data = kb.get("/api/knowledge/page/42").json()
+    assert data["truncated"] is True
+    assert len(data["text"]) == n
+
+
+def test_page_text_at_or_under_the_cap_is_not_flagged(kb, fake):
+    fake.page = {**SYN_PAGE, "html": "<p>" + "a" * knowledge_mod.PAGE_TEXT_MAX_CHARS + "</p>"}
+    data = kb.get("/api/knowledge/page/42").json()
+    assert data["truncated"] is False
+    assert len(data["text"]) == knowledge_mod.PAGE_TEXT_MAX_CHARS
+
+
+def test_declared_content_length_over_the_ceiling_is_refused_unread(kb):
+    class Boom(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            raise AssertionError("body must not be read when Content-Length is over the ceiling")
+            yield b""
+
+    headers = {"content-length": str(knowledge_mod.MAX_SEARCH_BYTES + 1)}
+    kb.app.state.knowledge._transport = httpx.MockTransport(
+        lambda r: httpx.Response(200, headers=headers, stream=Boom()))
+    resp = kb.get("/api/knowledge/search?q=x")
+    assert resp.json()["error"]["code"] == "upstream_error"

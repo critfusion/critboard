@@ -1234,6 +1234,22 @@ def build_app() -> FastAPI:
         config.reload_sources()
         return JSONResponse({"enabled": enabled_modules(config.sources)})
 
+    def _knowledge_allowed_hosts() -> set[str]:
+        """Loopback, the bind host (unless a wildcard), the configured host
+        and host-list names, plus modules.knowledge.allowed_hosts (names
+        only, no port). A wildcard bind (0.0.0.0) cannot know which names
+        reach it: list those in allowed_hosts."""
+        src = config.sources
+        names = {"localhost", "127.0.0.1", "::1", str(src.get("host") or "")}
+        bind = str(src.get("bind_host") or "")
+        if bind not in ("0.0.0.0", "::", ""):
+            names.add(bind)
+        names.update(str(h.get("name") or "") for h in src.get("hosts") or [] if isinstance(h, dict))
+        extra = (module_config(src, "knowledge") or {}).get("allowed_hosts")
+        if isinstance(extra, list):
+            names.update(str(x) for x in extra)
+        return {n.strip("[]").lower() for n in names if n}
+
     def _knowledge_gate(request: Request) -> None:
         config.reload_sources()
         if module_config(config.sources, "knowledge") is None:
@@ -1244,6 +1260,12 @@ def build_app() -> FastAPI:
         origin = request.headers.get("origin")
         if origin and urlsplit(origin).netloc != request.headers.get("host"):
             raise HTTPException(status_code=403, detail="cross-origin request refused")
+        # DNS rebinding: an attacker's name that resolves to this machine
+        # passes the Origin==Host check above (both are the attacker's name).
+        # Refuse any Host that is not one of ours. Knowledge routes only.
+        host = (urlsplit("//" + (request.headers.get("host") or "")).hostname or "").lower()
+        if host not in _knowledge_allowed_hosts():
+            raise HTTPException(status_code=403, detail="host not allowed")
 
     _KNOWLEDGE_HTTP = {
         "not_found": 404, "not_configured": 503, "token_file_missing": 503,

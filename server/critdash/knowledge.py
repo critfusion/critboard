@@ -20,6 +20,8 @@ Rules this module keeps:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import stat
@@ -39,6 +41,14 @@ SEARCH_COUNT = 20
 PREVIEW_CHARS = 280
 PAGE_TEXT_MAX_CHARS = 200_000
 DEFAULT_TIMEOUT_S = 8.0
+# Upstream size ceilings (bytes on the wire) and the parse-input cap (chars).
+# httpx timeouts are per socket operation, so a slow drip never trips them:
+# the whole exchange also runs under one deadline of DEADLINE_FACTOR * timeout_s.
+MAX_SEARCH_BYTES = 1_000_000
+MAX_PAGE_BYTES = 8_000_000
+HTML_INPUT_MAX_CHARS = 1_000_000
+PREVIEW_INPUT_MAX_CHARS = 10_000
+DEADLINE_FACTOR = 2.0
 
 _BLOCK_TAGS = {
     "p", "div", "br", "li", "ul", "ol", "tr", "table", "blockquote", "pre",
@@ -113,10 +123,18 @@ def read_token(path_str: str) -> str:
         raw = path.read_text().strip()
     except OSError:
         raise KnowledgeError("token_file_missing", "token file not found or not readable") from None
+    except ValueError:  # binary / non-UTF-8 content (UnicodeDecodeError)
+        raise KnowledgeError("token_file_invalid", "token file must be plain text") from None
     token_id, sep, secret = raw.partition(":")
     if not sep or not token_id or not secret or "\n" in raw:
         raise KnowledgeError("token_file_invalid", "token file must hold one line: <token_id>:<token_secret>")
     return raw
+
+
+class _Resp:
+    def __init__(self, status_code: int, raw: bytes):
+        self.status_code = status_code
+        self.raw = raw
 
 
 class BookStackAdapter:
@@ -174,17 +192,42 @@ class BookStackAdapter:
         }
 
     # ---- HTTP ----
-    async def _get(self, path: str, params: dict | None = None) -> dict:
+    async def _fetch(self, url: str, params: dict | None, headers: dict, timeout: float,
+                     max_bytes: int) -> tuple[int, bytes]:
+        """GET with a byte ceiling; the body is never read past max_bytes."""
+        async with httpx.AsyncClient(
+            transport=self._transport, timeout=timeout, follow_redirects=False
+        ) as client:
+            async with client.stream("GET", url, params=params, headers=headers) as resp:
+                if resp.status_code != 200:
+                    return resp.status_code, b""
+                declared = resp.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) > max_bytes:
+                    raise KnowledgeError("upstream_error", "BookStack response too large", 200)
+                buf = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    buf += chunk
+                    if len(buf) > max_bytes:
+                        raise KnowledgeError("upstream_error", "BookStack response too large", 200)
+                return 200, bytes(buf)
+
+    async def _get(self, path: str, params: dict | None = None, max_bytes: int = MAX_SEARCH_BYTES) -> dict:
         try:
             base, timeout = self._settings()
             token = read_token(self._token_path())
-            async with httpx.AsyncClient(
-                transport=self._transport, timeout=timeout, follow_redirects=False
-            ) as client:
-                resp = await client.get(
-                    base + path, params=params,
-                    headers={"Authorization": f"Token {token}", "Accept": "application/json"},
+            try:
+                status, raw = await asyncio.wait_for(
+                    self._fetch(
+                        base + path, params,
+                        {"Authorization": f"Token {token}", "Accept": "application/json"},
+                        timeout, max_bytes,
+                    ),
+                    timeout * DEADLINE_FACTOR,
                 )
+            except TimeoutError:
+                logger.warning("bookstack request exceeded its overall deadline")
+                raise KnowledgeError("unreachable", "BookStack did not finish in time") from None
+            resp = _Resp(status, raw)
             if resp.status_code in (401, 403):
                 raise KnowledgeError(
                     "auth_failed", f"BookStack rejected the configured token (HTTP {resp.status_code})",
@@ -197,7 +240,7 @@ class BookStackAdapter:
                     "upstream_error", f"BookStack returned HTTP {resp.status_code}", resp.status_code
                 )
             try:
-                body = resp.json()
+                body = json.loads(resp.raw)
             except ValueError:
                 raise KnowledgeError("upstream_error", "BookStack returned a non-JSON body", 200) from None
             if not isinstance(body, dict):
@@ -235,7 +278,7 @@ class BookStackAdapter:
         for item in body.get("data") or []:
             if not isinstance(item, dict) or item.get("type") != "page":
                 continue
-            if not isinstance(item.get("id"), int):
+            if not _is_int(item.get("id")):
                 continue
             book = item.get("book") if isinstance(item.get("book"), dict) else {}
             preview = item.get("preview_html") if isinstance(item.get("preview_html"), dict) else {}
@@ -244,22 +287,24 @@ class BookStackAdapter:
                 "name": str(item.get("name") or ""),
                 "book": str(book.get("name") or ""),
                 "updated_at": item.get("updated_at"),
-                "preview": html_to_text(str(preview.get("content") or ""))[:PREVIEW_CHARS],
+                "preview": html_to_text(str(preview.get("content") or "")[:PREVIEW_INPUT_MAX_CHARS])[:PREVIEW_CHARS],
             })
         return {"results": results, "total": body.get("total", len(results))}
 
     async def page(self, page_id: int) -> dict:
         base, _ = self._settings()
-        page = await self._get(f"/api/pages/{page_id}")
-        book_id = page.get("book_id")
-        book = await self._get(f"/api/books/{book_id}") if isinstance(book_id, int) else {}
+        page = await self._get(f"/api/pages/{page_id}", max_bytes=MAX_PAGE_BYTES)
+        book_id = page.get("book_id") if _is_int(page.get("book_id")) else None
+        book = await self._get(f"/api/books/{book_id}") if _is_int(book_id) else {}
         book_slug = book.get("slug") or page.get("book_slug")
         slug = page.get("slug")
         edit_url = None
         if book_slug and slug:
             edit_url = f"{base}/books/{quote(str(book_slug), safe='')}/page/{quote(str(slug), safe='')}/edit"
-        text = html_to_text(str(page.get("html") or ""))
-        truncated = len(text) > PAGE_TEXT_MAX_CHARS
+        html = str(page.get("html") or "")
+        # Parse off the event loop, and never feed the parser more than the cap.
+        text = await asyncio.to_thread(html_to_text, html[:HTML_INPUT_MAX_CHARS])
+        truncated = len(text) > PAGE_TEXT_MAX_CHARS or len(html) > HTML_INPUT_MAX_CHARS
         tags = [
             {"name": str(t.get("name") or ""), "value": str(t.get("value") or "")}
             for t in page.get("tags") or [] if isinstance(t, dict)
@@ -280,6 +325,10 @@ class BookStackAdapter:
             "edit_url": edit_url,
             "open_url": f"{base}/link/{page_id}",
         }
+
+
+def _is_int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
 
 
 def _person(obj) -> str | None:
