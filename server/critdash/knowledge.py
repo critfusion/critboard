@@ -35,6 +35,7 @@ import httpx
 from .infrastructure import book_slug as cfg_book_slug
 from .infrastructure import degraded_record, parse_record, stale_after_days
 from .modules import module_config
+from .workflow import policy_book_slug
 
 logger = logging.getLogger("critdash.knowledge")
 
@@ -365,10 +366,32 @@ class BookStackAdapter:
             self._record_failure(err)
             raise err from None
 
+    async def workflow_policy(self, now: datetime | None = None) -> dict:
+        """Policy pages of one book (modules.workflow.policy_book_slug), read
+        with the same rules as infrastructure(): one deadline, any failure
+        fails the whole call, nothing cached."""
+        if module_config(self._sources, "knowledge") is None:
+            raise KnowledgeError(
+                "not_configured", "workflow policy reads BookStack through modules.knowledge: enable it first"
+            )
+        _, timeout = self._settings()
+        cfg = module_config(self._sources, "workflow") or {}
+        try:
+            return await asyncio.wait_for(
+                self._book_records(policy_book_slug(cfg), now or datetime.now(UTC), stale_after_days(cfg)),
+                timeout * DEADLINE_FACTOR)
+        except TimeoutError:
+            logger.warning("bookstack workflow policy read exceeded its overall deadline")
+            err = KnowledgeError("unreachable", "BookStack did not finish in time")
+            self._record_failure(err)
+            raise err from None
+
     async def _infrastructure(self, now: datetime) -> dict:
-        base, _ = self._settings()
         cfg = module_config(self._sources, "infrastructure") or {}
-        slug, stale_days = cfg_book_slug(cfg), stale_after_days(cfg)
+        return await self._book_records(cfg_book_slug(cfg), now, stale_after_days(cfg))
+
+    async def _book_records(self, slug: str, now: datetime, stale_days: int) -> dict:
+        base, _ = self._settings()
         try:
             found = await self._get("/api/books", {"filter[slug]": slug, "count": 5}, record_ok=False)
             book = next((b for b in found.get("data") or []

@@ -1,0 +1,65 @@
+{
+  "ok": true,
+  "fetched_at": "2026-10-17T12:00:05.000Z",
+  "status": {"ok": true, "last_success": "2026-10-17T12:00:05.000Z", "down_since": null, "error": null},
+  "policy": {
+    "state": "ok", "label": "intended policy",
+    "book": {"name": "Workflow policy", "slug": "workflow-policy-projections", "url": "https://wiki.example.com/books/workflow-policy-projections"},
+    "total": 3, "truncated": false, "stale_after_days": 90, "error": null,
+    "pages": [
+      {"id": 1, "title": "Independent review rule", "url": "https://wiki.example.com/books/workflow-policy-projections/page/review-rule",
+       "status": "current", "status_reason": null, "status_conflict": null,
+       "source": {"repo": "https://github.com/example-org/policy", "repo_href": "https://github.com/example-org/policy", "path": "rules/review.md", "git_sha": "0123abc"},
+       "last_verified": "2026-10-10", "updated_at": "2026-10-11T08:00:00Z"},
+      {"id": 2, "title": "Orchestrator and worker split", "url": "https://wiki.example.com/books/workflow-policy-projections/page/split",
+       "status": "needs-verification", "status_reason": "Marked current, but no readable Live check date", "status_conflict": null,
+       "source": {"repo": "example-org/policy", "repo_href": null, "path": "rules/split.md", "git_sha": "unknown"},
+       "last_verified": "unknown", "updated_at": "2026-10-01T08:00:00Z"},
+      {"id": 3, "title": "Release approval", "url": "javascript:alert(1)",
+       "status": "unknown", "status_reason": "No status recorded", "status_conflict": null,
+       "source": {"repo": "unknown", "repo_href": null, "path": "unknown", "git_sha": "unknown"},
+       "last_verified": "unknown", "updated_at": "unknown"}
+    ]
+  },
+  "observed": {
+    "label": "observed runtime", "snapshot_at": "2026-10-17T12:00:00Z",
+    "sources": {"agents": {"ok": true, "stale": false}, "beads": {"ok": true, "stale": false}},
+    "cost_note": "cost_estimate_today_usd is an estimate from local token counts. It is not spend and not remaining quota.",
+    "sessions": [
+      {"id": "s-1", "role": "orchestrator", "runner": "claude", "model": "claude-opus-5", "provider": "anthropic", "account": "unknown",
+       "host": "host-a", "coordinated": "unknown", "status": "working", "repo": "repo-a", "bead": "ex-1", "subagents_active": 2,
+       "last_activity": "2026-10-17T11:59:00Z", "cost_estimate_today_usd": 4.21, "cost_basis": "estimate"},
+      {"id": "s-2", "role": "unknown", "runner": "codex", "model": "unknown", "provider": "unknown", "account": "unknown",
+       "host": "host-b", "coordinated": "unknown", "status": "idle", "repo": "unknown", "bead": null, "subagents_active": null,
+       "last_activity": null, "cost_estimate_today_usd": null, "cost_basis": "estimate"}
+    ]
+  },
+  "assignments": {
+    "label": "assignments",
+    "items": [
+      {"id": "ex-1", "title": "Add the export button", "assignee": "actor-a", "coder": "actor-a", "coder_basis": "assignee",
+       "reviewers": [], "approvers": [], "reviewed_refs": [], "needs_review": true, "review_gate": "missing",
+       "gate_missing": ["reviewer", "approver"], "sessions": ["s-1"]},
+      {"id": "ex-2", "title": "Fix the date parser", "assignee": "actor-b", "coder": "actor-b", "coder_basis": "assignee",
+       "reviewers": ["actor-c"], "approvers": ["actor-d"], "reviewed_refs": ["abc1234"], "needs_review": true,
+       "review_gate": "named", "gate_missing": [], "sessions": []},
+      {"id": "ex-3", "title": "Rename a config key", "assignee": "actor-a", "coder": "actor-a", "coder_basis": "assignee",
+       "reviewers": [], "approvers": [], "reviewed_refs": [], "needs_review": false, "review_gate": "no_review_marked",
+       "gate_missing": [], "sessions": []}
+    ]
+  },
+  "availability": {
+    "ttl_s": 1800, "note": "Readings expire after ttl_s seconds. An expired reading is stale and its numbers are not shown.",
+    "rows": [
+      {"provider": "openrouter", "basis": "provider-observed", "state": "observed", "expired": false,
+       "values": {"remaining": 42.5, "limit": 100, "used": 57.5, "unit": "usd", "period": "month", "resets_at": null},
+       "observed_at": "2026-10-17T11:50:00Z", "expires_at": "2026-10-17T12:20:00Z", "detail": null},
+      {"provider": "kimi", "basis": "provider-observed", "state": "stale", "expired": true, "values": null,
+       "observed_at": "2026-10-17T09:00:00Z", "expires_at": "2026-10-17T09:30:00Z", "detail": null},
+      {"provider": "openai", "basis": "unknown", "state": "unknown", "expired": false, "values": null,
+       "observed_at": "2026-10-17T11:55:00Z", "expires_at": "2026-10-17T12:25:00Z", "detail": "key rejected: missing scope"},
+      {"provider": "provider-z", "basis": "owner-reported", "state": "available", "expired": false, "values": null,
+       "observed_at": "2026-10-17T11:40:00Z", "expires_at": "2026-10-17T12:10:00Z", "detail": "told by the account owner"}
+    ]
+  }
+}

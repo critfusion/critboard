@@ -10,6 +10,7 @@
 
 import { mountInfrastructure } from "./infrastructure_view.js";
 import { mountKnowledge } from "./knowledge_view.js";
+import { mountWorkflow } from "./workflow_view.js";
 import {
   VIEW_LABELS, availableViews, neighbourView, resolveView, searchWithView, showNav, viewFromSearch,
 } from "./nav.js";
@@ -19,8 +20,9 @@ const mounted = {}; // view -> { section, onShow }
 
 function mountView(view, section) {
   if (view === "infrastructure") return mountInfrastructure(section);
+  if (view === "workflow") return mountWorkflow(section);
   if (view === "knowledge") return mountKnowledge(section);
-  // Reserved names: switchable, no data source in this version.
+  // A view name with no mount: switchable, no data source in this version.
   section.appendChild(el("p", { class: "view-placeholder" },
     `${VIEW_LABELS[view]} is enabled, but this version has no data for it yet.`));
   return {};

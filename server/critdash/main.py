@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import bead_reply as bead_reply_mod
-from . import detect, quota
+from . import detect, quota, workflow
 from . import settings as settings_mod
 from . import update as update_mod
 from .collectors import CollectorIssue, Scheduler, SourceHealth
@@ -1338,6 +1338,24 @@ def build_app() -> FastAPI:
             return _knowledge_ok(await knowledge.infrastructure())
         except KnowledgeError as err:
             return _knowledge_error(err)
+
+    @app.get("/api/workflow")
+    async def workflow_view(request: Request):
+        if (refused := _knowledge_gate(request, "workflow")) is not None:
+            return refused
+        now = datetime.now(UTC)
+        cfg = module_config(config.sources, "workflow") or {}
+        # The policy half may fail (wiki off, down, no such book) while the
+        # observed half still answers: each failure stays in its own section.
+        try:
+            policy = workflow.project_policy(await knowledge.workflow_policy(now))
+        except KnowledgeError as err:
+            policy = workflow.policy_unavailable(err.code, err.message)
+        stale_after_s = config.sources.get("quota_stale_after_s", 3600)
+        body = workflow.build(snap.snapshot, quota.build_quota_response(store.get_quota_cache(), stale_after_s),
+                              cfg, policy, now)
+        return JSONResponse({"ok": True, **body, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
+                            headers={"Cache-Control": "no-store"})
 
     web_dir = config.dashboard_root / "web"
     if web_dir.exists():

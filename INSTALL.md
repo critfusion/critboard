@@ -633,6 +633,54 @@ keeps no copy of it.
 If Knowledge is off or has no `bookstack` settings, the view says
 `not_configured`. If no book has the slug, it says so and names the slug.
 
+### 9c. Workflow view (optional, read-only)
+
+The Workflow view puts the written workflow next to what agents are doing.
+It has four panels that are never merged: Intended policy, Observed runtime,
+Assignments, Availability. It sends no request to any AI provider and
+writes nothing.
+
+1. Optional: make a BookStack book for policy pages (default slug
+   `workflow-policy-projections`). Each page starts with a Provenance table,
+   as in 9b. Turn Knowledge on (step 9) to read it. Without Knowledge the
+   Intended policy panel says `not_configured`; the other panels still work.
+2. In `config/sources.json` add, next to `knowledge`:
+
+```json
+"workflow": {
+  "enabled": true,
+  "policy_book_slug": "workflow-policy-projections",
+  "stale_after_days": 90,
+  "availability_ttl_s": 1800,
+  "owner_reported": []
+}
+```
+
+3. Reload the page. The view bar gains Workflow.
+
+What it shows, and what it will not claim:
+
+- Role comes only from a session title that starts with `role:<name>`
+  (orchestrator, coder, reviewer, worker). Runner, model, provider, account and host are separate fields. A
+  field the data does not state is `unknown`. `account` and `coordinated`
+  are always `unknown` in this version (no collector reads them).
+- Assignments list in-progress beads. A bead with a review label and no
+  `reviewer:<name>` and `approver:<name>` label shows `REVIEW GATE MISSING`.
+  The reviewer is never guessed from the assignee. Labels read:
+  `coder:<name>`, `reviewer:<name>`, `approver:<name>`, `reviewed:<ref>`.
+  A value may list several names, comma separated (`reviewer:a,b`). A
+  reviewer or approver who is the coder (the `coder:` label or the assignee)
+  is not independent, and a bead with no coder at all is also missing. Several
+  `coder:` labels or a comma list all count as coders; a blank assignee is no assignee.
+  A label list over 20 names, or a name over 200 characters, is `missing` too.
+- Availability readings expire after `availability_ttl_s` seconds (60 to
+  86400, default 1800). An expired reading shows `STALE` and its numbers are
+  hidden. `owner_reported` is a list of
+  `{"provider", "state", "observed_at", "note"}` you type in; it is listed
+  beside provider readings and expires the same way.
+- Cost figures are estimates from local token counts. They are not spend and
+  not remaining quota.
+
 ## Running it day to day
 
 | Command | What it does |
@@ -702,8 +750,9 @@ if a key is missing entirely. Notable ones for a fresh install:
   detection with e.g. `{"beads": {"enabled": false}}`.
 - `modules` -- opt-in Infrastructure / Workflow / Knowledge views. All
   `enabled: false` by default; a default install shows no view bar. See
-  steps 9 and 9b above. `modules.infrastructure` takes `book_slug` and
-  `stale_after_days`. `modules.knowledge.allowed_hosts` (list of hostnames, no
+  steps 9, 9b and 9c above. `modules.infrastructure` takes `book_slug` and
+  `stale_after_days`. `modules.workflow` takes `policy_book_slug`,
+  `stale_after_days`, `availability_ttl_s` and `owner_reported`. `modules.knowledge.allowed_hosts` (list of hostnames, no
   port, default none) admits extra `Host` names to the Knowledge routes;
   needed behind a proxy/DNS name or when bound to `0.0.0.0`.
 - `allow_self_update` -- `false` by default. Gates the "Update now" button

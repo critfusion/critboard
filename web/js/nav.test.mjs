@@ -9,6 +9,9 @@ import { describeProblem } from "./knowledge_text.js";
 import {
   groupByKind, safeHref, statusCounts, statusKey, statusLabel, verifiedText,
 } from "./infra_text.js";
+import {
+  availabilityBadge, availabilityKey, costText, effectiveRow, isExpired, gateKey, gateLabel, gateMissingText, policyStateText, valuesText,
+} from "./workflow_text.js";
 
 let passed = 0;
 function test(name, fn) {
@@ -199,6 +202,78 @@ test("an edit date is never worded as a verification", () => {
   assert.match(verifiedText({ verified_basis: "page_updated", age_from: "T2", last_verified: "unknown" }, f), /^Never live-checked\. Page last edited <T2>/);
   assert.match(verifiedText({ verified_basis: "none" }, f), /^Never live-checked/);
   assert.match(verifiedText({ verified_basis: "live_check", last_verified: "unknown" }, f), /^Never live-checked/);
+});
+
+// ---- Workflow view wording ----
+test("an unknown gate value is shown as missing, never fine", () => {
+  for (const g of [undefined, null, "", "ok", "passed", "complete", "wat"]) {
+    assert.equal(gateKey(g), "missing", String(g));
+    assert.equal(gateLabel(g), "REVIEW GATE MISSING");
+  }
+  assert.equal(gateLabel("named"), "REVIEWER AND APPROVER NAMED");
+  assert.equal(gateLabel("no_review_marked"), "NO REVIEW MARKED");
+});
+
+test("missing gate parts are named in words", () => {
+  assert.equal(gateMissingText(["reviewer", "approver"]), "no reviewer named; no final approver named");
+  assert.equal(gateMissingText(["independent_reviewer"]), "reviewer is the coder");
+  assert.equal(gateMissingText(undefined), "");
+});
+
+test("an expired or unknown reading never reads as observed", () => {
+  assert.equal(availabilityBadge({ expired: true, state: "observed" }), "STALE");
+  assert.equal(availabilityBadge({ state: "stale" }), "STALE");
+  assert.equal(availabilityBadge({ state: "unknown", basis: "unknown" }), "UNKNOWN");
+  assert.equal(availabilityBadge({ state: "observed", basis: "provider-observed", expired: false }), "OBSERVED");
+  assert.equal(availabilityBadge({ state: "available", basis: "owner-reported", expired: false }), "AVAILABLE");
+  assert.equal(availabilityBadge(null), "STALE");
+  assert.equal(availabilityKey({ expired: true }), "stale");
+});
+
+test("expiry is judged from expires_at at render time", () => {
+  const row = { state: "observed", basis: "provider-observed", expired: false, expires_at: "2026-10-17T12:00:00Z",
+    values: { remaining: 5 } };
+  const t = Date.parse("2026-10-17T12:00:00Z");
+  assert.equal(isExpired(row, t - 1), false);
+  assert.equal(isExpired(row, t), true);
+  assert.deepEqual(effectiveRow(row, t - 1), row);
+  const gone = effectiveRow(row, t + 1000);
+  assert.equal(gone.state, "stale");
+  assert.equal(gone.expired, true);
+  assert.equal(gone.values, null);
+  assert.equal(availabilityBadge(gone), "STALE");
+  assert.equal(row.values.remaining, 5); // the input row is not changed
+});
+
+test("an observed row with no readable expires_at is treated as expired", () => {
+  for (const at of [undefined, null, "", "soon"]) {
+    assert.equal(isExpired({ state: "observed", expires_at: at }, 0), true, String(at));
+  }
+  assert.equal(isExpired({ state: "unknown", expires_at: null }, 0), false);
+  assert.equal(effectiveRow({ state: "unknown", values: null }, 0).state, "unknown");
+});
+
+test("the new gate parts are named in words", () => {
+  assert.equal(gateMissingText(["independent_approver", "coder_unknown"]), "approver is the coder (self-approval); coder unknown");
+  assert.match(gateMissingText(["too_many_names"]), /^too many or too long names/);
+});
+
+test("reading text is only built from numbers", () => {
+  assert.equal(valuesText({ remaining: 5, limit: 10, unit: "usd", period: "month" }), "5 of 10 usd remaining (month)");
+  assert.equal(valuesText({ remaining: "5" }), null);
+  assert.equal(valuesText(null), null);
+});
+
+test("a cost figure always says estimate and never spend", () => {
+  assert.equal(costText({ cost_estimate_today_usd: 1.234 }), "estimate: $1.23 today (not spend)");
+  assert.equal(costText({}), "no estimate");
+  assert.doesNotMatch(costText({ cost_estimate_today_usd: 3 }), /remaining/);
+});
+
+test("policy problems are worded, ok has no problem line", () => {
+  assert.equal(policyStateText({ state: "ok" }), null);
+  assert.match(policyStateText({ state: "not_configured" }), /not configured/);
+  assert.match(policyStateText({ state: "weird" }), /\(weird\)/);
 });
 
 console.log(`nav.test.mjs: ${passed} passed`);

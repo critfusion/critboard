@@ -255,8 +255,7 @@ request, so a change needs no restart.
   `Live | <enabled views>` appears. The view is the `?view=<name>` query parameter (never the hash:
   the hash is the bead/agent deep link). Switching only toggles `hidden`; it never rebuilds the Live
   grid or closes the detail popup, so unsaved text survives. The TODAY/7D/30D filter belongs to Live
-  and is hidden on other views. `workflow` is reserved: enabling it shows a placeholder until its
-  phase lands.
+  and is hidden on other views. Each enabled view has its own panel; `workflow` is described below.
 - `modules.knowledge` is a read-only window onto BookStack. Server-side only: the API token id and
   secret come from `bookstack.token_file` (one line `<id>:<secret>`, mode 600; refused if group or
   others can read it) and never reach the browser, a response body or a log. Redirects are not
@@ -292,6 +291,61 @@ request, so a change needs no restart.
     `book_not_found` (503, setup problem, not an outage; also kept in `status.error` until the next good read). The shared `status` block records a success only
     when the whole read worked: a failed page is not cleared by a later page that answered. Nothing is cached.
   - Records are sorted by `kind`, then title. `kind` `unknown` sorts after the named kinds.
+
+- `modules.workflow` is a read-only view of the written workflow beside the observed one. Config:
+  `{"enabled": true, "policy_book_slug": "workflow-policy-projections", "stale_after_days": 90,
+  "availability_ttl_s": 1800, "owner_reported": []}`. Policy pages come from BookStack through
+  `modules.knowledge` (same adapter, limits and deadline as Infrastructure). Workflow on with Knowledge off
+  does not open the Knowledge routes.
+  - `GET /api/workflow` -> `{"ok":true,"policy":{...},"observed":{...},"assignments":{...},
+    "availability":{...},"fetched_at","status":{...}}`. Same gate as `/api/infrastructure` (module off -> 404;
+    foreign Host or Origin -> 403 `host_not_allowed` / `origin_not_allowed`, `ok:false` body). The four
+    sections are built apart and never merged. A failure in `policy` (wiki off, down, no such book) is
+    reported inside `policy` and does not change `ok` or the other sections. No call goes to any AI provider.
+  - `policy`: `{state, label:"intended policy", book, pages[], total, truncated, stale_after_days, error}`.
+    `state` is `ok`, or the error code (`not_configured`, `unreachable`, `auth_failed`, `book_not_found`, ...)
+    with `pages` empty. Each page: `id, title, url, status, status_reason, status_conflict,
+    source{repo, repo_href, path, git_sha}, last_verified, updated_at`. Fields and status rules are the
+    Infrastructure record contract below (`unknown` / `needs-verification` pass through unchanged).
+  - `observed`: `{label, snapshot_at, sources{agents,beads:{ok,stale}}, sessions[], cost_note}`. Each session:
+    `id, role, runner, model, provider, account, host, coordinated, status, repo, bead, subagents_active,
+    last_activity, cost_estimate_today_usd, cost_basis:"estimate"`. Each of `role`, `runner`, `model`,
+    `provider`, `account`, `host`, `coordinated` is its own field and is the string `unknown` when the data
+    does not state it; one unknown never changes another. `role` is read only from a session title that starts with
+    `role:<name>` (orchestrator, coder, reviewer, worker) that ends at whitespace or at the end of the title
+    (`role:coder-x` is `unknown`); a role word elsewhere in a title is not read. `provider` is read from the model id
+    (`provider/model`, or a known family prefix). `account` and `coordinated` have no collector yet and are
+    always `unknown`. `cost_estimate_today_usd` is priced from local token counts: an estimate, not spend,
+    not remaining quota.
+  - `assignments`: `{label, items[]}` for beads with status `in_progress`. Each item: `id, title, assignee,
+    coder, coder_basis (label|assignee|none), reviewers[], approvers[], reviewed_refs[], needs_review,
+    review_gate, gate_missing[], sessions[]`. People are read only from bead labels `coder:<name>`,
+    `reviewer:<name>`, `approver:<name>`, `reviewed:<ref>`; `coder` falls back to the assignee. A reviewer
+    is never taken from the assignee. `needs_review` is true when a label other than those contains
+    `review` (for example `waiting-review`). `review_gate`: `no_review_marked` (no review label; this is
+    not a claim that none is needed), `named` (a reviewer and an approver are named; the review itself is
+    not verified), or `missing` (review needed and `gate_missing` lists `reviewer`, `approver` or
+    `independent_reviewer` (a reviewer is the coder), `independent_approver` (an approver is the coder:
+    self-approval is not allowed) or `coder_unknown`). The coder names are every `coder:` label value (several labels and comma lists all count) and the
+    trimmed assignee (blank means none); a reviewer or approver equal to either is not independent. Label values may be comma
+    separated (`reviewer:a,b`) and each name is checked. No coder name at all is `coder_unknown`.
+    Bounds: each label value is split first; a name is at most 200 characters and each of coder, reviewer,
+    approver and reviewed keeps at most 20 names. A dropped name (too many, or too long) adds
+    `too_many_names` to `gate_missing` on a bead that needs review: the gate fails closed. Missing items sort first. The view treats
+    any unknown gate value as missing.
+  - `availability`: `{ttl_s, rows[], note}`. Each row: `provider, basis, state, values, observed_at,
+    expires_at, expired, detail`. `expires_at = observed_at + ttl_s`. `basis` is `provider-observed` (the
+    last manual quota check got an answer from the provider API), `owner-reported` (typed into
+    `modules.workflow.owner_reported`), or `unknown` (never checked, check failed, no provider endpoint,
+    no readable time, or a time in the future). At or after `expires_at` the row is `state:"stale"`,
+    `expired:true`, `values:null`. The browser repeats the check against its own clock from `expires_at`
+    when it renders, and every 60 seconds while the view is shown (the dimmed last-good copy too), so a
+    reading that expires on an open page turns stale without a refetch. `values` (remaining, limit, used, unit, period, resets_at) exist only on
+    a fresh provider-observed row. Rows come from the cached quota check (`/api/quota`); the view makes no
+    provider call. `ttl_s` is `availability_ttl_s` (integer 60 to 86400, otherwise 1800).
+  - UI: a `Workflow` tab with four panels (Intended policy, Observed runtime, Assignments, Availability).
+    `REVIEW GATE MISSING` is a solid red badge with a thick left border and a count above the list; `STALE`
+    and `UNKNOWN` are dashed. Every state is a word, not colour alone. Links are made only from http(s) URLs.
 
 #### Infrastructure record contract
 

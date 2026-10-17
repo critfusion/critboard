@@ -48,3 +48,26 @@ def test_views_are_set_up_only_through_setup_views():
     assert app_js.count("setupViews(") == 1
     assert "resolveInitialHash()" in app_js
     assert app_js.index("setupViews(") < app_js.index("modal.resolveInitialHash()")
+
+
+def test_workflow_view_is_mounted_by_views_js_and_has_no_placeholder_path():
+    views = (WEB / "js" / "views.js").read_text()
+    assert 'view === "workflow"' in views and "mountWorkflow" in views
+    # the placeholder branch comes after every real mount
+    assert views.index('view === "workflow"') < views.index("view-placeholder")
+
+
+def test_workflow_view_never_writes_server_text_as_html():
+    for name in ("workflow_view.js", "workflow_text.js"):
+        text = (WEB / "js" / name).read_text()
+        assert "innerHTML" not in text and "html:" not in text, name
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed on this host")
+def test_workflow_view_node_test_passes():
+    # fake DOM + fake clock: expiry at render, one 60 s timer, re-show after expiry
+    result = subprocess.run(
+        ["node", str(WEB / "js" / "workflow_view.test.mjs")], capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "passed" in result.stdout
