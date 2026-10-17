@@ -1257,10 +1257,12 @@ def build_app() -> FastAPI:
             status_code=403, headers={"Cache-Control": "no-store"},
         )
 
-    def _knowledge_gate(request: Request) -> JSONResponse | None:
-        """None = allowed; else the 403 body in the normal ok:false shape."""
+    def _knowledge_gate(request: Request, module: str = "knowledge") -> JSONResponse | None:
+        """None = allowed; else the 403 body in the normal ok:false shape.
+        `module` is the module whose routes these are (Infrastructure shares
+        the Knowledge allowlist but has its own on/off switch)."""
         config.reload_sources()
-        if module_config(config.sources, "knowledge") is None:
+        if module_config(config.sources, module) is None:
             raise HTTPException(status_code=404, detail="Not Found")
         # CORS above allows any origin, so a page on another site could read
         # these responses. Browsers send Origin on cross-site requests: refuse
@@ -1278,7 +1280,7 @@ def build_app() -> FastAPI:
 
     _KNOWLEDGE_HTTP = {
         "not_found": 404, "not_configured": 503, "token_file_missing": 503,
-        "token_file_permissions": 503, "token_file_invalid": 503,
+        "token_file_permissions": 503, "token_file_invalid": 503, "book_not_found": 503,
     }
 
     def _knowledge_error(err: KnowledgeError) -> JSONResponse:
@@ -1325,6 +1327,15 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Not Found")
         try:
             return _knowledge_ok(await knowledge.page(page_id))
+        except KnowledgeError as err:
+            return _knowledge_error(err)
+
+    @app.get("/api/infrastructure")
+    async def infrastructure(request: Request):
+        if (refused := _knowledge_gate(request, "infrastructure")) is not None:
+            return refused
+        try:
+            return _knowledge_ok(await knowledge.infrastructure())
         except KnowledgeError as err:
             return _knowledge_error(err)
 

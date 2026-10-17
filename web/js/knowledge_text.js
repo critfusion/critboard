@@ -4,7 +4,7 @@
 // Rule: an outage is stated plainly with both times. Nothing here ever says
 // the data is current when the last request failed.
 
-export function describeProblem(error, status, fmt, host = "") {
+export function describeProblem(error, status, fmt, host = "", label = "Knowledge") {
   if (!error) return null;
   const since = status && status.down_since ? fmt(status.down_since) : null;
   const last = status && status.last_success ? fmt(status.last_success) : "never";
@@ -26,6 +26,6 @@ export function describeProblem(error, status, fmt, host = "") {
       return null;
     default:
       // not_configured / token_file_*: the operator's setup, not an outage.
-      return `Knowledge module setup problem: ${error.message}`;
+      return `${label} module setup problem: ${error.message}`;
   }
 }

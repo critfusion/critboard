@@ -183,7 +183,7 @@ DEFAULT_SOURCES = {
     # Opt-in modules. Absent = all off = the default board (agents + beads).
     # See modules.py and config/sources.example.json's _readme.
     "modules": {
-        "infrastructure": {"enabled": False},
+        "infrastructure": {"enabled": False, "book_slug": "infrastructure", "stale_after_days": 90},
         "workflow": {"enabled": False},
         "knowledge": {
             "enabled": False,

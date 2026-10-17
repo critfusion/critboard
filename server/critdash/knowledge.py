@@ -32,6 +32,8 @@ from urllib.parse import quote
 
 import httpx
 
+from .infrastructure import book_slug as cfg_book_slug
+from .infrastructure import parse_record, stale_after_days
 from .modules import module_config
 
 logger = logging.getLogger("critdash.knowledge")
@@ -49,6 +51,8 @@ MAX_PAGE_BYTES = 8_000_000
 HTML_INPUT_MAX_CHARS = 1_000_000
 PREVIEW_INPUT_MAX_CHARS = 10_000
 DEADLINE_FACTOR = 2.0
+INFRA_MAX_PAGES = 50
+INFRA_CONCURRENCY = 5
 
 _BLOCK_TAGS = {
     "p", "div", "br", "li", "ul", "ol", "tr", "table", "blockquote", "pre",
@@ -64,7 +68,7 @@ def now_iso() -> str:
 class KnowledgeError(Exception):
     """code: not_configured | token_file_missing | token_file_permissions |
     token_file_invalid | unreachable | auth_failed | upstream_error |
-    upstream_too_large | not_found. http_status is the status BookStack returned, if any."""
+    upstream_too_large | not_found | book_not_found. http_status is the status BookStack returned, if any."""
 
     def __init__(self, code: str, message: str, http_status: int | None = None):
         self.code = code
@@ -335,6 +339,67 @@ class BookStackAdapter:
             },
             "edit_url": edit_url,
             "open_url": f"{base}/link/{page_id}",
+        }
+
+    async def infrastructure(self, now: datetime | None = None) -> dict:
+        """Records from the pages of one book (modules.infrastructure). One
+        deadline covers the whole read. Any failure fails the whole call: a
+        partial list is never returned as if it were the full inventory."""
+        if module_config(self._sources, "knowledge") is None:
+            raise KnowledgeError(
+                "not_configured", "infrastructure reads BookStack through modules.knowledge: enable it first"
+            )
+        _, timeout = self._settings()
+        try:
+            return await asyncio.wait_for(self._infrastructure(now or datetime.now(UTC)),
+                                          timeout * DEADLINE_FACTOR)
+        except TimeoutError:
+            logger.warning("bookstack infrastructure read exceeded its overall deadline")
+            err = KnowledgeError("unreachable", "BookStack did not finish in time")
+            self._record_failure(err)
+            raise err from None
+
+    async def _infrastructure(self, now: datetime) -> dict:
+        base, _ = self._settings()
+        cfg = module_config(self._sources, "infrastructure") or {}
+        slug, stale_days = cfg_book_slug(cfg), stale_after_days(cfg)
+        found = await self._get("/api/books", {"filter[slug]": slug, "count": 5})
+        book = next((b for b in found.get("data") or []
+                     if isinstance(b, dict) and b.get("slug") == slug and _is_int(b.get("id"))), None)
+        if book is None:
+            raise KnowledgeError("book_not_found", f"no BookStack book with slug '{slug}'")
+        listing = await self._get(
+            "/api/pages", {"filter[book_id]": book["id"], "count": INFRA_MAX_PAGES}
+        )
+        ids = [p["id"] for p in listing.get("data") or [] if isinstance(p, dict) and _is_int(p.get("id"))]
+        total = listing.get("total") if _is_int(listing.get("total")) else len(ids)
+        sem = asyncio.Semaphore(INFRA_CONCURRENCY)
+
+        async def read(page_id: int):
+            async with sem:
+                try:
+                    return await self._get(f"/api/pages/{page_id}", max_bytes=MAX_PAGE_BYTES)
+                except KnowledgeError as err:
+                    if err.code == "not_found":  # deleted since the listing
+                        return None
+                    raise
+
+        pages = await asyncio.gather(*(read(i) for i in ids[:INFRA_MAX_PAGES]), return_exceptions=True)
+        for item in pages:
+            if isinstance(item, BaseException):
+                raise item
+        records = [
+            parse_record(p, base_url=base, book_slug=slug, now=now, stale_days=stale_days)
+            for p in pages if p is not None
+        ]
+        records.sort(key=lambda r: (r["kind"].lower(), r["title"].lower()))
+        return {
+            "book": {"name": str(book.get("name") or ""), "slug": slug,
+                     "url": f"{base}/books/{quote(slug, safe='')}"},
+            "records": records,
+            "total": total,
+            "truncated": total > len(ids[:INFRA_MAX_PAGES]),
+            "stale_after_days": stale_days,
         }
 
 

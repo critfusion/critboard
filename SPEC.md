@@ -255,8 +255,8 @@ request, so a change needs no restart.
   `Live | <enabled views>` appears. The view is the `?view=<name>` query parameter (never the hash:
   the hash is the bead/agent deep link). Switching only toggles `hidden`; it never rebuilds the Live
   grid or closes the detail popup, so unsaved text survives. The TODAY/7D/30D filter belongs to Live
-  and is hidden on other views. `infrastructure` and `workflow` are reserved: enabling them shows a
-  placeholder until their phases land.
+  and is hidden on other views. `workflow` is reserved: enabling it shows a placeholder until its
+  phase lands.
 - `modules.knowledge` is a read-only window onto BookStack. Server-side only: the API token id and
   secret come from `bookstack.token_file` (one line `<id>:<secret>`, mode 600; refused if group or
   others can read it) and never reach the browser, a response body or a log. Redirects are not
@@ -274,6 +274,53 @@ request, so a change needs no restart.
   - Module off -> all three answer 404. A request with an `Origin` host that differs from `Host` gets
     403 (CORS elsewhere is open; this keeps another site from reading wiki content).
   - Read-only: editing is the "Edit in BookStack" link to BookStack's own editor.
+- `modules.infrastructure` is a read-only view of the pages in one BookStack book. Config:
+  `{"enabled": true, "book_slug": "infrastructure", "stale_after_days": 90}` (`book_slug` default
+  `infrastructure`; `stale_after_days` an integer 1 to 3650, anything else means 90). It reads BookStack
+  through `modules.knowledge` (base_url, token_file, timeout_s, `allowed_hosts`, one status block), so
+  `modules.knowledge` must be enabled and configured; if not, the endpoint answers `not_configured`
+  (HTTP 503). Infrastructure on with Knowledge off does not open the Knowledge routes, and the reverse.
+  - `GET /api/infrastructure` -> `{"ok":true,"book":{name,slug,url},"records":[...],"total","truncated",
+    "stale_after_days","fetched_at","status":{...}}`. Same gate as `/api/knowledge/*` (module off -> 404;
+    foreign Host or Origin -> 403 `host_not_allowed` / `origin_not_allowed`), same `ok:false` error shape
+    and `status` block (`ok`, `last_success`, `down_since`, `error`). No token or token path in any body.
+  - Reads: `GET /api/books?filter[slug]=`, `GET /api/pages?filter[book_id]=&count=50`, then
+    `GET /api/pages/{id}` per page (5 at a time). At most 50 pages; `truncated` is true and `total`
+    says how many exist when there are more. One overall deadline of 2 x `timeout_s` covers the whole
+    read. Any failure (outage, auth, oversize page) fails the whole call: a partial list is never returned
+    as the inventory. A page deleted between the listing and its read is skipped. No book with the slug ->
+    `book_not_found` (503, setup problem, not an outage). Nothing is cached.
+  - Records are sorted by `kind`, then title. `kind` `unknown` sorts after the named kinds.
+
+#### Infrastructure record contract
+
+One page = one record. A field the page does not state is the string `unknown` (lists are empty
+and the view shows `unknown`). The server never guesses a value.
+
+- Provenance table: the first table on the page, with header `| Field | Value |`. Rows (field names
+  match without regard to case): `Source repo`, `Source path`, `Source git SHA`, `Live check`,
+  `Class`, `Status`. No such table, a missing row, an empty cell, or `-`, `n/a`, `none`, `tbd`, `?`
+  -> `unknown`. A row with fewer than two cells is skipped.
+- Tags (name/value, name matches without regard to case): `kind` (host, service, repo, ...), `owner`,
+  `environment`, `purpose` (first non-empty wins), and `runbook`, `backup`, `related` (may repeat;
+  duplicates collapse). A `runbook` or `backup` value is a link only if it is an `http(s)` URL or a
+  path that starts with a single `/` (joined to the wiki base_url). Anything else is shown as text.
+  `related` is text: it names other assets, services or repos.
+- Also returned: `title`, `url` (`<base_url>/books/<book_slug>/page/<page slug>`), `updated_at`,
+  `updated_by` (name).
+- `status` is one of `current`, `needs-verification`, `contradicted`, `stale`, `unknown`:
+  - The table `Status` is read without regard to case; spaces and `_` count as `-`. Other text -> `unknown`.
+  - Age counts from the `Live check` date (`verified_basis: "live_check"`). With no readable date
+    (absent, `unknown`, or text that does not start with `YYYY-MM-DD`, or a date more than one day
+    ahead) it counts from the page's `updated_at` (`verified_basis: "page_updated"`); with neither,
+    `"none"`.
+  - Older than `stale_after_days` -> `stale`, whatever the table says, except `contradicted`, which is kept.
+  - `current` without a readable Live check date -> `needs-verification`: a page edit is not a check.
+  - `last_verified` is the Live check time, or `unknown`. It is never the page edit time.
+  - `status_reason` says why a status differs from the table.
+- The view shows status as a word in a badge (not colour alone); `stale` and `unknown` cards have a dashed
+  border. On an outage it keeps the records from the last good fetch in the page, dimmed, with the fetch
+  time, the time BookStack went down and the last success.
 
 ### Bead reply — send back / close (off by default)
 
