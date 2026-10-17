@@ -12,8 +12,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,6 +46,9 @@ from .collectors.worktrees import WorktreesCollector
 from .config import Config, load_config
 from .ctx import AppContext
 from .history import InvalidWindowError, bucket_count, build_grouped_history, parse_window
+from .knowledge import BookStackAdapter, KnowledgeError
+from .knowledge import now_iso as knowledge_now_iso
+from .modules import enabled_modules, module_config
 from .pricing import compute_cost_usd
 from .state import SnapshotStore
 from .store import Store, zero_fill_daily, zero_fill_hourly
@@ -1220,6 +1224,75 @@ def build_app() -> FastAPI:
         config.sources.update(updates)
 
         return JSONResponse(_update_settings_view())
+
+    # ---- opt-in modules (see modules.py; off unless sources.json enables) ----
+    knowledge = BookStackAdapter(config.sources)
+    app.state.knowledge = knowledge  # exposed for tests: inject a fake transport
+
+    @app.get("/api/modules")
+    async def get_modules():
+        config.reload_sources()
+        return JSONResponse({"enabled": enabled_modules(config.sources)})
+
+    def _knowledge_gate(request: Request) -> None:
+        config.reload_sources()
+        if module_config(config.sources, "knowledge") is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+        # CORS above allows any origin, so a page on another site could read
+        # these responses. Browsers send Origin on cross-site requests: refuse
+        # any whose Origin host differs from the Host the request came to.
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).netloc != request.headers.get("host"):
+            raise HTTPException(status_code=403, detail="cross-origin request refused")
+
+    _KNOWLEDGE_HTTP = {
+        "not_found": 404, "not_configured": 503, "token_file_missing": 503,
+        "token_file_permissions": 503, "token_file_invalid": 503,
+    }
+
+    def _knowledge_error(err: KnowledgeError) -> JSONResponse:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": {"code": err.code, "message": err.message, "http_status": err.http_status},
+                "status": knowledge.status(),
+            },
+            status_code=_KNOWLEDGE_HTTP.get(err.code, 502),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    def _knowledge_ok(data: dict) -> JSONResponse:
+        return JSONResponse(
+            {"ok": True, **data, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/knowledge/status")
+    async def knowledge_status(request: Request):
+        _knowledge_gate(request)
+        try:
+            await knowledge.probe()
+        except KnowledgeError as err:
+            return _knowledge_error(err)
+        return _knowledge_ok({})
+
+    @app.get("/api/knowledge/search")
+    async def knowledge_search(request: Request, q: str = Query("", max_length=200)):
+        _knowledge_gate(request)
+        try:
+            return _knowledge_ok(await knowledge.search(q))
+        except KnowledgeError as err:
+            return _knowledge_error(err)
+
+    @app.get("/api/knowledge/page/{page_id}")
+    async def knowledge_page(request: Request, page_id: int):
+        _knowledge_gate(request)
+        if page_id < 1:
+            raise HTTPException(status_code=404, detail="Not Found")
+        try:
+            return _knowledge_ok(await knowledge.page(page_id))
+        except KnowledgeError as err:
+            return _knowledge_error(err)
 
     web_dir = config.dashboard_root / "web"
     if web_dir.exists():

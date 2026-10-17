@@ -180,6 +180,16 @@ DEFAULT_SOURCES = {
     # bind_host: 0.0.0.0 on a LAN) can set this false to make the dashboard
     # read-only from the browser; both POSTs then return 403.
     "allow_config_writes": True,
+    # Opt-in modules. Absent = all off = the default board (agents + beads).
+    # See modules.py and config/sources.example.json's _readme.
+    "modules": {
+        "infrastructure": {"enabled": False},
+        "workflow": {"enabled": False},
+        "knowledge": {
+            "enabled": False,
+            "bookstack": {"base_url": "", "token_file": "", "timeout_s": 8},
+        },
+    },
 }
 
 # Fallback used only if config/pricing.json is missing or fails to parse.
@@ -355,6 +365,10 @@ class Config:
             logger.warning("config/sources.json did not contain a JSON object -- ignoring reload")
             return False
         self.sources.update(data)
+        # update() cannot delete: a "modules" key removed from the file would
+        # otherwise stay enabled in memory until restart.
+        if "modules" not in data:
+            self.sources.pop("modules", None)
         return True
 
     def refresh_multiplier(self) -> float:
