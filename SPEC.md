@@ -311,8 +311,8 @@ request, so a change needs no restart.
     `id, role, runner, model, provider, account, host, coordinated, status, repo, bead, subagents_active,
     last_activity, cost_estimate_today_usd, cost_basis:"estimate"`. Each of `role`, `runner`, `model`,
     `provider`, `account`, `host`, `coordinated` is its own field and is the string `unknown` when the data
-    does not state it; one unknown never changes another. `role` is read from the session title only when
-    it names exactly one of orchestrator, coder, reviewer, worker. `provider` is read from the model id
+    does not state it; one unknown never changes another. `role` is read only from a session title that starts with
+    `role:<name>` (orchestrator, coder, reviewer, worker); a role word elsewhere in a title is not read. `provider` is read from the model id
     (`provider/model`, or a known family prefix). `account` and `coordinated` have no collector yet and are
     always `unknown`. `cost_estimate_today_usd` is priced from local token counts: an estimate, not spend,
     not remaining quota.
@@ -324,14 +324,19 @@ request, so a change needs no restart.
     `review` (for example `waiting-review`). `review_gate`: `no_review_marked` (no review label; this is
     not a claim that none is needed), `named` (a reviewer and an approver are named; the review itself is
     not verified), or `missing` (review needed and `gate_missing` lists `reviewer`, `approver` or
-    `independent_reviewer` when every reviewer equals the coder). Missing items sort first. The view treats
+    `independent_reviewer` (a reviewer is the coder), `independent_approver` (an approver is the coder:
+    self-approval is not allowed) or `coder_unknown`). The coder names are the `coder:` label and the
+    assignee; a reviewer or approver equal to either is not independent. Label values may be comma
+    separated (`reviewer:a,b`) and each name is checked. No coder name at all is `coder_unknown`. Missing items sort first. The view treats
     any unknown gate value as missing.
   - `availability`: `{ttl_s, rows[], note}`. Each row: `provider, basis, state, values, observed_at,
     expires_at, expired, detail`. `expires_at = observed_at + ttl_s`. `basis` is `provider-observed` (the
     last manual quota check got an answer from the provider API), `owner-reported` (typed into
     `modules.workflow.owner_reported`), or `unknown` (never checked, check failed, no provider endpoint,
     no readable time, or a time in the future). At or after `expires_at` the row is `state:"stale"`,
-    `expired:true`, `values:null`. `values` (remaining, limit, used, unit, period, resets_at) exist only on
+    `expired:true`, `values:null`. The browser repeats the check against its own clock from `expires_at`
+    when it renders, and every 60 seconds while the view is shown (the dimmed last-good copy too), so a
+    reading that expires on an open page turns stale without a refetch. `values` (remaining, limit, used, unit, period, resets_at) exist only on
     a fresh provider-observed row. Rows come from the cached quota check (`/api/quota`); the view makes no
     provider call. `ttl_s` is `availability_ttl_s` (integer 60 to 86400, otherwise 1800).
   - UI: a `Workflow` tab with four panels (Intended policy, Observed runtime, Assignments, Availability).

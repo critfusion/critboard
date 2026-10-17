@@ -22,7 +22,7 @@ SLUG = "workflow-policy-projections"
 
 def _agent(**over):
     a = {"id": "s1", "kind": "claude", "model": "claude-opus-5", "host": "host-a", "status": "working",
-         "title": "Orchestrator for example-org/repo", "repo": "repo", "bead": "ex-1", "subagents_active": 2,
+         "title": "role:orchestrator example-org/repo", "repo": "repo", "bead": "ex-1", "subagents_active": 2,
          "last_activity": "2026-10-17T11:59:00Z", "cost_today_usd": 1.23}
     a.update(over)
     return a
@@ -60,10 +60,12 @@ def test_one_missing_field_does_not_collapse_the_others(missing, expect):
             assert gone[key] == full[key], key
 
 
-def test_role_comes_only_from_a_title_that_names_exactly_one():
-    assert wf.observed_sessions([_agent(title="Reviewer pass")])[0]["role"] == "reviewer"
-    assert wf.observed_sessions([_agent(title="coder and reviewer")])[0]["role"] == "unknown"
-    assert wf.observed_sessions([_agent(title="CritBoard")])[0]["role"] == "unknown"
+def test_role_comes_only_from_an_explicit_title_marker():
+    assert wf.observed_sessions([_agent(title="role:reviewer pass")])[0]["role"] == "reviewer"
+    assert wf.observed_sessions([_agent(title="  Role: Coder repo-a")])[0]["role"] == "coder"
+    for title in ("Reviewer pass", "Orchestrator for repo", "coder and reviewer", "fix the reviewer bug",
+                  "role:boss", "x role:coder", "CritBoard", None):
+        assert wf.observed_sessions([_agent(title=title)])[0]["role"] == "unknown", title
 
 
 def test_provider_comes_only_from_the_model_id():
@@ -339,3 +341,54 @@ def test_cross_origin_request_is_refused(wfc):
 def test_foreign_host_is_refused(wfc):
     resp = wfc.get("/api/workflow", headers={"host": "rebind.example.com"})
     assert resp.status_code == 403 and resp.json()["error"]["code"] == "host_not_allowed"
+
+
+# ---------------- review round 2 ----------------
+
+def _gate(labels, **bead):
+    [a] = wf.assignments([_bead(labels=labels, **bead)], [])
+    return a
+
+
+def test_approver_equal_to_the_coder_is_self_approval():
+    a = _gate(["waiting-review", "reviewer:rev-a", "approver:ACTOR-A"])
+    assert a["review_gate"] == "missing" and a["gate_missing"] == ["independent_approver"]
+
+
+def test_reviewer_and_approver_are_checked_against_label_coder_and_assignee():
+    # coder label differs from the assignee: either name is a coder
+    a = _gate(["waiting-review", "coder:coder-b", "reviewer:actor-a", "approver:app-a"])
+    assert a["gate_missing"] == ["independent_reviewer"]
+    a = _gate(["waiting-review", "coder:coder-b", "reviewer:rev-a", "approver:coder-b"])
+    assert a["gate_missing"] == ["independent_approver"]
+    a = _gate(["waiting-review", "coder:coder-b", "reviewer:rev-a", "approver:actor-a"])
+    assert a["gate_missing"] == ["independent_approver"]
+
+
+def test_unknown_coder_is_never_badged_named():
+    a = _gate(["waiting-review", "reviewer:rev-a", "approver:app-a"], assignee=None)
+    assert a["coder"] == "unknown" and a["review_gate"] == "missing" and a["gate_missing"] == ["coder_unknown"]
+    assert wf.assignments([_bead(assignee="", labels=["waiting-review", "reviewer:r", "approver:a"])], [])[0]["review_gate"] == "missing"
+
+
+def test_comma_separated_label_values_split_and_each_is_checked():
+    a = _gate(["waiting-review", "reviewer:rev-a,rev-b", "approver:app-a, app-b"])
+    assert a["reviewers"] == ["rev-a", "rev-b"] and a["approvers"] == ["app-a", "app-b"]
+    assert a["review_gate"] == "named"
+    a = _gate(["waiting-review", "reviewer:rev-a,actor-a", "approver:app-a"])
+    assert a["gate_missing"] == ["independent_reviewer"]
+    a = _gate(["waiting-review", "reviewer:rev-a", "approver:app-a,Actor-A"])
+    assert a["gate_missing"] == ["independent_approver"]
+    assert _gate(["waiting-review", "reviewer:,", "approver:app-a"])["gate_missing"] == ["reviewer"]
+
+
+def test_provider_reading_needs_the_provider_api_source():
+    [r] = _avail([_entry(ok=True, source="manual-entry")])
+    assert r["basis"] == "unknown" and r["state"] == "unknown" and r["values"] is None
+
+
+def test_owner_reports_are_capped():
+    many = [{"provider": f"p{i}", "state": "up", "observed_at": "2026-10-17T11:59:00Z"}
+            for i in range(60)]
+    assert wf.MAX_OWNER_REPORTS == 50
+    assert len(_avail([], owner=many)) == 50

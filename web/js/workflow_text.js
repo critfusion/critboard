@@ -22,6 +22,8 @@ export const GATE_MISSING_WORDS = {
   reviewer: "no reviewer named",
   approver: "no final approver named",
   independent_reviewer: "reviewer is the coder",
+  independent_approver: "approver is the coder (self-approval)",
+  coder_unknown: "coder unknown",
 };
 
 export function gateMissingText(missing) {
@@ -35,6 +37,23 @@ export const BASIS_LABELS = {
 };
 
 export const basisLabel = (b) => BASIS_LABELS[Object.hasOwn(BASIS_LABELS, b) ? b : "unknown"];
+
+/** True when the row is past expires_at at `nowMs`, or says it has expired.
+ * An observed row with no readable expires_at cannot be trusted: expired. */
+export function isExpired(row, nowMs) {
+  if (!row || row.expired || row.state === "stale") return true;
+  if (row.state === "unknown" || !row.state) return false;
+  const at = Date.parse(row.expires_at);
+  return Number.isNaN(at) || nowMs >= at;
+}
+
+/** The row as it may be shown now. The server's `expired` is a snapshot from
+ * fetch time; this re-checks against the browser clock at render time. A row
+ * that has expired since drops its numbers and becomes stale. */
+export function effectiveRow(row, nowMs) {
+  if (!row || !isExpired(row, nowMs)) return row;
+  return { ...row, state: "stale", expired: true, values: null };
+}
 
 /** Badge text for an availability row. Expired and unknown never read as available. */
 export function availabilityBadge(row) {

@@ -32,7 +32,7 @@ _MODEL_PROVIDERS = {"claude": "anthropic", "gpt": "openai", "grok": "xai", "kimi
                     "gemini": "google"}
 _BEAD_LABEL_FIELDS = {"coder": "coder", "reviewer": "reviewers", "approver": "approvers",
                       "reviewed": "reviewed_refs"}
-_ROLE_RE = re.compile(r"\b(" + "|".join(ROLES) + r")\b", re.I)
+_ROLE_RE = re.compile(r"^\s*role:\s*(" + "|".join(ROLES) + r")\b", re.I)
 
 
 def policy_book_slug(cfg: dict) -> str:
@@ -99,9 +99,10 @@ def policy_unavailable(code: str, message: str) -> dict:
 # ---------------- observed ----------------
 
 def _role(agent: dict) -> str:
-    """A role only when the session's own title names exactly one."""
-    found = {m.lower() for m in _ROLE_RE.findall(str(agent.get("title") or ""))}
-    return found.pop() if len(found) == 1 else UNKNOWN
+    """A role only from an explicit `role:<name>` marker at the start of the
+    session title. A role word elsewhere in a title is not a statement."""
+    m = _ROLE_RE.match(str(agent.get("title") or ""))
+    return m.group(1).lower() if m else UNKNOWN
 
 
 def _provider(model) -> str:
@@ -159,8 +160,10 @@ def _bead_people(labels) -> dict:
             continue
         if field == "coder":
             out["coder"] = out["coder"] or value
-        elif value not in out[field]:
-            out[field].append(value)
+        else:
+            for part in (v.strip() for v in value.split(",")):
+                if part and part not in out[field]:
+                    out[field].append(part)
     return out
 
 
@@ -188,14 +191,20 @@ def assignments(beads, agents) -> list[dict]:
         assignee = b.get("assignee") if isinstance(b.get("assignee"), str) and b.get("assignee") else None
         coder = people["coder"] or assignee
         needs = _needs_review(labels)
+        # Both names count as the coder: the `coder:` label and the assignee.
+        coders = {n.lower() for n in (people["coder"], assignee) if n}
         missing: list[str] = []
         if needs:
+            if not coders:
+                missing.append("coder_unknown")
             if not people["reviewers"]:
                 missing.append("reviewer")
-            elif coder and all(r.lower() == coder.lower() for r in people["reviewers"]):
+            elif any(r.lower() in coders for r in people["reviewers"]):
                 missing.append("independent_reviewer")
             if not people["approvers"]:
                 missing.append("approver")
+            elif any(r.lower() in coders for r in people["approvers"]):
+                missing.append("independent_approver")
         gate = "no_review_marked" if not needs else "missing" if missing else "named"
         out.append({
             "id": _text(b.get("id")), "title": _text(b.get("title")),

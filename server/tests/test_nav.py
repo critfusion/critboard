@@ -61,3 +61,9 @@ def test_workflow_view_never_writes_server_text_as_html():
     for name in ("workflow_view.js", "workflow_text.js"):
         text = (WEB / "js" / name).read_text()
         assert "innerHTML" not in text and "html:" not in text, name
+
+
+def test_workflow_view_rechecks_expiry_at_render_and_on_a_timer():
+    view = (WEB / "js" / "workflow_view.js").read_text()
+    assert "effectiveRow(raw, nowMs)" in view and "Date.now()" in view
+    assert "setInterval(() => { if (lastGood && !root.hidden) render(lastGood); }, RERENDER_MS)" in view and "RERENDER_MS = 60000" in view

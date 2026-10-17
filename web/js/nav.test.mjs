@@ -10,7 +10,7 @@ import {
   groupByKind, safeHref, statusCounts, statusKey, statusLabel, verifiedText,
 } from "./infra_text.js";
 import {
-  availabilityBadge, availabilityKey, costText, gateKey, gateLabel, gateMissingText, policyStateText, valuesText,
+  availabilityBadge, availabilityKey, costText, effectiveRow, isExpired, gateKey, gateLabel, gateMissingText, policyStateText, valuesText,
 } from "./workflow_text.js";
 
 let passed = 0;
@@ -228,6 +228,33 @@ test("an expired or unknown reading never reads as observed", () => {
   assert.equal(availabilityBadge({ state: "available", basis: "owner-reported", expired: false }), "AVAILABLE");
   assert.equal(availabilityBadge(null), "STALE");
   assert.equal(availabilityKey({ expired: true }), "stale");
+});
+
+test("expiry is judged from expires_at at render time", () => {
+  const row = { state: "observed", basis: "provider-observed", expired: false, expires_at: "2026-10-17T12:00:00Z",
+    values: { remaining: 5 } };
+  const t = Date.parse("2026-10-17T12:00:00Z");
+  assert.equal(isExpired(row, t - 1), false);
+  assert.equal(isExpired(row, t), true);
+  assert.deepEqual(effectiveRow(row, t - 1), row);
+  const gone = effectiveRow(row, t + 1000);
+  assert.equal(gone.state, "stale");
+  assert.equal(gone.expired, true);
+  assert.equal(gone.values, null);
+  assert.equal(availabilityBadge(gone), "STALE");
+  assert.equal(row.values.remaining, 5); // the input row is not changed
+});
+
+test("an observed row with no readable expires_at is treated as expired", () => {
+  for (const at of [undefined, null, "", "soon"]) {
+    assert.equal(isExpired({ state: "observed", expires_at: at }, 0), true, String(at));
+  }
+  assert.equal(isExpired({ state: "unknown", expires_at: null }, 0), false);
+  assert.equal(effectiveRow({ state: "unknown", values: null }, 0).state, "unknown");
+});
+
+test("the new gate parts are named in words", () => {
+  assert.equal(gateMissingText(["independent_approver", "coder_unknown"]), "approver is the coder (self-approval); coder unknown");
 });
 
 test("reading text is only built from numbers", () => {

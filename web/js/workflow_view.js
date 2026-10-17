@@ -11,10 +11,11 @@ import { describeProblem } from "./knowledge_text.js";
 import { isUnknown, safeHref, statusKey, statusLabel } from "./infra_text.js";
 import {
   availabilityBadge, availabilityKey, basisLabel, costText, gateKey, gateLabel, gateMissingText,
-  policyStateText, valuesText,
+  effectiveRow, policyStateText, valuesText,
 } from "./workflow_text.js";
 import { el, fmtAbsTime, fmtRelTime } from "./utils.js";
 
+const RERENDER_MS = 60000;
 const fmt = (iso) => `${fmtAbsTime(iso)} (${fmtRelTime(iso)})`;
 
 async function api(path) {
@@ -141,7 +142,8 @@ function assignmentsPanel(block) {
   ].filter(Boolean));
 }
 
-function availabilityCard(r) {
+function availabilityCard(raw, nowMs) {
+  const r = effectiveRow(raw, nowMs);
   const k = availabilityKey(r);
   const text = valuesText(r.values);
   return el("article", { class: `infra-rec wf-av-${k}` }, [
@@ -159,10 +161,10 @@ function availabilityCard(r) {
   ]);
 }
 
-function availabilityPanel(av) {
+function availabilityPanel(av, nowMs) {
   return panel("wf-h-av", "Availability", `Provider readings expire after ${Math.round(av.ttl_s / 60)} minutes. An expired reading is stale.`, [
     av.rows.length
-      ? el("div", { class: "infra-cards" }, av.rows.map(availabilityCard))
+      ? el("div", { class: "infra-cards" }, av.rows.map((r) => availabilityCard(r, nowMs)))
       : el("p", { class: "infra-unknown" }, "No availability readings."),
   ]);
 }
@@ -176,12 +178,18 @@ export function mountWorkflow(root) {
 
   let lastGood = null;
 
+  // Expiry is judged against the browser clock at every render, so a reading
+  // that expires while the page sits open turns stale without a refetch.
+  function render(body) {
+    panels.replaceChildren(
+      policyPanel(body.policy), observedPanel(body.observed),
+      assignmentsPanel(body.assignments), availabilityPanel(body.availability, Date.now()));
+  }
+
   function showOk(body) {
     lastGood = body;
     panels.classList.remove("infra-outdated");
-    panels.replaceChildren(
-      policyPanel(body.policy), observedPanel(body.observed),
-      assignmentsPanel(body.assignments), availabilityPanel(body.availability));
+    render(body);
     status.className = "kb-status";
     status.textContent = `Fetched ${fmtAbsTime(body.fetched_at)}.`;
   }
@@ -211,5 +219,7 @@ export function mountWorkflow(root) {
   }
 
   refresh.addEventListener("click", load);
+  // Re-render every minute while the view is shown, the dimmed last-good copy included.
+  setInterval(() => { if (lastGood && !root.hidden) render(lastGood); }, RERENDER_MS);
   return { onShow: load };
 }

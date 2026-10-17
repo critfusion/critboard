@@ -650,6 +650,7 @@ writes nothing.
 "workflow": {
   "enabled": true,
   "policy_book_slug": "workflow-policy-projections",
+  "stale_after_days": 90,
   "availability_ttl_s": 1800,
   "owner_reported": []
 }
@@ -659,13 +660,17 @@ writes nothing.
 
 What it shows, and what it will not claim:
 
-- Role, runner, model, provider, account and host are separate fields. A
+- Role comes only from a session title that starts with `role:<name>`
+  (orchestrator, coder, reviewer, worker). Runner, model, provider, account and host are separate fields. A
   field the data does not state is `unknown`. `account` and `coordinated`
   are always `unknown` in this version (no collector reads them).
 - Assignments list in-progress beads. A bead with a review label and no
   `reviewer:<name>` and `approver:<name>` label shows `REVIEW GATE MISSING`.
   The reviewer is never guessed from the assignee. Labels read:
   `coder:<name>`, `reviewer:<name>`, `approver:<name>`, `reviewed:<ref>`.
+  A value may list several names, comma separated (`reviewer:a,b`). A
+  reviewer or approver who is the coder (the `coder:` label or the assignee)
+  is not independent, and a bead with no coder at all is also missing.
 - Availability readings expire after `availability_ttl_s` seconds (60 to
   86400, default 1800). An expired reading shows `STALE` and its numbers are
   hidden. `owner_reported` is a list of
@@ -745,7 +750,7 @@ if a key is missing entirely. Notable ones for a fresh install:
   `enabled: false` by default; a default install shows no view bar. See
   steps 9, 9b and 9c above. `modules.infrastructure` takes `book_slug` and
   `stale_after_days`. `modules.workflow` takes `policy_book_slug`,
-  `availability_ttl_s` and `owner_reported`. `modules.knowledge.allowed_hosts` (list of hostnames, no
+  `stale_after_days`, `availability_ttl_s` and `owner_reported`. `modules.knowledge.allowed_hosts` (list of hostnames, no
   port, default none) admits extra `Host` names to the Knowledge routes;
   needed behind a proxy/DNS name or when bound to `0.0.0.0`.
 - `allow_self_update` -- `false` by default. Gates the "Update now" button
