@@ -1374,7 +1374,9 @@ def build_app() -> FastAPI:
                 {"ok": False, "error": {"code": "invalid_project",
                                         "message": "project must match ^[a-z0-9][a-z0-9._-]{0,63}$"}},
                 status_code=400, headers={"Cache-Control": "no-store"})
-        aliases = context_mod.parse_also(also)
+        # A repeated parameter is refused: FastAPI would keep only the last value.
+        repeated = len(request.query_params.getlist("also")) > 1
+        aliases = None if repeated else context_mod.parse_also(also)
         if aliases is None:
             return JSONResponse(
                 {"ok": False, "error": {"code": "invalid_also",

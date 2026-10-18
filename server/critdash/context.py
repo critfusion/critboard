@@ -214,11 +214,17 @@ def _ownership_item(a: dict) -> dict:
     }
 
 
+def _string_labels(bead: dict) -> set[str]:
+    """The bead's labels that are strings; anything else (a dict, a list) is ignored."""
+    raw = bead.get("labels")
+    return {x for x in raw if isinstance(x, str)} if isinstance(raw, list) else set()
+
+
 def ownership(project, snapshot: dict) -> dict:
     labels = set(_labels(project))
     beads = (snapshot.get("beads") or {}).get("items")
     # One pass over the beads: a bead on several of the labels is listed once.
-    mine = [b for b in beads if isinstance(b, dict) and labels & set(b.get("labels") or [])] \
+    mine = [b for b in beads if isinstance(b, dict) and labels & _string_labels(b)] \
         if isinstance(beads, list) else []
     # No agents are passed: the sessions never enter this section.
     items = workflow.assignments(mine, [])

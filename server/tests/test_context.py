@@ -465,13 +465,13 @@ def test_max_bytes_config_is_clamped(value, expect):
     assert ctx.max_bytes({} if value is None else {"max_bytes": value}) == expect
 
 
-def _worst(long, limit, n_beads=25):
+def _worst(long, limit, n_beads=25, also=None):
     rec = {"id": 1, "title": long, "slug": "proj-a-x", "url": "https://wiki.example.com/" + long,
            "updated_at": long, "status": long, "projects": [], "scopes": [],
            "source": {"repo": long, "path": long, "git_sha": long, "path_note": long, "git_sha_note": long},
            "canonical": {"repo": long, "location": long, "boundary": long}}
     return ctx.build(
-        "proj-a", projects=("ok", {"records": [rec]}), runbook_result=("ok", {"records": [rec] * 20}),
+        "proj-a", also=also, projects=("ok", {"records": [rec]}), runbook_result=("ok", {"records": [rec] * 20}),
         policy=("ok", {"records": [rec] * 20}), books=(PROJECTS, RUNBOOKS, POLICY),
         snapshot={"beads": {"items": [_bead(id=long, title=long, assignee=long, labels=["proj-a"])] * n_beads}},
         quota_response={"providers": [_entry(provider=long)] * 30}, wf_cfg={}, commit=COMMIT, now=NOW,
@@ -1016,3 +1016,36 @@ def test_the_size_cap_holds_with_labels(tmp_path, monkeypatch):
     resp = _get(c, "l0", also="l1,l2,l3,l4,l5")
     assert resp.status_code == 200 and len(resp.content) <= 8192
     assert "dropped:runbooks" in resp.json()["degraded"]
+
+
+# ---------------- review round: odd labels, repeated also, stub labels ----------------
+
+@pytest.mark.parametrize("odd", [{"a": 1}, ["x"], 5, None, True, 1.5])
+def test_a_non_string_bead_label_does_not_break_ownership(cc, odd):
+    cc.app.state.snap.snapshot["beads"]["items"] = [
+        _bead(id="odd", labels=["proj-a", odd]), _bead(id="only-odd", labels=[odd]), _bead(id="ok", labels=["proj-a"])]
+    resp = _get(cc, also="proj-b")
+    assert resp.status_code == 200
+    assert sorted(i["id"] for i in resp.json()["ownership"]["items"]) == ["odd", "ok"]
+
+
+@pytest.mark.parametrize("labels", ["proj-a", {"proj-a": 1}, 7, None])
+def test_a_bead_whose_labels_is_not_a_list_is_skipped(cc, labels):
+    cc.app.state.snap.snapshot["beads"]["items"] = [_bead(id="weird", labels=labels), _bead(id="ok", labels=["proj-a"])]
+    resp = _get(cc)
+    assert resp.status_code == 200 and [i["id"] for i in resp.json()["ownership"]["items"]] == ["ok"]
+
+
+@pytest.mark.parametrize("query", ["also=BAD&also=x", "also=x&also=BAD", "also=x&also=y", "also=&also=x"])
+def test_a_repeated_also_is_rejected_in_either_order(cc, query):
+    resp = cc.get(f"/api/context?project=proj-a&{query}")
+    assert resp.status_code == 400 and resp.json()["error"]["code"] == "invalid_also"
+
+
+def test_a_single_also_still_works(cc):
+    assert cc.get("/api/context?project=proj-a&also=proj-b").json()["labels"] == ["proj-a", "proj-b"]
+
+
+def test_the_over_cap_stub_carries_the_labels():
+    body = _worst("\u6f22" * 900, 1000, also=["proj-b", "proj-c"])
+    assert body["state"] == "over_cap" and body["labels"] == ["proj-a", "proj-b", "proj-c"]

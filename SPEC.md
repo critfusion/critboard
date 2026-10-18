@@ -366,13 +366,15 @@ sends no request to any AI provider and writes nothing.
   a rotated token leaves no entry behind. Known window: the key hashes the token file as read at the start
   of a request and the fetch reads the file again, so a token file replaced in those few milliseconds can
   cache a read under the old key. The next request sees the new token and empties the cache.
+  Likewise a request still running when the scope changes may store one entry under the old scope. It is
+  never served (every lookup is keyed on the current scope) and the next store or scope change purges it.
 - `GET /api/context?project=<slug>`. Same gate as `/api/workflow`: module off -> 404; foreign Host or
   Origin -> 403 `host_not_allowed` / `origin_not_allowed`. Then `project` must match
   `^[a-z0-9][a-z0-9._-]{0,63}$`, else 400 `{"ok":false,"error":{"code":"invalid_project"}}`. `Cache-Control:
   no-store`. Nothing is cached.
 - Optional `also=<label>,<label>`: alias labels for a project whose beads or pages sit under more than one
   label. At most 5 labels, comma separated, each matching the slug regex; duplicates (and the primary
-  label) are dropped; any other input returns 400 `invalid_also`. The labels used are echoed as `labels`
+  label) are dropped; any other input returns 400 `invalid_also`, including a repeated `also` parameter. The labels used are echoed as `labels`
   (primary first). The cache key does not include labels: the three books are read once for all of them.
 - With Knowledge off or down the wiki-backed sections report `state: "not_configured"` or
   `"unavailable"` with `error: <code>` and nothing else; `ownership` and `availability` still answer. A
