@@ -185,6 +185,8 @@ DEFAULT_SOURCES = {
     "modules": {
         "infrastructure": {"enabled": False, "book_slug": "infrastructure", "stale_after_days": 90},
         "workflow": {"enabled": False},
+        "context": {"enabled": False, "projects_book_slug": "projects", "runbooks_book_slug": "runbooks",
+                    "max_bytes": 16384},
         "knowledge": {
             "enabled": False,
             "bookstack": {"base_url": "", "token_file": "", "timeout_s": 8},

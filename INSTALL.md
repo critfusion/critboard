@@ -681,6 +681,44 @@ What it shows, and what it will not claim:
 - Cost figures are estimates from local token counts. They are not spend and
   not remaining quota.
 
+### 9d. Context endpoint (optional, read-only, API only)
+
+`GET /api/context?project=<slug>` gives an agent its project's context in
+one small JSON response: the project entrypoint page, standards, runbooks,
+in-progress beads for the project, availability freshness and the revisions
+it read. It has no view. It reads BookStack through the `modules.knowledge`
+settings (step 9) and the policy book of `modules.workflow` (9c); without
+Knowledge those parts say `not_configured` and the bead part still works.
+
+1. In BookStack, make a book for projects (default slug `projects`) and a
+   book for runbooks (default slug `runbooks`). Tag a project page
+   `project:<slug>`, or give it a slug that starts with `<slug>-`. Tag a
+   runbook `project:<slug>` or `scope:all`. An untagged runbook is not
+   returned. A project page may state `Canonical repo`, `Canonical
+   location` and `Dev/prod boundary` rows in a `| Field | Value |` table.
+2. In `config/sources.json` add, next to `knowledge`:
+
+```json
+"context": {
+  "enabled": true,
+  "projects_book_slug": "projects",
+  "runbooks_book_slug": "runbooks",
+  "max_bytes": 16384
+}
+```
+
+3. Check it. Use a Host name that is in the Knowledge allowlist:
+
+```bash
+curl -s "http://127.0.0.1:9999/api/context?project=<slug>" | head -c 600
+```
+
+   A bad `project` returns 400. With the module off the route returns 404.
+   The body never exceeds `max_bytes` (8192 to 262144); when it would, the
+   runbooks, then the standards, then the ownership list are dropped and
+   `degraded` says which. See SPEC.md, "Context endpoint", for every field
+   and the data boundary.
+
 ## Running it day to day
 
 | Command | What it does |
@@ -750,9 +788,9 @@ if a key is missing entirely. Notable ones for a fresh install:
   detection with e.g. `{"beads": {"enabled": false}}`.
 - `modules` -- opt-in Infrastructure / Workflow / Knowledge views. All
   `enabled: false` by default; a default install shows no view bar. See
-  steps 9, 9b and 9c above. `modules.infrastructure` takes `book_slug` and
+  steps 9, 9b, 9c and 9d above. `modules.infrastructure` takes `book_slug` and
   `stale_after_days`. `modules.workflow` takes `policy_book_slug`,
-  `stale_after_days`, `availability_ttl_s` and `owner_reported`. `modules.knowledge.allowed_hosts` (list of hostnames, no
+  `stale_after_days`, `availability_ttl_s` and `owner_reported`. `modules.context` takes `projects_book_slug`, `runbooks_book_slug`, `max_bytes` and `stale_after_days`. `modules.knowledge.allowed_hosts` (list of hostnames, no
   port, default none) admits extra `Host` names to the Knowledge routes;
   needed behind a proxy/DNS name or when bound to `0.0.0.0`.
 - `allow_self_update` -- `false` by default. Gates the "Update now" button

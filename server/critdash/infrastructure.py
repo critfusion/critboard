@@ -35,7 +35,17 @@ MAX_TAGS = 50
 # Worse first. When the table and a tag disagree, the earlier one wins.
 _STATUS_WORSE_FIRST = ("contradicted", "stale", "needs-verification", "unknown", "current")
 _TAG_SCALARS = ("kind", "owner", "environment", "purpose", "status", "class")
-_TAG_LISTS = {"runbook": "runbooks", "backup": "backups", "related": "related"}
+_TAG_LISTS = {"runbook": "runbooks", "backup": "backups", "related": "related",
+              "project": "projects", "scope": "scopes"}
+# Provenance fields whose value may end in a "(note)": the note moves to `<field>_note`.
+_NOTE_FIELDS = ("source_path", "source_git_sha")
+# Facts-table rows the context endpoint reads (normalized field name -> key).
+_FACT_ROWS = {
+    "canonical repo": "repo", "canonical repository": "repo",
+    "canonical location": "location", "canonical path": "location",
+    "dev prod boundary": "boundary", "dev vs prod boundary": "boundary",
+    "dev and prod boundary": "boundary", "boundary": "boundary",
+}
 
 
 def stale_after_days(cfg: dict) -> int:
@@ -52,8 +62,18 @@ def book_slug(cfg: dict) -> str:
 
 def _clean(value: str) -> str:
     """Cell/tag text -> value, or UNKNOWN when it says nothing."""
-    text = (value or "").strip().strip("`*").strip()[:MAX_TEXT_CHARS]
+    text = (value or "").replace("`", "").strip().strip("*").strip()[:MAX_TEXT_CHARS]
     return UNKNOWN if text.lower() in _EMPTY_VALUES else text
+
+
+def _split_note(value: str) -> tuple[str, str | None]:
+    """'e2125a5 (blob 2508d55)' -> ('e2125a5', 'blob 2508d55'). Only a trailing
+    parenthetical with no nested parentheses moves; an empty one is dropped."""
+    m = re.fullmatch(r"(.*?)\s*\(([^()]*)\)", value)
+    if not m or not m.group(1):
+        return value, None
+    note = m.group(2).strip()
+    return _clean(m.group(1)), (_clean(note) if note else None) or None
 
 
 # A status the page explicitly declares as `unknown` is a real value (worse than
@@ -80,7 +100,9 @@ def _cells(line: str) -> list[str]:
 
 def parse_provenance_table(markdown: str) -> dict[str, str]:
     """First `| Field | Value |` table in the page. Returns the six known
-    fields, each UNKNOWN when the table, the row or the value is absent."""
+    fields, each UNKNOWN when the table, the row or the value is absent.
+    Backticks are removed. A trailing "(note)" on the path or SHA moves to
+    `source_path_note` / `source_git_sha_note`, present only when there is one."""
     out = {name: UNKNOWN for name in _TABLE_FIELDS.values()}
     lines = (markdown or "").splitlines()
     start = None
@@ -101,6 +123,37 @@ def parse_provenance_table(markdown: str) -> dict[str, str]:
         key = _TABLE_FIELDS.get(re.sub(r"[`*_]", "", cells[0]).strip().lower())
         if key:
             out[key] = _status_text(cells[1]) if key == "status" else _clean(cells[1])
+            if key in _NOTE_FIELDS:
+                out[key], note = _split_note(out[key])
+                if note and note != UNKNOWN:
+                    out[key + "_note"] = note
+    return out
+
+
+def parse_facts(markdown: str) -> dict[str, str]:
+    """Rows of every `| Field | Value |` table (the Provenance table and a
+    Facts table) that name the canonical repo, canonical location or the
+    dev-vs-prod boundary. Each key is `repo`, `location` or `boundary`; all
+    three are always present, UNKNOWN when no table states them. The first
+    stated value for a key wins."""
+    out = {"repo": UNKNOWN, "location": UNKNOWN, "boundary": UNKNOWN}
+    in_table = False
+    for line in (markdown or "").splitlines():
+        if not line.lstrip().startswith("|"):
+            in_table = False
+            continue
+        cells = _cells(line)
+        if len(cells) < 2:
+            continue
+        if [c.lower() for c in cells[:2]] == ["field", "value"]:
+            in_table = True
+            continue
+        if not in_table or re.fullmatch(r":?-{2,}:?", cells[0]):
+            continue
+        name = re.sub(r"[^a-z0-9]+", " ", cells[0].lower()).strip()
+        key = _FACT_ROWS.get(name)
+        if key and out[key] == UNKNOWN:
+            out[key] = _clean(cells[1])
     return out
 
 
@@ -228,7 +281,9 @@ def _link(value: str, base_url: str) -> dict:
 def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
                  stale_days: int) -> dict:
     """One BookStack page (GET /api/pages/{id} body) -> one record."""
-    prov = parse_provenance_table(str(page.get("markdown") or ""))
+    markdown = str(page.get("markdown") or "")
+    prov = parse_provenance_table(markdown)
+    facts = parse_facts(markdown)
     tags = parse_tags(page.get("tags"))
     updated_at = page["updated_at"][:MAX_TEXT_CHARS] if isinstance(page.get("updated_at"), str) else None
     declared, conflict = merge_status(prov["status"], *tags["statuses"])
@@ -243,7 +298,11 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
     return {
         "id": page.get("id"),
         "title": str(page.get("name") or "")[:MAX_TEXT_CHARS] or UNKNOWN,
+        "slug": slug,
         "url": url,
+        "projects": tags["projects"],
+        "scopes": tags["scopes"],
+        "canonical": {"repo": facts["repo"], "location": facts["location"], "boundary": facts["boundary"]},
         "kind": tags["kind"],
         "owner": tags["owner"],
         "environment": tags["environment"],
@@ -256,6 +315,8 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
             "repo_href": repo if re.match(r"https?://[^\s]+$", repo, re.I) else None,
             "path": prov["source_path"],
             "git_sha": prov["source_git_sha"],
+            **{k: prov[f] for k, f in (("path_note", "source_path_note"), ("git_sha_note", "source_git_sha_note"))
+               if f in prov},
             "class": klass,
             "live_check": prov["live_check"],
             "declared_status": declared,
@@ -271,7 +332,9 @@ def degraded_record(page_id, name) -> dict:
     return {
         "id": page_id if isinstance(page_id, int) and not isinstance(page_id, bool) else None,
         "title": str(name or "")[:MAX_TEXT_CHARS] or UNKNOWN,
-        "url": None, "kind": UNKNOWN, "owner": UNKNOWN, "environment": UNKNOWN, "purpose": UNKNOWN,
+        "slug": None, "url": None, "projects": [], "scopes": [],
+        "canonical": {"repo": UNKNOWN, "location": UNKNOWN, "boundary": UNKNOWN},
+        "kind": UNKNOWN, "owner": UNKNOWN, "environment": UNKNOWN, "purpose": UNKNOWN,
         "runbooks": [], "backups": [], "related": [],
         "source": {"repo": UNKNOWN, "repo_href": None, "path": UNKNOWN, "git_sha": UNKNOWN,
                    "class": UNKNOWN, "live_check": UNKNOWN, "declared_status": UNKNOWN},

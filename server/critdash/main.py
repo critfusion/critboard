@@ -16,10 +16,11 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import bead_reply as bead_reply_mod
+from . import context as context_mod
 from . import detect, quota, workflow
 from . import settings as settings_mod
 from . import update as update_mod
@@ -46,6 +47,7 @@ from .collectors.worktrees import WorktreesCollector
 from .config import Config, load_config
 from .ctx import AppContext
 from .history import InvalidWindowError, bucket_count, build_grouped_history, parse_window
+from .infrastructure import stale_after_days
 from .knowledge import BookStackAdapter, KnowledgeError
 from .knowledge import now_iso as knowledge_now_iso
 from .modules import enabled_modules, module_config
@@ -1356,6 +1358,40 @@ def build_app() -> FastAPI:
                               cfg, policy, now)
         return JSONResponse({"ok": True, **body, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
                             headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/context")
+    async def context_view(request: Request, project: str = Query("")):
+        """Session-start context for one project. Same gate as /api/workflow.
+        See SPEC.md, "Context endpoint"."""
+        if (refused := _knowledge_gate(request, "context")) is not None:
+            return refused
+        if not context_mod.SLUG_RE.fullmatch(project):
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_project",
+                                        "message": "project must match ^[a-z0-9][a-z0-9._-]{0,63}$"}},
+                status_code=400, headers={"Cache-Control": "no-store"})
+        now = datetime.now(UTC)
+        cfg = module_config(config.sources, "context") or {}
+        wf_cfg = module_config(config.sources, "workflow") or {}
+        books = (*context_mod.book_slugs(cfg), workflow.policy_book_slug(wf_cfg))
+        stale_days = stale_after_days(cfg)
+
+        async def read(slug: str):
+            try:
+                return "ok", await knowledge.book(slug, now, stale_days)
+            except KnowledgeError as err:
+                return "error", err.code
+
+        projects, runbook_result, policy = await asyncio.gather(*(read(b) for b in books))
+        commit = (snap.snapshot.get("update") or {}).get("current") \
+            or (await asyncio.to_thread(update_mod.git_identity, config.dashboard_root))["commit"]
+        stale_after_s = config.sources.get("quota_stale_after_s", 3600)
+        body = context_mod.build(
+            project, projects=projects, runbook_result=runbook_result, policy=policy, books=books,
+            snapshot=snap.snapshot, quota_response=quota.build_quota_response(store.get_quota_cache(), stale_after_s),
+            wf_cfg=wf_cfg, commit=commit, now=now, limit=context_mod.max_bytes(cfg))
+        return Response(context_mod.render(body), media_type="application/json",
+                        headers={"Cache-Control": "no-store"})
 
     web_dir = config.dashboard_root / "web"
     if web_dir.exists():

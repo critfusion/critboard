@@ -22,6 +22,7 @@ from critdash.infrastructure import (
     parse_provenance_table,
     parse_record,
     parse_tags,
+    parse_facts,
     parse_when,
     merge_status,
 )
@@ -99,6 +100,81 @@ def test_a_different_first_table_is_not_the_provenance_table():
 def test_field_names_ignore_case_and_markup_and_underscores_in_values_survive():
     md = "| Field | Value |\n|---|---|\n| **source repo** | example-org/host_a_repo |\n"
     assert parse_provenance_table(md)["source_repo"] == "example-org/host_a_repo"
+
+
+# ---------------- backticks, notes and facts (context endpoint) ----------------
+
+LIVE_SHAPE = """\
+| Field | Value |
+|---|---|
+| Source repo | `example-org/repo-a` (`main`) |
+| Source path | `projects/proj-a.md` |
+| Source git SHA | `0123abc\u2026` (blob `4567def`) |
+| Class | project (projection) |
+| Status | `current` |
+"""
+
+
+def test_backticks_are_removed_from_every_value():
+    out = parse_provenance_table(LIVE_SHAPE)
+    assert out["source_repo"] == "example-org/repo-a (main)"
+    assert out["source_path"] == "projects/proj-a.md"
+    assert out["status"] == "current"
+    assert "`" not in "".join(out.values())
+
+
+def test_sha_parenthetical_moves_to_its_own_note_field():
+    out = parse_provenance_table(LIVE_SHAPE)
+    assert out["source_git_sha"] == "0123abc\u2026" and out["source_git_sha_note"] == "blob 4567def"
+
+
+def test_path_parenthetical_moves_to_its_own_note_field():
+    md = "| Field | Value |\n|---|---|\n| Source path | `docs/a.md` (copy of `docs/b.md`) |\n"
+    out = parse_provenance_table(md)
+    assert out["source_path"] == "docs/a.md" and out["source_path_note"] == "copy of docs/b.md"
+
+
+def test_no_parenthetical_means_no_note_key():
+    out = parse_provenance_table(TABLE)
+    assert "source_git_sha_note" not in out and "source_path_note" not in out
+
+
+@pytest.mark.parametrize("cell,value", [
+    ("(only a note)", "(only a note)"),          # nothing before it: not split
+    ("abc (a (nested) note)", "abc (a (nested) note)"),  # nested parentheses: left alone
+    ("abc ()", "abc"),                           # empty note: dropped, no note key
+    ("abc (note) tail", "abc (note) tail"),      # not trailing
+])
+def test_only_a_plain_trailing_parenthetical_is_split(cell, value):
+    md = f"| Field | Value |\n|---|---|\n| Source git SHA | {cell} |\n"
+    out = parse_provenance_table(md)
+    assert out["source_git_sha"] == value and "source_git_sha_note" not in out
+
+
+def test_record_carries_the_notes_in_source_and_omits_them_when_absent():
+    r = _record(markdown=LIVE_SHAPE)
+    assert r["source"]["git_sha"] == "0123abc\u2026" and r["source"]["git_sha_note"] == "blob 4567def"
+    assert "path_note" not in r["source"] and "path_note" not in _record()["source"]
+
+
+def test_facts_come_from_any_field_value_table_and_default_to_unknown():
+    md = TABLE + "\n## Facts\n\n| Field | Value |\n|---|---|\n| Canonical repo | `example-org/proj-a` |\n" \
+        "| Dev/prod boundary | dev on branches |\n| Canonical location | |\n"
+    assert parse_facts(md) == {"repo": "example-org/proj-a", "location": "unknown", "boundary": "dev on branches"}
+    assert parse_facts(TABLE) == {"repo": "unknown", "location": "unknown", "boundary": "unknown"}
+    assert parse_facts(None) == {"repo": "unknown", "location": "unknown", "boundary": "unknown"}
+
+
+def test_facts_ignore_rows_outside_a_field_value_table():
+    md = "| Name | Value |\n|---|---|\n| Canonical repo | example-org/x |\n"
+    assert parse_facts(md)["repo"] == "unknown"
+
+
+def test_record_exposes_canonical_slug_and_scope_tags():
+    r = _record(markdown=TABLE + "\n| Field | Value |\n|---|---|\n| Canonical repo | example-org/r |\n",
+                tags=[{"name": "project", "value": "proj-a"}, {"name": "scope", "value": "all"}])
+    assert r["canonical"]["repo"] == "example-org/r" and r["slug"] == "host-a"
+    assert r["projects"] == ["proj-a"] and r["scopes"] == ["all"]
 
 
 # ---------------- tags ----------------
