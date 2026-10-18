@@ -7,7 +7,7 @@
 // last good fetch stay on screen, dimmed, under a line that says when they
 // were fetched and since when BookStack has been failing.
 
-import { describeProblem } from "./knowledge_text.js";
+import { describeProblem, wikiLinkItems } from "./knowledge_text.js";
 import {
   groupByKind, isUnknown, safeHref, statusCounts, statusKey, statusLabel, STATUS_LABELS, verifiedText,
 } from "./infra_text.js";
@@ -44,6 +44,13 @@ function link(text, href) {
     : text;
 }
 
+function wikiLinks(rec) {
+  const items = wikiLinkItems(rec);
+  return items.length
+    ? el("p", { class: "infra-wiki-links" }, items.map((it) => link(it.text, it.href)))
+    : null;
+}
+
 function linkList(items) {
   if (!items || !items.length) return unknownSpan();
   return el("ul", { class: "infra-list" }, items.map((it) => el("li", {}, link(it.text, it.href))));
@@ -77,6 +84,7 @@ function card(r) {
   const live = r.verified_basis === "live_check";
   return el("article", { class: `infra-rec infra-st-${key}` }, [
     el("header", { class: "infra-rec-head" }, [el("h4", { class: "infra-rec-title" }, title), badge]),
+    wikiLinks(r),
     r.status_reason ? el("p", { class: "infra-reason" }, r.status_reason) : null,
     r.status_conflict ? el("p", { class: "infra-reason infra-conflict" }, r.status_conflict) : null,
     el("dl", { class: "infra-fields" }, [

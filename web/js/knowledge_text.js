@@ -1,3 +1,5 @@
+import { safeHref } from "./infra_text.js";
+
 // Wording for the Knowledge view's problem line. Pure (no DOM) so it runs
 // under plain `node` (see nav.test.mjs). `fmt` formats an ISO time.
 //
@@ -28,4 +30,26 @@ export function describeProblem(error, status, fmt, host = "", label = "Knowledg
       // not_configured / token_file_*: the operator's setup, not an outage.
       return `${label} module setup problem: ${error.message}`;
   }
+}
+
+// The served-revision line for one page. `served` is the server's marker
+// ({state, served_at}); `fmtRel` formats an ISO time as "5m ago". The suffix
+// is always there: the marker lives in memory and starts empty at restart.
+// "Served" means the revision was put in a /api/context answer, nothing more.
+export function servedLine(served, fmtRel) {
+  const tail = " (since CritBoard restart)";
+  if (!served) return null;
+  if (served.state === "served" && served.served_at) {
+    return `Served to a session start ${fmtRel(served.served_at)}${tail}`;
+  }
+  return `Pending: not yet served to a session start${tail}`;
+}
+
+// Edit and History links of a record, in display order. A missing or
+// non-http(s) URL gives no link.
+export function wikiLinkItems(rec) {
+  const out = [];
+  if (rec && safeHref(rec.edit_url)) out.push({ text: "Edit", href: rec.edit_url });
+  if (rec && safeHref(rec.history_url)) out.push({ text: "History", href: rec.history_url });
+  return out;
 }

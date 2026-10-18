@@ -5,7 +5,7 @@
 // The view's DOM is built once and kept while you switch views, so a search
 // you typed is still there when you come back.
 
-import { describeProblem } from "./knowledge_text.js";
+import { describeProblem, servedLine, wikiLinkItems } from "./knowledge_text.js";
 import { el, fmtAbsTime, fmtRelTime } from "./utils.js";
 
 const fmt = (iso) => `${fmtAbsTime(iso)} (${fmtRelTime(iso)})`;
@@ -25,6 +25,20 @@ async function api(path) {
 function problemText(body) {
   if (body.error && body.error.code === "local") return body.error.message;
   return describeProblem(body.error, body.status, fmt, location.hostname);
+}
+
+function wikiAnchors(rec, editText = "Edit", historyText = "History") {
+  const names = { Edit: editText, History: historyText };
+  return wikiLinkItems(rec).map((it) =>
+    el("a", { href: it.href, target: "_blank", rel: "noopener noreferrer", class: "kb-edit" }, names[it.text]));
+}
+
+// fmtRelTime says "now ago" inside 5 s; this view says "just now".
+const sinceText = (iso) => (fmtRelTime(iso) === "now ago" ? "just now" : fmtRelTime(iso));
+
+function servedNote(served) {
+  const text = servedLine(served, sinceText);
+  return text ? el("p", { class: `kb-served kb-served-${served.state}` }, text) : null;
 }
 
 export function mountKnowledge(root) {
@@ -81,9 +95,7 @@ export function mountKnowledge(root) {
       ? el("dl", { class: "kb-tags" }, prov.tags.flatMap((t) => [el("dt", {}, t.name), el("dd", {}, t.value || "--")]))
       : el("p", { class: "kb-unknown" }, "No source or provenance tags on this page. Origin unknown.");
     const links = [];
-    if (body.edit_url) {
-      links.push(el("a", { href: body.edit_url, target: "_blank", rel: "noopener noreferrer", class: "kb-edit" }, "Edit in BookStack"));
-    }
+    links.push(...wikiAnchors(body, "Edit in BookStack", "History in BookStack"));
     if (body.open_url) {
       links.push(el("a", { href: body.open_url, target: "_blank", rel: "noopener noreferrer" }, "Open in BookStack"));
     }
@@ -94,6 +106,7 @@ export function mountKnowledge(root) {
       el("div", { class: "kb-provenance" }, [el("h3", {}, "Source / provenance"), tags,
         el("p", { class: "kb-meta" }, `Last edited by: ${prov.updated_by || "--"} | Created by: ${prov.created_by || "--"} | Revisions: ${prov.revision_count ?? "--"}`)]),
       el("p", { class: "kb-links" }, links),
+      servedNote(body.served),
       el("div", { class: "kb-text" }, body.text),
       body.truncated ? el("p", { class: "kb-unknown" }, "Page text was cut at the display limit. Open it in BookStack for the rest.") : null,
       fetchedNote,
@@ -119,9 +132,10 @@ export function mountKnowledge(root) {
         el("span", { class: "kb-result-name" }, r.name),
         el("span", { class: "kb-result-book" }, r.book),
         el("span", { class: "kb-result-preview" }, r.preview),
+        servedNote(r.served),
       ]);
       btn.addEventListener("click", () => openPage(r.id));
-      return el("li", {}, [btn]);
+      return el("li", {}, [btn, el("span", { class: "kb-result-links" }, wikiAnchors(r))]);
     }));
   }
 

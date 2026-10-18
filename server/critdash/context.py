@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import OrderedDict
 from datetime import datetime
 
 from . import workflow
@@ -328,6 +329,47 @@ def build(project: str, *, also: list[str] | None = None, projects, runbook_resu
             "degraded": base_degraded + [f"dropped:{n}" for n in DROP_ORDER] + ["entrypoint_dropped", "over_cap"],
         }
     return body
+
+
+SERVED_MAX_PAGES = 500
+
+
+def _when(iso) -> datetime | None:
+    try:
+        return datetime.fromisoformat(iso) if isinstance(iso, str) else None
+    except ValueError:
+        return None
+
+
+class ServedMarker:
+    """In-memory record of which page revision the last /api/context answer
+    carried, per page id: (updated_at, served_at, project). Lost on restart.
+    It says a revision was put in a response, never that a session read it."""
+
+    def __init__(self, max_pages: int = SERVED_MAX_PAGES) -> None:
+        self.max_pages = max_pages
+        self.pages: OrderedDict = OrderedDict()  # least recently served first
+
+    def record(self, pages: list[dict], project: str, served_at: str) -> None:
+        """Note the pages of one 200 answer. A page whose updated_at is not a
+        time is skipped: nothing can be said about its revision."""
+        for p in pages:
+            pid = p.get("id")
+            if not isinstance(pid, int) or isinstance(pid, bool) or _when(p.get("updated_at")) is None:
+                continue
+            self.pages[pid] = (p["updated_at"], served_at, project)
+            self.pages.move_to_end(pid)
+        while len(self.pages) > self.max_pages:
+            self.pages.popitem(last=False)
+
+    def status(self, page_id, updated_at) -> dict:
+        """`pending` when the page was never served since restart, or was
+        edited after the revision served; else `served`."""
+        entry = self.pages.get(page_id)
+        current = _when(updated_at)
+        if entry is None or current is None or current > _when(entry[0]):
+            return {"state": "pending", "served_at": None, "project": None}
+        return {"state": "served", "served_at": entry[1], "project": entry[2]}
 
 
 class TtlCache:

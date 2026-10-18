@@ -1318,12 +1318,18 @@ def build_app() -> FastAPI:
             return _knowledge_error(err)
         return _knowledge_ok({})
 
+    served = context_mod.ServedMarker()
+    app.state.served = served  # exposed for tests
+
     @app.get("/api/knowledge/search")
     async def knowledge_search(request: Request, q: str = Query("", max_length=200)):
         if (refused := _knowledge_gate(request)) is not None:
             return refused
         try:
-            return _knowledge_ok(await knowledge.search(q))
+            data = await knowledge.search(q)
+            for r in data["results"]:
+                r["served"] = served.status(r["id"], r.get("updated_at"))
+            return _knowledge_ok(data)
         except KnowledgeError as err:
             return _knowledge_error(err)
 
@@ -1334,7 +1340,9 @@ def build_app() -> FastAPI:
         if page_id < 1:
             raise HTTPException(status_code=404, detail="Not Found")
         try:
-            return _knowledge_ok(await knowledge.page(page_id))
+            data = await knowledge.page(page_id)
+            data["served"] = served.status(page_id, data.get("updated_at"))
+            return _knowledge_ok(data)
         except KnowledgeError as err:
             return _knowledge_error(err)
 
@@ -1432,6 +1440,7 @@ def build_app() -> FastAPI:
             project, also=aliases, projects=projects, runbook_result=runbook_result, policy=policy, books=books,
             snapshot=snap.snapshot, quota_response=quota.build_quota_response(store.get_quota_cache(), stale_after_s),
             wf_cfg=wf_cfg, commit=commit, now=now, limit=context_mod.max_bytes(cfg))
+        served.record(body["revision"]["pages"], project, body["revision"]["fetched_at"])
         return Response(context_mod.render(body), media_type="application/json",
                         headers={"Cache-Control": "no-store"})
 

@@ -1825,7 +1825,8 @@ table.dtable th .sort-indicator {
   border-radius: var(--radius-card); padding: 8px 10px; cursor: pointer;
 }
 .kb-result:hover { background: var(--color-bg-panel-hover); }
-.kb-result:focus-visible, .kb-search input:focus-visible, .kb-search button:focus-visible, .kb-detail a:focus-visible {
+.kb-result:focus-visible, .kb-search input:focus-visible, .kb-search button:focus-visible, .kb-detail a:focus-visible,
+.kb-result-links a:focus-visible, .infra-wiki-links a:focus-visible {
   outline: 2px solid var(--color-accent-cyan); outline-offset: 1px;
 }
 .kb-result-name { font-weight: 700; }
@@ -1845,6 +1846,12 @@ table.dtable th .sort-indicator {
 .kb-unknown { color: var(--color-accent-amber); }
 .kb-links { display: flex; gap: 14px; flex-wrap: wrap; }
 .kb-links a { color: var(--color-accent-cyan); }
+.kb-served { margin: 6px 0 0; font-size: var(--font-size-sm); color: var(--color-text-dim); }
+.kb-served-pending { color: var(--color-accent-amber); }
+.kb-result-links, .infra-wiki-links { display: flex; gap: 14px; font-size: var(--font-size-sm); }
+.kb-result-links { padding: 2px 10px 0; }
+.kb-result-links a, .infra-wiki-links a { color: var(--color-accent-cyan); }
+.infra-wiki-links { margin: 4px 0 0; }
 .kb-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 12px 0; line-height: 1.5; }
 
 /* ---- Infrastructure view. Status is always a word in the badge; the border

@@ -33,7 +33,7 @@ from urllib.parse import quote
 import httpx
 
 from .infrastructure import book_slug as cfg_book_slug
-from .infrastructure import degraded_record, parse_record, stale_after_days
+from .infrastructure import degraded_record, page_links, parse_record, stale_after_days
 from .modules import module_config
 from .workflow import policy_book_slug
 
@@ -285,6 +285,7 @@ class BookStackAdapter:
             return {"results": [], "total": 0}
         query = f"{q[:MAX_QUERY_CHARS]} {{type:page}}"
         body = await self._get("/api/search", {"query": query, "count": SEARCH_COUNT})
+        base, _ = self._settings()
         results = []
         for item in body.get("data") or []:
             if not isinstance(item, dict) or item.get("type") != "page":
@@ -298,6 +299,7 @@ class BookStackAdapter:
                 "name": str(item.get("name") or ""),
                 "book": str(book.get("name") or ""),
                 "updated_at": item.get("updated_at"),
+                **page_links(base, book.get("slug"), item.get("slug")),
                 "preview": html_to_text(str(preview.get("content") or "")[:PREVIEW_INPUT_MAX_CHARS])[:PREVIEW_CHARS],
             })
         return {"results": results, "total": body.get("total", len(results))}
@@ -320,9 +322,7 @@ class BookStackAdapter:
         book = await self._get(f"/api/books/{book_id}") if _is_int(book_id) else {}
         book_slug = book.get("slug") or page.get("book_slug")
         slug = page.get("slug")
-        edit_url = None
-        if book_slug and slug:
-            edit_url = f"{base}/books/{quote(str(book_slug), safe='')}/page/{quote(str(slug), safe='')}/edit"
+        links = page_links(base, book_slug, slug)
         html = str(page.get("html") or "")
         # Parse off the event loop, and never feed the parser more than the cap.
         text = await asyncio.to_thread(html_to_text, html[:HTML_INPUT_MAX_CHARS])
@@ -344,7 +344,7 @@ class BookStackAdapter:
                 "updated_by": _person(page.get("updated_by")),
                 "revision_count": page.get("revision_count"),
             },
-            "edit_url": edit_url,
+            **links,
             "open_url": f"{base}/link/{page_id}",
         }
 

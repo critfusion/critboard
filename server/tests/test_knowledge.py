@@ -180,6 +180,8 @@ def test_search_returns_pages_as_plain_text(kb, fake):
     assert body["results"] == [{
         "id": 42, "name": "Synthetic Page", "book": "Synthetic Book",
         "updated_at": "2026-01-02T03:04:05.000000Z", "preview": "a match here",
+        "edit_url": None, "history_url": None,  # SYN_SEARCH names no slugs
+        "served": {"state": "pending", "served_at": None, "project": None},
     }]
     assert body["fetched_at"]
     assert resp.headers["cache-control"] == "no-store"
