@@ -703,9 +703,13 @@ Knowledge those parts say `not_configured` and the bead part still works.
   "enabled": true,
   "projects_book_slug": "projects",
   "runbooks_book_slug": "runbooks",
-  "max_bytes": 16384
+  "max_bytes": 16384,
+  "cache_ttl_s": 60
 }
 ```
+
+   `cache_ttl_s` (0 to 3600) reuses a successful BookStack read for that
+   many seconds. Set it to 0 to read the wiki on every request.
 
 3. Check it. Use a Host name that is in the Knowledge allowlist:
 
@@ -790,7 +794,7 @@ if a key is missing entirely. Notable ones for a fresh install:
   `enabled: false` by default; a default install shows no view bar. See
   steps 9, 9b, 9c and 9d above. `modules.infrastructure` takes `book_slug` and
   `stale_after_days`. `modules.workflow` takes `policy_book_slug`,
-  `stale_after_days`, `availability_ttl_s` and `owner_reported`. `modules.context` takes `projects_book_slug`, `runbooks_book_slug`, `max_bytes` and `stale_after_days`. `modules.knowledge.allowed_hosts` (list of hostnames, no
+  `stale_after_days`, `availability_ttl_s` and `owner_reported`. `modules.context` takes `projects_book_slug`, `runbooks_book_slug`, `max_bytes`, `cache_ttl_s` and `stale_after_days`. `modules.knowledge.allowed_hosts` (list of hostnames, no
   port, default none) admits extra `Host` names to the Knowledge routes;
   needed behind a proxy/DNS name or when bound to `0.0.0.0`.
 - `allow_self_update` -- `false` by default. Gates the "Update now" button

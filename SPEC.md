@@ -354,9 +354,13 @@ records as the UI: BookStack-curated pages (through `modules.knowledge`) and the
 sends no request to any AI provider and writes nothing.
 
 - Config: `modules.context` = `{"enabled": true, "projects_book_slug": "projects", "runbooks_book_slug":
-  "runbooks", "max_bytes": 16384, "stale_after_days": 90}`. The policy book is
+  "runbooks", "max_bytes": 16384, "stale_after_days": 90, "cache_ttl_s": 60}`. The policy book is
   `modules.workflow.policy_book_slug` (default `workflow-policy-projections`); `modules.workflow` need not
-  be enabled. `max_bytes` is an integer clamped to 8192 to 262144 (any other value: 16384).
+  be enabled. `max_bytes` is an integer clamped to 8192 to 262144 (any other value: 16384). `cache_ttl_s`
+  (integer 0 to 3600, default 60; 0 turns the cache off) is how long a successful read of each of the three
+  books is reused. Only a success is cached: an error is read again on the next request. Within the TTL a
+  page edit is not visible, and an outage is not seen; `revision.pages[].updated_at` shows the page version
+  that was read, and `revision.fetched_at` is the time of the request, not of the read.
 - `GET /api/context?project=<slug>`. Same gate as `/api/workflow`: module off -> 404; foreign Host or
   Origin -> 403 `host_not_allowed` / `origin_not_allowed`. Then `project` must match
   `^[a-z0-9][a-z0-9._-]{0,63}$`, else 400 `{"ok":false,"error":{"code":"invalid_project"}}`. `Cache-Control:
@@ -372,36 +376,53 @@ sends no request to any AI provider and writes nothing.
     `provenance{repo, path, git_sha, status, [path_note], [git_sha_note]}`, `canonical_repo`,
     `canonical_location`, `dev_prod_boundary`. The last three come from the rows `Canonical repo`,
     `Canonical location` and `Dev/prod boundary` of a `| Field | Value |` table on the page (the
-    Provenance table or a Facts table); absent -> `unknown`.
+    Provenance table or a Facts table); absent -> `unknown`. `url` is `unknown` when the page has none.
+    The slug-prefix rule matches a longer slug: `proj` matches `proj-a-notes`. `match` says which rule was
+    used (`tag` or `slug_prefix`), so a caller can tell an explicit tag from a prefix guess.
+    `state: "incomplete"` means the projects book has more pages than were read (the read stops at 50); no
+    match is not claimed then.
   - `standards`: the pages of the workflow policy book: `items[]` of `{id, title, url, updated_at,
     status}`, `truncated`. These are the intended review and approval roles, not observed behaviour.
   - `runbooks`: pages of the runbooks book tagged `project:<slug>` or `scope:all`: `items[]` of `{id, title,
-    url, updated_at}`, `truncated`. No match -> `items: []` and `runbooks_note: "untagged"`. The whole book
-    is never listed.
+    url, updated_at}`, `truncated`. No match -> `items: []` and `runbooks_note: "untagged"`, except when the
+    book was cut short: then `truncated` is true and the note is not given. The whole book is never listed.
   - `ownership`: in-progress beads with a label equal to the slug: `items[]` of `{id, title, assignee,
     coder, reviewers[], approvers[], review_gate}` (rules as in `assignments` above), `total`, `truncated`.
   - `availability`: `ttl_s` and `rows[]` of `{provider, basis, state, observed_at, expires_at, expired}`.
-    Freshness only: no values, spend, cost or detail text.
+    Freshness only: no values, spend, cost or detail text. `state` is one of `observed`, `stale`, `unknown`,
+    `available`, `unavailable`, `degraded`, `limited`; any other (owner-typed) text is shown as `unknown`.
   - `revision`: `{critboard, pages[{id, updated_at}], fetched_at}`. `critboard` is the commit the update
     banner reads (`unknown` outside a git checkout). `pages` lists every BookStack page id in the body.
   - `degraded`: reasons, in this order: `knowledge_not_configured`, `knowledge_unavailable`,
-    `no_entrypoint`, `beads_stale` (the beads source is not ok, or stale, or missing), then
-    `dropped:<section>` for each section removed by the cap.
-- Lists hold at most 20 items. Titles and facts are cut at 200 characters. Page bodies are never returned.
+    `no_entrypoint`, `projects_truncated`, `runbooks_truncated` (the book has more pages than the 50 read),
+    `beads_stale` (the beads source is not ok, or stale, or missing), then `dropped:<section>` for each
+    section removed by the cap, and `entrypoint_dropped` and `over_cap` for the stub below.
+- Lists hold at most 20 items. Each text field is cut at 200 BYTES of UTF-8, at a character boundary. A
+  lone surrogate becomes `?` and a control character a space. Page bodies are never returned.
 - Size cap: the bytes sent (compact JSON, UTF-8) never exceed `max_bytes`. When the body is over, whole
   sections are dropped in this order, stopping at the first that fits: `runbooks`, `standards`,
   `ownership`, `availability`. A dropped section stays in the body as `{source, state: "dropped",
   items: []}` (`rows: []` for availability), its pages leave `revision.pages`, and `degraded` names it.
-  The entrypoint is never dropped; at the 8192 floor it fits with every field at its limit.
+  If the body is still over `max_bytes` with those four dropped (the entrypoint alone is too large), a stub
+  is served: `{ok, project, state: "over_cap", revision{critboard, pages: [], fetched_at}, degraded}`, with
+  every section removed and `entrypoint_dropped`, `over_cap` and all four `dropped:` reasons in `degraded`.
+  The bytes sent never exceed `max_bytes`; `server/tests/test_context.py` asserts this for ASCII, CJK, emoji,
+  control-character and escape-heavy text at 8192 and at the default.
 
 ##### Context data boundary (checkable)
 
-The response may hold only BookStack-curated records and bead assignment fields. Each line below is
-true of every response; `server/tests/test_context.py` checks them.
+The response may hold only BookStack-curated records and bead assignment fields. The boundary is the
+allowlist projection in `context.py`: each section copies named fields and nothing else. The forbidden-key
+scrub below is a second layer, not the boundary. Free text passes through as written: page titles, bead
+titles, provenance values and the page-stated canonical location and boundary. CritBoard does not judge
+whether that text is sensitive; keep it out of the curated pages. Each line below is true of every
+response; `server/tests/test_context.py` checks them.
 
 - [ ] Keys: no key named `session`, `sessions`, `agents`, `transcript`, `memory`, `cost`, `spend`, `token`,
   `token_file`, `auth`, `auth_path`, `values`, `detail`, `local_path`, `cwd`, `host`, `hosts`,
-  `cost_estimate_today_usd`, `cost_basis`, `authorization` or `secret`, at any depth. `context.scrub`
+  `cost_estimate_today_usd`, `cost_basis`, `authorization`, `secret`, `api_key`, `apikey`, `password`,
+  `passwd`, `credential`, `credentials`, `session_id`, `sessionid`, `token_path`, `file_path`, `filepath`,
+  `memory_path`, `transcript_path` or `home`, at any depth (case-insensitive). `context.scrub`
   removes them from the final body even if a section starts to pass one.
 - [ ] Ownership holds only `id, title, assignee, coder, reviewers, approvers, review_gate`. Observed
   sessions are never read.

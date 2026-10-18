@@ -23,15 +23,21 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 DEFAULT_MAX_BYTES = 16384
 MIN_MAX_BYTES, MAX_MAX_BYTES = 8192, 262144
 MAX_LIST = 20          # per list: standards, runbooks, ownership items, availability rows
-MAX_FIELD_CHARS = 200
+MAX_FIELD_BYTES = 200
 # Lowest priority first.
 DROP_ORDER = ("runbooks", "standards", "ownership", "availability")
-# Defence in depth: a key with one of these names never leaves, even if a
-# projection above starts to pass it through.
+AVAILABILITY_STATES = ("observed", "stale", "unknown", "available", "unavailable", "degraded", "limited")
+DEFAULT_CACHE_TTL_S, MAX_CACHE_TTL_S = 60, 3600
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# Defence in depth, not the boundary: the allowlist projections below are the
+# boundary. A key with one of these names never leaves, even if a projection
+# starts to pass it through.
 FORBIDDEN_KEYS = frozenset({
     "session", "sessions", "agents", "transcript", "transcripts", "memory", "cost", "spend", "token",
     "token_file", "auth", "auth_path", "values", "detail", "local_path", "cwd", "host", "hosts",
-    "cost_estimate_today_usd", "cost_basis", "authorization", "secret",
+    "cost_estimate_today_usd", "cost_basis", "authorization", "secret", "api_key", "apikey", "password",
+    "passwd", "credential", "credentials", "session_id", "sessionid", "token_path", "file_path", "filepath",
+    "memory_path", "transcript_path", "home",
 })
 
 
@@ -49,13 +55,22 @@ def max_bytes(cfg: dict) -> int:
     return min(max(v, MIN_MAX_BYTES), MAX_MAX_BYTES)
 
 
-def _s(value, limit: int = MAX_FIELD_CHARS) -> str:
-    text = value.strip()[:limit] if isinstance(value, str) else ""
-    return text or UNKNOWN
+def _text(value, limit: int) -> str:
+    """Text cut to `limit` BYTES of UTF-8 at a character boundary. A lone
+    surrogate becomes "?" and a control character a space, so the JSON
+    escape of a field never exceeds twice its bytes."""
+    if not isinstance(value, str):
+        return ""
+    text = _CONTROL.sub(" ", value.encode("utf-8", "replace").decode("utf-8")).strip()
+    return text.encode("utf-8")[:limit].decode("utf-8", "ignore").strip()
 
 
-def _opt(value, limit: int = MAX_FIELD_CHARS) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
+def _s(value, limit: int = MAX_FIELD_BYTES) -> str:
+    return _text(value, limit) or UNKNOWN
+
+
+def _opt(value, limit: int = MAX_FIELD_BYTES) -> str | None:
+    return _text(value, limit) or None
 
 
 def scrub(obj):
@@ -69,7 +84,8 @@ def scrub(obj):
 
 def render(body: dict) -> bytes:
     """The exact bytes the endpoint sends, and the bytes the cap measures."""
-    return json.dumps(scrub(body), ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    text = json.dumps(scrub(body), ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    return text.encode("utf-8", "replace")  # a surrogate that got through is "?", never a 500
 
 
 # ---------------- wiki-backed sections ----------------
@@ -88,7 +104,7 @@ def _failed(source: str, state: str, code: str) -> dict:
 
 
 def _page_ref(r: dict) -> dict:
-    return {"id": r.get("id"), "title": _s(r.get("title")), "url": _opt(r.get("url")),
+    return {"id": r.get("id"), "title": _s(r.get("title")), "url": _s(r.get("url")),
             "updated_at": _s(r.get("updated_at"))}
 
 
@@ -106,7 +122,8 @@ def entrypoint(project: str, result, book_slug: str) -> dict:
                     if isinstance(r.get("slug"), str) and r["slug"].startswith(project + "-")), None)
         match = "slug_prefix" if hit else None
     if hit is None:
-        return {"source": source, "state": "no_match"}
+        # A book cut at the page cap may hold the page: that is not "no match".
+        return {"source": source, "state": "incomplete" if payload.get("truncated") else "no_match"}
     src = hit.get("source") or {}
     canon = hit.get("canonical") or {}
     provenance = {
@@ -142,9 +159,10 @@ def runbooks(project: str, result, book_slug: str) -> dict:
     hits = [r for r in payload.get("records") or [] if isinstance(r, dict)
             and (project in [p.lower() for p in r.get("projects") or []]
                  or "all" in [s.lower() for s in r.get("scopes") or []])]
+    cut = bool(payload.get("truncated"))
     out = {"source": source, "state": "ok", "items": [_page_ref(r) for r in hits[:MAX_LIST]],
-           "truncated": len(hits) > MAX_LIST}
-    if not hits:
+           "truncated": len(hits) > MAX_LIST or cut}
+    if not hits and not cut:
         out["runbooks_note"] = "untagged"
     return out
 
@@ -179,8 +197,14 @@ def availability(quota_response: dict, wf_cfg: dict, now) -> dict:
     ttl = workflow.availability_ttl_s(wf_cfg)
     rows = workflow.availability(quota_response, wf_cfg.get("owner_reported"), ttl, now)["rows"]
     keep = ("provider", "basis", "state", "observed_at", "expires_at", "expired")
-    return {"source": "quota", "ttl_s": ttl, "rows": [{k: r.get(k) for k in keep} for r in rows[:MAX_LIST]],
-            "truncated": len(rows) > MAX_LIST}
+    out = []
+    for r in rows[:MAX_LIST]:
+        row = {k: r.get(k) for k in keep}
+        row["provider"] = _s(row["provider"], 64)
+        # Owner-reported state is free text: only a fixed set passes.
+        row["state"] = row["state"] if row["state"] in AVAILABILITY_STATES else UNKNOWN
+        out.append(row)
+    return {"source": "quota", "ttl_s": ttl, "rows": out, "truncated": len(rows) > MAX_LIST}
 
 
 # ---------------- assembly and the size cap ----------------
@@ -197,7 +221,7 @@ def _page_revisions(sections: dict) -> list[dict]:
     return list(seen.values())
 
 
-def _degraded(sections: dict, stale_beads: bool) -> list[str]:
+def _degraded(sections: dict, stale_beads: bool, cut: dict) -> list[str]:
     out: list[str] = []
     for name in ("entrypoint", "standards", "runbooks"):
         state = sections[name].get("state")
@@ -207,6 +231,9 @@ def _degraded(sections: dict, stale_beads: bool) -> list[str]:
             out.append(reason)
     if sections["entrypoint"].get("state") == "no_match":
         out.append("no_entrypoint")
+    for name in ("projects", "runbooks"):
+        if cut.get(name):
+            out.append(f"{name}_truncated")
     if stale_beads:
         out.append("beads_stale")
     return out
@@ -225,7 +252,9 @@ def build(project: str, *, projects, runbook_result, policy, books: tuple[str, s
         "ownership": ownership(project, snapshot),
         "availability": availability(quota_response, wf_cfg, now),
     }
-    base_degraded = _degraded(sections, beads_stale(snapshot))
+    cut = {name: kind == "ok" and bool(v.get("truncated"))
+           for name, (kind, v) in (("projects", projects), ("runbooks", runbook_result))}
+    base_degraded = _degraded(sections, beads_stale(snapshot), cut)
 
     def assemble(dropped: list[str]) -> dict:
         shown = dict(sections)
@@ -245,5 +274,40 @@ def build(project: str, *, projects, runbook_result, policy, books: tuple[str, s
             break
         dropped.append(name)
         body = assemble(dropped)
+    if len(render(body)) > limit:
+        # Last resort, so the cap always holds: the entrypoint cannot fit.
+        body = {
+            "ok": True, "project": project, "state": "over_cap",
+            "revision": {"critboard": _s(commit, 64), "pages": [], "fetched_at": now_iso},
+            "degraded": base_degraded + [f"dropped:{n}" for n in DROP_ORDER] + ["entrypoint_dropped", "over_cap"],
+        }
     return body
+
+
+class TtlCache:
+    """In-process cache of successful BookStack book reads. Entries are
+    [expires_at, value]; the caller passes the clock."""
+
+    def __init__(self) -> None:
+        self.entries: dict = {}
+
+    def get(self, key, now: float):
+        entry = self.entries.get(key)
+        if entry is None:
+            return None
+        if now >= entry[0]:
+            del self.entries[key]
+            return None
+        return entry[1]
+
+    def put(self, key, value, now: float, ttl_s: float) -> None:
+        if ttl_s > 0:
+            self.entries[key] = [now + ttl_s, value]
+
+
+def cache_ttl_s(cfg: dict) -> int:
+    v = cfg.get("cache_ttl_s", DEFAULT_CACHE_TTL_S)
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        return DEFAULT_CACHE_TTL_S
+    return min(v, MAX_CACHE_TTL_S)
 

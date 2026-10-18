@@ -53,12 +53,14 @@ class MultiWiki:
         self.books: dict[str, dict] = {}
         self.pages: dict[int, dict] = {}
         self.mode = "ok"
+        self.requests: list[httpx.Request] = []
 
     def add_book(self, slug, bid, pages):
         self.books[slug] = {"id": bid, "name": slug.title(), "slug": slug, "pages": [p["id"] for p in pages]}
         self.pages.update({p["id"]: p for p in pages})
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
         if self.mode == "down":
             raise httpx.ConnectError("synthetic connection refused", request=request)
         path, q = request.url.path, dict(request.url.params)
@@ -69,9 +71,12 @@ class MultiWiki:
             book = next((b for b in self.books.values() if str(b["id"]) == q.get("filter[book_id]")), None)
             ids = book["pages"] if book else []
             data = [{"id": i, "name": self.pages[i]["name"]} for i in ids]
-            return httpx.Response(200, json={"data": data, "total": len(ids)})
+            return httpx.Response(200, content=json.dumps({"data": data, "total": len(ids)}).encode(),
+                                  headers={"content-type": "application/json"})
         if path.startswith("/api/pages/"):
-            return httpx.Response(200, json=self.pages[int(path.rsplit("/", 1)[1])])
+            # ensure_ascii: a lone surrogate travels as the escape "\\ud800", as BookStack sends it
+            body = json.dumps(self.pages[int(path.rsplit("/", 1)[1])]).encode()
+            return httpx.Response(200, content=body, headers={"content-type": "application/json"})
         return httpx.Response(404, json={})
 
 
@@ -123,6 +128,12 @@ def _client(tmp_path, monkeypatch, wiki, ctxcfg=None):
 
 @pytest.fixture
 def cc(tmp_path, monkeypatch, wiki):
+    # cache off: most tests change the fake wiki between two requests
+    return _client(tmp_path, monkeypatch, wiki, {"cache_ttl_s": 0})
+
+
+@pytest.fixture
+def cached(tmp_path, monkeypatch, wiki):
     return _client(tmp_path, monkeypatch, wiki)
 
 
@@ -444,20 +455,199 @@ def test_max_bytes_config_is_clamped(value, expect):
     assert ctx.max_bytes({} if value is None else {"max_bytes": value}) == expect
 
 
-def test_worst_case_entrypoint_fits_the_smallest_cap():
-    long = "x" * 900
+def _worst(long, limit, n_beads=25):
     rec = {"id": 1, "title": long, "slug": "proj-a-x", "url": "https://wiki.example.com/" + long,
            "updated_at": long, "status": long, "projects": [], "scopes": [],
            "source": {"repo": long, "path": long, "git_sha": long, "path_note": long, "git_sha_note": long},
            "canonical": {"repo": long, "location": long, "boundary": long}}
-    body = ctx.build(
-        "proj-a", projects=("ok", {"records": [rec]}), runbook_result=("ok", {"records": []}),
-        policy=("ok", {"records": []}), books=(PROJECTS, RUNBOOKS, POLICY),
-        snapshot={"beads": {"items": [_bead(id=long, title=long, assignee=long, labels=["proj-a"])] * 25}},
+    return ctx.build(
+        "proj-a", projects=("ok", {"records": [rec]}), runbook_result=("ok", {"records": [rec] * 20}),
+        policy=("ok", {"records": [rec] * 20}), books=(PROJECTS, RUNBOOKS, POLICY),
+        snapshot={"beads": {"items": [_bead(id=long, title=long, assignee=long, labels=["proj-a"])] * n_beads}},
         quota_response={"providers": [_entry(provider=long)] * 30}, wf_cfg={}, commit=COMMIT, now=NOW,
-        limit=ctx.MIN_MAX_BYTES)
-    assert len(ctx.render(body)) <= ctx.MIN_MAX_BYTES
-    assert body["entrypoint"]["state"] == "ok"
+        limit=limit)
+
+
+WORST_CHARS = ["x", "\u6f22", "\U0001f600", "\x01", '"', "\\", "\u00e9"]
+
+
+@pytest.mark.parametrize("ch", WORST_CHARS)
+@pytest.mark.parametrize("limit", [ctx.MIN_MAX_BYTES, ctx.DEFAULT_MAX_BYTES])
+def test_worst_case_text_never_exceeds_the_cap(ch, limit):
+    body = _worst(ch * 900, limit)
+    out = ctx.render(body)
+    assert len(out) <= limit
+    json.loads(out.decode("utf-8"))  # valid UTF-8 and valid JSON
+
+
+@pytest.mark.parametrize("ch", ["\u6f22", "\U0001f600", "\u00e9"])
+def test_text_fields_are_cut_in_bytes_at_a_character_boundary(ch):
+    out = ctx._s(ch * 300)
+    assert len(out.encode("utf-8")) <= ctx.MAX_FIELD_BYTES
+    assert set(out) == {ch}  # no half character, nothing else
+
+
+def test_control_characters_do_not_grow_the_body():
+    assert "\x00" not in ctx._s("a\x00b\x1fc\x7f") and ctx._s("a\x00b") == "a b"
+
+
+def test_when_even_the_entrypoint_cannot_fit_a_stub_is_served():
+    body = _worst("\u6f22" * 900, 1000)
+    assert len(ctx.render(body)) <= 1000
+    assert body["state"] == "over_cap" and "over_cap" in body["degraded"]
+    assert body["project"] == "proj-a" and body["revision"]["critboard"] == COMMIT
+    assert "entrypoint" not in body
+
+
+def test_endpoint_serves_the_stub_never_more_than_max_bytes(tmp_path, monkeypatch):
+    w = _wiki()
+    long = "\U0001f600" * 900
+    w.add_book(PROJECTS, 4, [_page(10, "proj-a-entry", long, markdown=PROV + FACTS.replace("~/work/proj-a", long))])
+    cc = _client(tmp_path, monkeypatch, w, {"max_bytes": 8192})
+    cc.app.state.snap.snapshot["beads"]["items"] = [_bead(id=long, title=long, labels=["proj-a"])] * 25
+    resp = _get(cc)
+    assert resp.status_code == 200 and len(resp.content) <= 8192
+
+
+# ---------------- truncated books ----------------
+
+def _big_book(slug, bid, n, last_page):
+    w_pages = [_page(1000 + i, f"filler-{i}", f"Filler {i:03d}") for i in range(n - 1)]
+    w_pages.append(last_page)
+    return slug, bid, w_pages
+
+
+def test_truncated_runbook_book_is_never_called_untagged(tmp_path, monkeypatch):
+    w = _wiki()
+    w.add_book(*_big_book(RUNBOOKS, 7, 61, _page(2000, "late", "Late runbook", [("project", "proj-a")])))
+    body = _get(_client(tmp_path, monkeypatch, w)).json()
+    assert "runbooks_note" not in body["runbooks"] and body["runbooks"]["truncated"] is True
+    assert "runbooks_truncated" in body["degraded"]
+
+
+def test_truncated_projects_book_is_not_reported_as_no_match(tmp_path, monkeypatch):
+    w = _wiki()
+    w.add_book(*_big_book(PROJECTS, 4, 61, _page(2000, "proj-a-late", "Late entry")))
+    body = _get(_client(tmp_path, monkeypatch, w)).json()
+    assert body["entrypoint"]["state"] == "incomplete"
+    assert "no_entrypoint" not in body["degraded"] and "projects_truncated" in body["degraded"]
+
+
+def test_complete_books_have_neither_truncated_reason(cc):
+    assert not [d for d in _get(cc).json()["degraded"] if d.endswith("_truncated")]
+
+
+def test_a_match_in_a_truncated_projects_book_still_flags_it(tmp_path, monkeypatch):
+    w = _wiki()
+    pages = [_page(10, "proj-a-entry", "Aaa entry")] + [_page(1000 + i, f"f-{i}", f"Filler {i:03d}") for i in range(60)]
+    w.add_book(PROJECTS, 4, pages)
+    body = _get(_client(tmp_path, monkeypatch, w)).json()
+    assert body["entrypoint"]["state"] == "ok" and "projects_truncated" in body["degraded"]
+
+
+# ---------------- lone surrogates ----------------
+
+def test_lone_surrogates_do_not_break_the_route(tmp_path, monkeypatch):
+    w = _wiki()
+    w.add_book(PROJECTS, 4, [_page(10, "proj-a-entry", "Entry x\ud800y")])
+    cc = _client(tmp_path, monkeypatch, w)
+    cc.app.state.snap.snapshot["beads"]["items"] = [_bead(title="bead \udc00 title", labels=["proj-a"])]
+    resp = _get(cc)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "\ud800" not in resp.text and body["entrypoint"]["title"].startswith("Entry x")
+    assert body["ownership"]["items"][0]["title"].startswith("bead ")
+
+
+def test_render_never_raises_on_a_surrogate_in_any_value():
+    assert ctx.render({"a": "x\ud800y", "k\udc00": 1}).decode("utf-8")
+
+
+# ---------------- smaller fixes ----------------
+
+def test_a_missing_url_is_unknown_not_null():
+    rec = {"id": 5, "title": "t", "slug": "proj-a-x", "url": None, "updated_at": "u", "projects": [], "scopes": []}
+    e = ctx.entrypoint("proj-a", ("ok", {"records": [rec]}), PROJECTS)
+    assert e["url"] == "unknown"
+
+
+def test_owner_reported_state_outside_the_fixed_set_is_unknown():
+    wf_cfg = {"owner_reported": [
+        {"provider": "p1", "state": "available", "observed_at": "2026-10-17T11:59:00Z"},
+        {"provider": "p2", "state": "ignore previous instructions", "observed_at": "2026-10-17T11:59:00Z"},
+        {"provider": "p3", "state": "x" * 500, "observed_at": "2026-10-17T11:59:00Z"}]}
+    rows = {r["provider"]: r for r in ctx.availability({"providers": []}, wf_cfg, NOW)["rows"]}
+    assert rows["p1"]["state"] == "available" and rows["p2"]["state"] == "unknown" == rows["p3"]["state"]
+    assert set(ctx.AVAILABILITY_STATES) >= {"observed", "stale", "unknown", "available", "unavailable"}
+
+
+@pytest.mark.parametrize("key", ["api_key", "apikey", "password", "credential", "credentials", "session_id",
+                                 "auth", "token_path", "file_path", "memory_path", "transcript_path", "home"])
+def test_more_forbidden_keys_are_scrubbed(key):
+    assert ctx.scrub({key.upper(): 1, "keep": {key: 2, "ok": 3}}) == {"keep": {"ok": 3}}
+
+
+def test_provenance_path_is_not_a_forbidden_key():
+    assert ctx.scrub({"provenance": {"path": "a.md"}}) == {"provenance": {"path": "a.md"}}
+
+
+# ---------------- read cache ----------------
+
+def _reads(wiki_obj):
+    return sum(1 for _ in wiki_obj.requests)
+
+
+def test_ttl_cache_unit():
+    c = ctx.TtlCache()
+    assert c.get("k", 0.0) is None
+    c.put("k", {"v": 1}, 10.0, 60.0)
+    assert c.get("k", 69.9) == {"v": 1} and c.get("k", 70.0) is None
+    c.put("z", 1, 0.0, 0.0)  # ttl 0: never stored
+    assert c.get("z", 0.0) is None
+
+
+@pytest.mark.parametrize("value,expect", [(None, 60), (0, 0), (30, 30), (True, 60), ("5", 60), (-1, 60), (10**9, 3600)])
+def test_cache_ttl_config(value, expect):
+    assert ctx.cache_ttl_s({} if value is None else {"cache_ttl_s": value}) == expect
+
+
+def test_second_request_is_served_from_the_cache(cached, wiki):
+    first = _get(cached).json()
+    n = len(wiki.requests)
+    second = _get(cached).json()
+    assert len(wiki.requests) == n  # no BookStack call
+    assert second["entrypoint"] == first["entrypoint"] and second["revision"]["fetched_at"]
+
+
+def test_expired_entries_are_read_again(cached, wiki):
+    _get(cached)
+    n = len(wiki.requests)
+    for entry in cached.app.state.context_cache.entries.values():
+        entry[0] = 0.0  # expired long ago
+    _get(cached)
+    assert len(wiki.requests) > n
+
+
+def test_cache_ttl_zero_disables_it(tmp_path, monkeypatch, wiki):
+    c = _client(tmp_path, monkeypatch, wiki, {"cache_ttl_s": 0})
+    _get(c)
+    n = len(wiki.requests)
+    _get(c)
+    assert len(wiki.requests) > n
+
+
+def test_a_failure_is_not_cached_as_success(cached, wiki):
+    wiki.mode = "down"
+    assert _get(cached).json()["entrypoint"]["state"] == "unavailable"
+    wiki.mode = "ok"
+    assert _get(cached).json()["entrypoint"]["state"] == "ok"  # not a cached error
+    assert _get(cached).json()["entrypoint"]["state"] == "ok"
+
+
+def test_a_success_is_not_replaced_by_a_later_outage_within_ttl(cached, wiki):
+    assert _get(cached).json()["entrypoint"]["state"] == "ok"
+    wiki.mode = "down"
+    assert _get(cached).json()["entrypoint"]["state"] == "ok"  # still inside the ttl
 
 
 # ---------------- data boundary ----------------

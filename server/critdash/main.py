@@ -1359,6 +1359,9 @@ def build_app() -> FastAPI:
         return JSONResponse({"ok": True, **body, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
                             headers={"Cache-Control": "no-store"})
 
+    context_cache = context_mod.TtlCache()
+    app.state.context_cache = context_cache  # exposed for tests: age or inspect entries
+
     @app.get("/api/context")
     async def context_view(request: Request, project: str = Query("")):
         """Session-start context for one project. Same gate as /api/workflow.
@@ -1376,11 +1379,19 @@ def build_app() -> FastAPI:
         books = (*context_mod.book_slugs(cfg), workflow.policy_book_slug(wf_cfg))
         stale_days = stale_after_days(cfg)
 
+        ttl = context_mod.cache_ttl_s(cfg)
+
         async def read(slug: str):
+            # Only a successful read is cached; an error is read again next time.
+            key = (slug, stale_days)
+            if (hit := context_cache.get(key, time.monotonic())) is not None:
+                return "ok", hit
             try:
-                return "ok", await knowledge.book(slug, now, stale_days)
+                payload = await knowledge.book(slug, now, stale_days)
             except KnowledgeError as err:
                 return "error", err.code
+            context_cache.put(key, payload, time.monotonic(), ttl)
+            return "ok", payload
 
         projects, runbook_result, policy = await asyncio.gather(*(read(b) for b in books))
         commit = (snap.snapshot.get("update") or {}).get("current") \
