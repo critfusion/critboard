@@ -28,6 +28,7 @@ MAX_FIELD_BYTES = 200
 DROP_ORDER = ("runbooks", "standards", "ownership", "availability")
 AVAILABILITY_STATES = ("observed", "stale", "unknown", "available", "unavailable", "degraded", "limited")
 DEFAULT_CACHE_TTL_S, MAX_CACHE_TTL_S = 60, 3600
+CACHE_MAX_ENTRIES = 64
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # Defence in depth, not the boundary: the allowlist projections below are the
 # boundary. A key with one of these names never leaves, even if a projection
@@ -289,7 +290,14 @@ class TtlCache:
     [expires_at, value, stored_at]; the caller passes the clock."""
 
     def __init__(self) -> None:
-        self.entries: dict = {}
+        self.entries: dict = {}  # oldest first
+        self.scope = None
+
+    def bind(self, scope) -> None:
+        """Drop every entry when the scope (wiki + credential) is not the last one used."""
+        if scope != self.scope:
+            self.entries.clear()
+            self.scope = scope
 
     def get(self, key, now: float, max_age: float | None = None):
         """The value, or None. `max_age` is the CURRENT ttl: an entry stored
@@ -303,8 +311,12 @@ class TtlCache:
         return entry[1]
 
     def put(self, key, value, now: float, ttl_s: float) -> None:
-        if ttl_s > 0:
-            self.entries[key] = [now + ttl_s, value, now]
+        if ttl_s <= 0:
+            return
+        self.entries = {k: e for k, e in self.entries.items() if now < e[0] and k != key}
+        self.entries[key] = [now + ttl_s, value, now]
+        while len(self.entries) > CACHE_MAX_ENTRIES:
+            del self.entries[next(iter(self.entries))]  # oldest first
 
 
 def cache_ttl_s(cfg: dict) -> int:

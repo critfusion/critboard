@@ -361,6 +361,11 @@ sends no request to any AI provider and writes nothing.
   books is reused. Only a success is cached: an error is read again on the next request. Within the TTL a
   page edit is not visible, and an outage is not seen; `revision.pages[].updated_at` shows the page version
   that was read, and `revision.fetched_at` is the time of the request, not of the read.
+  The cache holds at most 64 entries (oldest evicted first), drops expired entries on every store, and is
+  emptied whenever the wiki base URL or the token file (path or contents) differs from the last request, so
+  a rotated token leaves no entry behind. Known window: the key hashes the token file as read at the start
+  of a request and the fetch reads the file again, so a token file replaced in those few milliseconds can
+  cache a read under the old key. The next request sees the new token and empties the cache.
 - `GET /api/context?project=<slug>`. Same gate as `/api/workflow`: module off -> 404; foreign Host or
   Origin -> 403 `host_not_allowed` / `origin_not_allowed`. Then `project` must match
   `^[a-z0-9][a-z0-9._-]{0,63}$`, else 400 `{"ok":false,"error":{"code":"invalid_project"}}`. `Cache-Control:

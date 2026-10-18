@@ -1399,6 +1399,7 @@ def build_app() -> FastAPI:
                 # The token text is never kept.
                 path = os.path.realpath(os.path.expanduser(knowledge._token_path()))
                 fp = hashlib.sha256(f"{path}\0{token}".encode()).hexdigest()
+                context_cache.bind((base_url, fp))  # a new wiki or credential: drop the old entries
                 key = (base_url, fp, slug, stale_days)
                 if (hit := context_cache.get(key, time.monotonic(), max_age=ttl)) is not None:
                     return "ok", hit

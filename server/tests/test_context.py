@@ -874,3 +874,58 @@ def test_token_and_its_hash_never_appear_in_responses_or_logs(tmp_path, monkeypa
     digests = [hashlib.sha256(TOKEN.encode()).hexdigest(), hashlib.sha256((TOKEN + "\n").encode()).hexdigest()]
     for text in (resp.text, caplog.text):
         assert secret not in text and not any(dg in text or dg[:16] in text for dg in digests)
+
+
+# ---------------- cache eviction ----------------
+
+def test_put_drops_every_expired_entry():
+    c = ctx.TtlCache()
+    c.put("a", 1, 0.0, 10.0)
+    c.put("b", 2, 5.0, 10.0)
+    c.put("c", 3, 12.0, 10.0)  # a expired at 10; b lives to 15
+    assert set(c.entries) == {"b", "c"}
+    c.put("d", 4, 100.0, 10.0)
+    assert set(c.entries) == {"d"}
+
+
+def test_the_cache_holds_at_most_max_entries_and_evicts_the_oldest():
+    c = ctx.TtlCache()
+    for i in range(ctx.CACHE_MAX_ENTRIES + 36):
+        c.put(i, i, float(i), 10**6)
+    assert len(c.entries) == ctx.CACHE_MAX_ENTRIES
+    assert 0 not in c.entries and 35 not in c.entries and 36 in c.entries and 99 in c.entries
+
+
+def test_rewriting_a_key_makes_it_the_newest():
+    c = ctx.TtlCache()
+    for i in range(ctx.CACHE_MAX_ENTRIES):
+        c.put(i, i, float(i), 10**6)
+    c.put(0, "again", 1000.0, 10**6)  # key 0 is now the newest
+    c.put("new", 1, 1001.0, 10**6)
+    assert 0 in c.entries and 1 not in c.entries
+
+
+def test_bind_clears_the_cache_only_when_the_scope_changes():
+    c = ctx.TtlCache()
+    c.bind(("wiki", "fp1"))
+    c.put("k", 1, 0.0, 60.0)
+    c.bind(("wiki", "fp1"))
+    assert "k" in c.entries
+    c.bind(("wiki", "fp2"))
+    assert c.entries == {}
+    c.put("k", 1, 0.0, 60.0)
+    c.bind(("wiki2", "fp2"))
+    assert c.entries == {}
+
+
+def test_rotating_the_token_leaves_only_the_current_entries(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    path = pathlib.Path(json.loads((d / "sources.json").read_text())["modules"]["knowledge"]["bookstack"]["token_file"])
+    for i in range(12):
+        token = f"id-{i}:secret-{i}"
+        wiki.require = f"Token {token}"
+        _token_file(path.parent, path.name, token)
+        assert _get(c).json()["entrypoint"]["state"] == "ok"
+        assert len(c.app.state.context_cache.entries) == 3  # three books, current credential only
+    assert {k[1] for k in c.app.state.context_cache.entries} == {
+        next(iter(c.app.state.context_cache.entries))[1]}  # one fingerprint left
