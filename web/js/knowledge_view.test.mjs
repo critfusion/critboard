@@ -73,8 +73,22 @@ await test("link items keep only http(s) URLs", () => {
   assert.deepEqual(wikiLinkItems({ edit_url: EDIT, history_url: HIST }).map((i) => i.text), ["Edit", "History"]);
   assert.deepEqual(wikiLinkItems({ edit_url: "javascript:alert(1)", history_url: null }), []);
   assert.deepEqual(wikiLinkItems({}), []);
-  assert.equal(wikiLinkItems({ edit_url: EDIT }, "Page X")[0].label, "Edit Page X");
+  assert.equal(wikiLinkItems({ edit_url: EDIT }, "Page X")[0].label, "Edit: Page X");
   assert.deepEqual(wikiLinkItems(null), []);
+});
+
+await test("a label starts with the visible text, and has no dangling word when the name is empty", () => {
+  const rec = { edit_url: EDIT, history_url: HIST };
+  const texts = { edit: "Edit in BookStack", history: "History in BookStack" };
+  for (const it of [...wikiLinkItems(rec, "Page X"), ...wikiLinkItems(rec, "Page X", texts)]) {
+    assert.ok(it.label.startsWith(it.text), `${it.label} starts with ${it.text}`);
+  }
+  assert.deepEqual(wikiLinkItems(rec, "Page X", texts).map((i) => i.label),
+    ["Edit in BookStack: Page X", "History in BookStack: Page X"]);
+  for (const name of ["", "   ", undefined, null, 5]) {
+    assert.deepEqual(wikiLinkItems(rec, name).map((i) => i.label), ["Edit", "History"], String(name));
+    assert.deepEqual(wikiLinkItems(rec, name, texts).map((i) => i.label), ["Edit in BookStack", "History in BookStack"]);
+  }
 });
 
 // ---- Knowledge view ----
@@ -126,7 +140,7 @@ await test("each search row shows the marker and the links the server validated"
 
 await test("links sit inside their card and name the page for screen readers", () => {
   assert.equal(rows[0].className, "kb-card");
-  assert.deepEqual(anchors(rows[0]).map((a) => a.attrs["aria-label"]), ["Edit Page one", "History of Page one"]);
+  assert.deepEqual(anchors(rows[0]).map((a) => a.attrs["aria-label"]), ["Edit: Page one", "History: Page one"]);
   assert.equal(rows[1].find((n) => n.className === "kb-result-links").length, 0);
 });
 
@@ -145,6 +159,7 @@ await test("page detail shows Edit and History links and the marker", async () =
   const got = anchors(detail);
   assert.deepEqual(got.map((a) => a.attrs.href), [EDIT, HIST, "https://wiki.example.com/link/1"]);
   assert.deepEqual(got.map((a) => a.text().trim()), ["Edit in BookStack", "History in BookStack", "Open in BookStack"]);
+  assert.deepEqual(got.slice(0, 2).map((x) => x.attrs["aria-label"]), ["Edit in BookStack: Page one", "History in BookStack: Page one"]);
   assert.match(detail.text(), /Served to a session start 5m ago \(since CritBoard restart\)/);
 });
 
@@ -181,7 +196,7 @@ await test("infrastructure cards link Edit and History; a record without them sh
   const a = cards.find((c) => /Svc A/.test(c.text()));
   const b = cards.find((c) => /Svc B/.test(c.text()));
   assert.deepEqual(a.find((n) => n.className === "infra-wiki-links").flatMap(hrefs), [EDIT, HIST]);
-  assert.deepEqual(anchors(a).filter((x) => x.attrs["aria-label"]).map((x) => x.attrs["aria-label"]), ["Edit Svc A", "History of Svc A"]);
+  assert.deepEqual(anchors(a).filter((x) => x.attrs["aria-label"]).map((x) => x.attrs["aria-label"]), ["Edit: Svc A", "History: Svc A"]);
   assert.equal(b.find((n) => n.className === "infra-wiki-links").length, 0);
 });
 
@@ -196,7 +211,7 @@ await test("workflow policy cards link Edit and History", async () => {
   await view.onShow();
   await settle();
   assert.deepEqual(r.find((n) => n.className === "infra-wiki-links").flatMap(hrefs), [EDIT, HIST]);
-  assert.deepEqual(anchors(r).map((x) => x.attrs["aria-label"]).filter(Boolean), ["Edit Rule A", "History of Rule A"]);
+  assert.deepEqual(anchors(r).map((x) => x.attrs["aria-label"]).filter(Boolean), ["Edit: Rule A", "History: Rule A"]);
 });
 
 console.log(`knowledge_view.test.mjs: ${passed} passed`);

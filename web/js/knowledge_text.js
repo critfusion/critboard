@@ -47,10 +47,16 @@ export function servedLine(served, fmtRel) {
 
 // Edit and History links of a record, in display order. A missing or
 // non-http(s) URL gives no link.
-// `name` is the page title, for the screen-reader label.
-export function wikiLinkItems(rec, name = "") {
+// `name` is the page title. The accessible label starts with the visible
+// text (WCAG 2.5.3) and adds ": <name>" only when there is a name.
+// `texts` sets the visible words.
+export function wikiLinkItems(rec, name = "", texts = {}) {
   const out = [];
-  if (rec && safeHref(rec.edit_url)) out.push({ text: "Edit", href: rec.edit_url, label: `Edit ${name}`.trim() });
-  if (rec && safeHref(rec.history_url)) out.push({ text: "History", href: rec.history_url, label: `History of ${name}`.trim() });
+  const add = (url, text) => {
+    const title = typeof name === "string" ? name.trim() : "";
+    if (rec && safeHref(url)) out.push({ text, href: url, label: title ? `${text}: ${title}` : text });
+  };
+  add(rec && rec.edit_url, texts.edit || "Edit");
+  add(rec && rec.history_url, texts.history || "History");
   return out;
 }
