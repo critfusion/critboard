@@ -7,7 +7,7 @@
 // Nothing is cached as current. A failed refresh keeps the last good copy,
 // dimmed, under a line that says when it was fetched.
 
-import { describeProblem } from "./knowledge_text.js";
+import { describeProblem, wikiLinkItems } from "./knowledge_text.js";
 import { isUnknown, safeHref, statusKey, statusLabel } from "./infra_text.js";
 import {
   availabilityBadge, availabilityKey, basisLabel, costText, gateKey, gateLabel, gateMissingText,
@@ -38,6 +38,13 @@ function link(text, href) {
   return safe ? el("a", { href: safe, target: "_blank", rel: "noopener noreferrer" }, text) : text;
 }
 
+function wikiLinks(rec) {
+  const items = wikiLinkItems(rec, rec.title);
+  return items.length
+    ? el("p", { class: "infra-wiki-links" }, items.map((it) => el("a", { href: it.href, target: "_blank", rel: "noopener noreferrer", "aria-label": it.label }, it.text)))
+    : null;
+}
+
 function row(label, value) {
   return [el("dt", {}, label), el("dd", {}, value)];
 }
@@ -57,6 +64,7 @@ function policyCard(p) {
       el("h4", { class: "infra-rec-title" }, link(p.title, p.url)),
       el("span", { class: `infra-badge infra-badge-${key}` }, statusLabel(key)),
     ]),
+    wikiLinks(p),
     p.status_reason ? el("p", { class: "infra-reason" }, p.status_reason) : null,
     p.status_conflict ? el("p", { class: "infra-reason infra-conflict" }, p.status_conflict) : null,
     el("dl", { class: "infra-fields" }, [

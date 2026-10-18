@@ -278,6 +278,21 @@ def _link(value: str, base_url: str) -> dict:
     return {"text": value, "href": href}
 
 
+WIKI_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,190}$")
+
+
+def page_links(base_url: str, book_slug, slug) -> dict:
+    """Native BookStack Edit and History links for one page. A link is built
+    only when both slugs match WIKI_SLUG_RE; otherwise both are None, so a
+    hostile or missing slug never reaches an href."""
+    ok = all(isinstance(s, str) and WIKI_SLUG_RE.fullmatch(s) for s in (book_slug, slug))
+    # A base with a query or fragment would put the page path inside it.
+    if not ok or not isinstance(base_url, str) or "?" in base_url or "#" in base_url:
+        return {"edit_url": None, "history_url": None}
+    page = f"{base_url.rstrip('/')}/books/{book_slug}/page/{slug}"
+    return {"edit_url": f"{page}/edit", "history_url": f"{page}/revisions"}
+
+
 def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
                  stale_days: int) -> dict:
     """One BookStack page (GET /api/pages/{id} body) -> one record."""
@@ -300,6 +315,7 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
         "title": str(page.get("name") or "")[:MAX_TEXT_CHARS] or UNKNOWN,
         "slug": slug,
         "url": url,
+        **page_links(base_url, book_slug, slug),
         "projects": tags["projects"],
         "scopes": tags["scopes"],
         "canonical": {"repo": facts["repo"], "location": facts["location"], "boundary": facts["boundary"]},
@@ -332,7 +348,7 @@ def degraded_record(page_id, name) -> dict:
     return {
         "id": page_id if isinstance(page_id, int) and not isinstance(page_id, bool) else None,
         "title": str(name or "")[:MAX_TEXT_CHARS] or UNKNOWN,
-        "slug": None, "url": None, "projects": [], "scopes": [],
+        "slug": None, "url": None, "edit_url": None, "history_url": None, "projects": [], "scopes": [],
         "canonical": {"repo": UNKNOWN, "location": UNKNOWN, "boundary": UNKNOWN},
         "kind": UNKNOWN, "owner": UNKNOWN, "environment": UNKNOWN, "purpose": UNKNOWN,
         "runbooks": [], "backups": [], "related": [],

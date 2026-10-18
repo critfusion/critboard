@@ -447,6 +447,55 @@ response; `server/tests/test_context.py` checks them.
   CritBoard machine.
 - [ ] The beads and sessions of other projects do not appear: ownership matches the slug label exactly.
 
+#### Phase 4: editing happens in BookStack (no CritBoard write path)
+
+Decision: CritBoard does not edit knowledge pages. Editing uses BookStack's own editor. Two reasons:
+
+- The BookStack API has no conditional write. `PUT /api/pages/{id}` is last-write-wins, so a CritBoard
+  write could silently overwrite a newer edit. CritBoard has no safe way to prevent that.
+- The deployment has a single human editor. An in-app editor gives no clear value over a link to the native one.
+
+BookStack (v26.09.1) already provides login, per-role permissions, page revisions with diffs and restore,
+drafts, and a warning when two people edit one page. CritBoard adds none of these and keeps no second copy.
+
+What CritBoard adds:
+
+- **Per-page links.** Where a view lists a BookStack page (Knowledge search results and page detail,
+  Infrastructure records, Workflow policy pages), the page shows `Edit` (`<base>/books/<book>/page/<page>/edit`)
+  and `History` (`.../revisions`). The server builds them from `bookstack.base_url` and the slugs BookStack
+  returned. A link is made only when both slugs match `^[a-z0-9][a-z0-9-]{0,190}$`; otherwise the field is
+  `null` and the view shows no link. Links open with `target="_blank"` and `rel="noopener noreferrer"`.
+  There is no global Wiki link in the nav (deferred).
+- **Served-revision marker.** After every `/api/context` answer, the server records, for each page id in the
+  answer's `revision.pages`: `(updated_at, served_at, project)`. The Knowledge search results and page detail
+  carry a `served` field: `{"state": "pending" | "served", "served_at", "project"}`. No new route; the same
+  `_knowledge_gate` (Host and Origin checks) applies.
+  - `pending`: the page was never served since restart, or its `updated_at` is later than the revision last
+    served, or either time cannot be read.
+  - `served`: the last served revision is the current one or newer.
+  - The view always adds "(since CritBoard restart)". Text: "Served to a session start 5m ago" or
+    "Pending: not yet served to a session start".
+  - Only pages that are in the sent body are recorded. Nothing is recorded for a 400, a refused Host or Origin,
+    a 404 (module off), a section dropped for size, or the `over_cap` stub. A 200 with BookStack down has no
+    pages, so it records none. A page whose `updated_at` is not a time is skipped.
+  - The store is bounded: at most 500 page ids, oldest-served evicted first. It lives in process memory and is
+    lost on restart. It is not on disk.
+
+Limits of the marker:
+
+- **Served is not consumed.** A page in a `/api/context` answer was sent to the caller. CritBoard cannot see
+  whether a session read it, kept it, or acted on it. The marker never says "consumed" or "loaded by all
+  sessions".
+- It covers only `/api/context`. Other ways an agent reads a page (BookStack directly, a copy in a repo) are
+  not tracked.
+- It is empty after a restart: every page reads `pending` until the next session start asks for it.
+- The recorded `updated_at` is the revision in the answer, which a cached book read (`cache_ttl_s`) may hold
+  for up to that long. The page detail compares it with the live `updated_at`, so a later edit reads `pending`.
+
+Policy pages: whether a person may edit the policy book is a BookStack permission setting (role permissions
+on that book). It is outside CritBoard. The `Edit` link on a policy page opens BookStack, which allows or
+refuses the edit by that setting.
+
 #### Infrastructure record contract
 
 One page = one record. A field the page does not state is the string `unknown` (lists are empty

@@ -81,3 +81,13 @@ def test_detail_reply_node_test_passes():
     )
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "passed" in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed on this host")
+def test_knowledge_view_node_test_passes():
+    # fake DOM: Edit/History links, served-revision marker wording, infra and workflow link cards
+    result = subprocess.run(
+        ["node", str(WEB / "js" / "knowledge_view.test.mjs")], capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "passed" in result.stdout

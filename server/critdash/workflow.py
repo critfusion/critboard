@@ -78,6 +78,7 @@ def project_policy(book_payload: dict) -> dict:
         src = r.get("source") or {}
         pages.append({
             "id": r.get("id"), "title": r.get("title") or UNKNOWN, "url": r.get("url"),
+            "edit_url": r.get("edit_url"), "history_url": r.get("history_url"),
             "status": r.get("status") or UNKNOWN, "status_reason": r.get("status_reason"),
             "status_conflict": r.get("status_conflict"),
             "source": {"repo": src.get("repo", UNKNOWN), "repo_href": src.get("repo_href"),
