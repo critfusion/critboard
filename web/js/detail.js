@@ -267,9 +267,9 @@ function fetchBeadComments(id, updatedAt) {
 // "Next" jumps to the next OPEN, human-labelled bead after this one, in the
 // order the snapshot's beads.items array already lists them (top to bottom
 // -- the owner works the queue one item at a time), wrapping around once.
-function findNextHumanBead(data, currentId, humanLabels) {
+export function findNextHumanBead(data, currentId, humanLabels) {
   const items = data?.beads?.items || [];
-  const isHumanOpen = (b) => b.status === "open" && (b.labels || []).some((l) => humanLabels.includes(l));
+  const isHumanOpen = (b) => ["open", "blocked"].includes(b.status) && (b.labels || []).some((l) => humanLabels.includes(l));
   const idx = items.findIndex((b) => b.id === currentId);
   const ordered = idx >= 0 ? items.slice(idx + 1).concat(items.slice(0, idx + 1)) : items;
   return ordered.find((b) => b.id !== currentId && isHumanOpen(b)) || null;
@@ -289,7 +289,7 @@ function commentNode(c) {
   return row;
 }
 
-function renderReplySection(bodyEl, id, data) {
+export function renderReplySection(bodyEl, id, data) {
   if (!data?.settings?.bead_reply_enabled) return;
 
   const state = beadReplyState.get(id) || { sending: false, result: null, error: null };
@@ -332,6 +332,11 @@ function renderReplySection(bodyEl, id, data) {
   const info = entry.body || {};
   const humanPresent = info.human_labels_present || [];
   if (humanPresent.length === 0) return; // not human-owned -- no reply UI
+  // Mirror the server's rule (POST /api/bead/{id}/reply): close on open or
+  // blocked, send back on open only. The server re-checks; this only hides
+  // controls it would refuse.
+  const canClose = info.status === "open" || info.status === "blocked";
+  const canSendBack = info.status === "open";
 
   const wrap = el("div", { class: "bead-reply" });
   const comments = info.comments || [];
@@ -342,6 +347,13 @@ function renderReplySection(bodyEl, id, data) {
       comments.length ? comments.map(commentNode) : [el("div", { class: "detail-note" }, "No comments yet.")]
     )
   );
+
+  if (!canClose) {
+    // Status changed under a refused write: no controls, but keep the server's
+    // explanation. No scroll here -- it was already scrolled to, or not shown.
+    if (state.error) wrap.appendChild(el("div", { class: "detail-note-warn", role: "alert" }, state.error));
+    return bodyEl.appendChild(section("Reply", wrap));
+  }
 
   const textarea = el("textarea", {
     class: "settings-input bead-reply-textarea",
@@ -356,23 +368,27 @@ function renderReplySection(bodyEl, id, data) {
   textarea.addEventListener("input", () => beadReplyDraft.set(id, textarea.value));
   wrap.appendChild(textarea);
 
-  wrap.appendChild(
-    el("div", { class: "detail-note bead-reply-route" }, `Send back will route to: ${info.route_preview || "?"}`)
-  );
+  if (canSendBack) {
+    wrap.appendChild(
+      el("div", { class: "detail-note bead-reply-route" }, `Send back will route to: ${info.route_preview || "?"}`)
+    );
+  }
 
-  if (state.error) wrap.appendChild(el("div", { class: "detail-note-warn" }, state.error));
-
-  const sendBtn = el(
-    "button",
-    { type: "button", class: "settings-btn-primary", disabled: state.sending ? "" : null },
-    "Send back"
-  );
+  const sendBtn = canSendBack
+    ? el("button", { type: "button", class: "settings-btn-primary", disabled: state.sending ? "" : null }, "Send back")
+    : null;
   const closeBtn = el(
     "button",
     { type: "button", class: "settings-btn-secondary", disabled: state.sending ? "" : null },
     "Close bead"
   );
   wrap.appendChild(el("div", { class: "bead-reply-actions" }, [sendBtn, closeBtn]));
+  // Under the buttons, next to the click that failed.
+  let alertEl = null;
+  if (state.error) {
+    alertEl = el("div", { class: "detail-note-warn", role: "alert" }, state.error);
+    wrap.appendChild(alertEl);
+  }
 
   function submit(action) {
     const s = beadReplyState.get(id) || {};
@@ -413,15 +429,25 @@ function renderReplySection(bodyEl, id, data) {
         })
       )
       .catch((err) => {
-        beadReplyState.set(id, { sending: false, result: null, error: String((err && err.message) || err) });
+        beadReplyState.set(id, { sending: false, result: null, error: String((err && err.message) || err), scrollToError: true });
         modal.refreshOpen({ force: true }); // FORCED: error result must show immediately
       });
   }
 
-  sendBtn.addEventListener("click", () => submit("send_back"));
+  if (sendBtn) sendBtn.addEventListener("click", () => submit("send_back"));
   closeBtn.addEventListener("click", () => submit("close"));
 
   bodyEl.appendChild(section("Reply", wrap));
+  // modal.js restores the old scrollTop right after rebuild() returns, which
+  // would undo a scroll done here. So defer it until that restore has run. Once
+  // per failure, not on every rebuild.
+  if (alertEl && state.scrollToError) {
+    state.scrollToError = false;
+    const later = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f) => setTimeout(f, 0);
+    later(() => {
+      if (typeof alertEl.scrollIntoView === "function") alertEl.scrollIntoView({ block: "nearest" });
+    });
+  }
 }
 
 export function openBeadModal(idOrBead, data, triggerEl) {

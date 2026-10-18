@@ -862,13 +862,18 @@ def build_app() -> FastAPI:
 
         labels = raw.get("labels") or []
         present = [label for label in human_labels if label in labels]
-        if raw.get("status") != "open" or not present:
+        # Close is allowed on an open OR blocked human bead (a blocked bead can
+        # still be answered by the human). Send-back stays open-only: relabelling
+        # a blocked bead could hand an agent work it is still waiting on.
+        allowed_status = ("open", "blocked") if action == "close" else ("open",)
+        if raw.get("status") not in allowed_status or not present:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "reason": "not_actionable",
                     "message": (
-                        "bead is not open, or carries no human label -- refusing to avoid "
+                        "bead is not actionable: it needs a human label and status open "
+                        "or blocked to close, or open to send back -- refusing to avoid "
                         "reopening or relabelling a bead an agent already took"
                     ),
                 },

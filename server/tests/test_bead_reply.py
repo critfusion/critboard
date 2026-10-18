@@ -353,6 +353,38 @@ def test_post_reply_refuses_bead_not_open(tmp_path, monkeypatch, fake_bd, record
     assert calls == [["show", "demo-1", "--json"]]  # only the read, no write
 
 
+def test_post_reply_close_allowed_on_blocked_human_bead(tmp_path, monkeypatch, fake_bd, record_file):
+    client, _ = _build_client(tmp_path, monkeypatch, fake_bd, extra_sources=_enabled_sources())
+    monkeypatch.setenv(
+        "FAKE_BD_SHOW_JSON", show_payload("demo-1", "fleetco-grok", ["example-human"], status="blocked")
+    )
+    resp = client.post("/api/bead/demo-1/reply", json={"action": "close", "text": ""})
+    assert resp.status_code == 200
+    assert resp.json()["action"] == "close"
+    assert [c[0] for c in read_recorded_argv(record_file)] == ["show", "close"]
+
+
+def test_post_reply_send_back_refused_on_blocked_bead(tmp_path, monkeypatch, fake_bd, record_file):
+    client, _ = _build_client(tmp_path, monkeypatch, fake_bd, extra_sources=_enabled_sources())
+    monkeypatch.setenv(
+        "FAKE_BD_SHOW_JSON", show_payload("demo-1", "fleetco-grok", ["example-human"], status="blocked")
+    )
+    resp = client.post("/api/bead/demo-1/reply", json={"action": "send_back", "text": "please redo"})
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["reason"] == "not_actionable"
+    assert read_recorded_argv(record_file) == [["show", "demo-1", "--json"]]  # no write
+
+
+def test_post_reply_close_refused_on_in_progress_bead(tmp_path, monkeypatch, fake_bd, record_file):
+    client, _ = _build_client(tmp_path, monkeypatch, fake_bd, extra_sources=_enabled_sources())
+    monkeypatch.setenv(
+        "FAKE_BD_SHOW_JSON", show_payload("demo-1", "fleetco-grok", ["example-human"], status="in_progress")
+    )
+    resp = client.post("/api/bead/demo-1/reply", json={"action": "close", "text": ""})
+    assert resp.status_code == 409
+    assert read_recorded_argv(record_file) == [["show", "demo-1", "--json"]]
+
+
 def test_post_reply_refuses_bead_with_no_human_label(tmp_path, monkeypatch, fake_bd, record_file):
     client, _ = _build_client(tmp_path, monkeypatch, fake_bd, extra_sources=_enabled_sources())
     payload = show_payload("demo-1", "fleetco-grok", ["needs-grok"], status="open")
