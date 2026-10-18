@@ -370,14 +370,19 @@ sends no request to any AI provider and writes nothing.
   Origin -> 403 `host_not_allowed` / `origin_not_allowed`. Then `project` must match
   `^[a-z0-9][a-z0-9._-]{0,63}$`, else 400 `{"ok":false,"error":{"code":"invalid_project"}}`. `Cache-Control:
   no-store`. Nothing is cached.
+- Optional `also=<label>,<label>`: alias labels for a project whose beads or pages sit under more than one
+  label. At most 5 labels, comma separated, each matching the slug regex; duplicates (and the primary
+  label) are dropped; any other input returns 400 `invalid_also`. The labels used are echoed as `labels`
+  (primary first). The cache key does not include labels: the three books are read once for all of them.
 - With Knowledge off or down the wiki-backed sections report `state: "not_configured"` or
   `"unavailable"` with `error: <code>` and nothing else; `ownership` and `availability` still answer. A
   fact the data does not state is the string `unknown`.
-- Body: `{ok, project, entrypoint, standards, runbooks, ownership, availability, revision, degraded}`.
+- Body: `{ok, project, labels, entrypoint, standards, runbooks, ownership, availability, revision, degraded}`.
   Every section but `revision` and `degraded` carries `source` (`bookstack:<book slug>`, `beads`, `quota`).
-  - `entrypoint`: `state` is `ok`, `no_match`, `not_configured` or `unavailable`. Match order: a page in
-    the projects book tagged `project:<slug>`, then a page whose slug starts with `<slug>-`. First in
-    book order wins. On `ok`: `match` (`tag` or `slug_prefix`), `id, title, url, updated_at`,
+  - `entrypoint`: `state` is `ok`, `no_match`, `not_configured` or `unavailable`. Match order, over
+    `labels`: a page in the projects book tagged `project:<label>` for the primary, then for each alias in
+    order; then a page whose slug starts with `<label>-` for the primary, then for each alias. First page in
+    book order wins within a step. `matched_label` says which label matched. On `ok`: `match` (`tag` or `slug_prefix`), `matched_label`, `id, title, url, updated_at`,
     `provenance{repo, path, git_sha, status, [path_note], [git_sha_note]}`, `canonical_repo`,
     `canonical_location`, `dev_prod_boundary`. The last three come from the rows `Canonical repo`,
     `Canonical location` and `Dev/prod boundary` of a `| Field | Value |` table on the page (the
@@ -389,9 +394,11 @@ sends no request to any AI provider and writes nothing.
   - `standards`: the pages of the workflow policy book: `items[]` of `{id, title, url, updated_at,
     status}`, `truncated`. These are the intended review and approval roles, not observed behaviour.
   - `runbooks`: pages of the runbooks book tagged `project:<slug>` or `scope:all`: `items[]` of `{id, title,
-    url, updated_at}`, `truncated`. No match -> `items: []` and `runbooks_note: "untagged"`, except when the
+    url, updated_at, matched}`, `truncated`. A page is tagged `project:<label>` for any label in `labels`
+    (`matched` is that label, primary first) or `scope:all` (`matched: "scope:all"`); runbooks are matched by
+    tag only, not by slug prefix. No match -> `items: []` and `runbooks_note: "untagged"`, except when the
     book was cut short: then `truncated` is true and the note is not given. The whole book is never listed.
-  - `ownership`: in-progress beads with a label equal to the slug: `items[]` of `{id, title, assignee,
+  - `ownership`: in-progress beads with a label equal to any of `labels` (a bead on several is listed once): `items[]` of `{id, title, assignee,
     coder, reviewers[], approvers[], review_gate}` (rules as in `assignments` above), `total`, `truncated`.
   - `availability`: `ttl_s` and `rows[]` of `{provider, basis, state, observed_at, expires_at, expired}`.
     Freshness only: no values, spend, cost or detail text. `state` is one of `observed`, `stale`, `unknown`,

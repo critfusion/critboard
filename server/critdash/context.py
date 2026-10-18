@@ -42,6 +42,24 @@ FORBIDDEN_KEYS = frozenset({
 })
 
 
+MAX_ALSO = 5
+
+
+def parse_also(raw: str) -> list[str] | None:
+    """`also=a,b` -> the alias labels, duplicates dropped. None when invalid:
+    more than MAX_ALSO entries, or any entry that is not a slug. Empty -> []."""
+    if not raw:
+        return []
+    parts = raw.split(",")
+    if len(parts) > MAX_ALSO or not all(SLUG_RE.fullmatch(p) for p in parts):
+        return None
+    return list(dict.fromkeys(parts))
+
+
+def _labels(project) -> list[str]:
+    return [project] if isinstance(project, str) else list(project)
+
+
 def book_slugs(cfg: dict) -> tuple[str, str]:
     def one(key: str, default: str) -> str:
         v = cfg.get(key)
@@ -109,19 +127,30 @@ def _page_ref(r: dict) -> dict:
             "updated_at": _s(r.get("updated_at"))}
 
 
-def entrypoint(project: str, result, book_slug: str) -> dict:
+def _has_tag(r: dict, label: str) -> bool:
+    return label in [p.lower() for p in r.get("projects") or []]
+
+
+def entrypoint(project, result, book_slug: str) -> dict:
+    """`project` is the primary label, or the list [primary, *aliases]. Order of
+    precedence: a tag on the primary, tags on the aliases, a slug prefix
+    "<label>-" on the primary, then on the aliases. First page in book order wins."""
+    labels = _labels(project)
     source = f"bookstack:{book_slug}"
     payload, state = _wiki_state(result)
     if payload is None:
         return _failed(source, state, result[1])
     records = [r for r in payload.get("records") or [] if isinstance(r, dict)]
-    # Tag match first, then a slug that starts with "<project>-".
-    hit = next((r for r in records if project in [p.lower() for p in r.get("projects") or []]), None)
-    match = "tag" if hit else None
-    if hit is None:
-        hit = next((r for r in records
-                    if isinstance(r.get("slug"), str) and r["slug"].startswith(project + "-")), None)
-        match = "slug_prefix" if hit else None
+    hit = match = matched = None
+    for rule, test in (("tag", _has_tag),
+                       ("slug_prefix", lambda r, x: isinstance(r.get("slug"), str) and r["slug"].startswith(x + "-"))):
+        for label in labels:
+            hit = next((r for r in records if test(r, label)), None)
+            if hit:
+                match, matched = rule, label
+                break
+        if hit:
+            break
     if hit is None:
         # A book cut at the page cap may hold the page: that is not "no match".
         return {"source": source, "state": "incomplete" if payload.get("truncated") else "no_match"}
@@ -135,7 +164,8 @@ def entrypoint(project: str, result, book_slug: str) -> dict:
         if _opt(src.get(key)):
             provenance[key] = _opt(src.get(key))
     return {
-        "source": source, "state": "ok", "match": match, **_page_ref(hit), "provenance": provenance,
+        "source": source, "state": "ok", "match": match, "matched_label": matched, **_page_ref(hit),
+        "provenance": provenance,
         "canonical_repo": _s(canon.get("repo")), "canonical_location": _s(canon.get("location")),
         "dev_prod_boundary": _s(canon.get("boundary")),
     }
@@ -152,17 +182,23 @@ def standards(result, book_slug: str) -> dict:
             "truncated": len(records) > MAX_LIST or bool(payload.get("truncated"))}
 
 
-def runbooks(project: str, result, book_slug: str) -> dict:
+def runbooks(project, result, book_slug: str) -> dict:
+    """Pages tagged `project:<label>` for any label, or `scope:all`. Each item
+    says which: `matched` is the first label (primary first) or "scope:all"."""
+    labels = _labels(project)
     source = f"bookstack:{book_slug}"
     payload, state = _wiki_state(result)
     if payload is None:
         return _failed(source, state, result[1])
-    hits = [r for r in payload.get("records") or [] if isinstance(r, dict)
-            and (project in [p.lower() for p in r.get("projects") or []]
-                 or "all" in [s.lower() for s in r.get("scopes") or []])]
+    hits = []
+    for r in payload.get("records") or []:
+        if not isinstance(r, dict):
+            continue
+        label = next((x for x in labels if _has_tag(r, x)), None)
+        if label or "all" in [t.lower() for t in r.get("scopes") or []]:
+            hits.append({**_page_ref(r), "matched": label or "scope:all"})
     cut = bool(payload.get("truncated"))
-    out = {"source": source, "state": "ok", "items": [_page_ref(r) for r in hits[:MAX_LIST]],
-           "truncated": len(hits) > MAX_LIST or cut}
+    out = {"source": source, "state": "ok", "items": hits[:MAX_LIST], "truncated": len(hits) > MAX_LIST or cut}
     if not hits and not cut:
         out["runbooks_note"] = "untagged"
     return out
@@ -178,9 +214,11 @@ def _ownership_item(a: dict) -> dict:
     }
 
 
-def ownership(project: str, snapshot: dict) -> dict:
+def ownership(project, snapshot: dict) -> dict:
+    labels = set(_labels(project))
     beads = (snapshot.get("beads") or {}).get("items")
-    mine = [b for b in beads if isinstance(b, dict) and project in (b.get("labels") or [])] \
+    # One pass over the beads: a bead on several of the labels is listed once.
+    mine = [b for b in beads if isinstance(b, dict) and labels & set(b.get("labels") or [])] \
         if isinstance(beads, list) else []
     # No agents are passed: the sessions never enter this section.
     items = workflow.assignments(mine, [])
@@ -240,17 +278,18 @@ def _degraded(sections: dict, stale_beads: bool, cut: dict) -> list[str]:
     return out
 
 
-def build(project: str, *, projects, runbook_result, policy, books: tuple[str, str, str], snapshot: dict,
+def build(project: str, *, also: list[str] | None = None, projects, runbook_result, policy, books: tuple[str, str, str], snapshot: dict,
           quota_response: dict, wf_cfg: dict, commit: str | None, now: datetime, limit: int) -> dict:
     """The /api/context body. `projects`, `runbook_result` and `policy` are
     ('ok', book payload) or ('error', KnowledgeError code). `books` is
     (projects, runbooks, policy) book slugs."""
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    labels = [project, *[a for a in dict.fromkeys(also or []) if a != project]]
     sections = {
-        "entrypoint": entrypoint(project, projects, books[0]),
+        "entrypoint": entrypoint(labels, projects, books[0]),
         "standards": standards(policy, books[2]),
-        "runbooks": runbooks(project, runbook_result, books[1]),
-        "ownership": ownership(project, snapshot),
+        "runbooks": runbooks(labels, runbook_result, books[1]),
+        "ownership": ownership(labels, snapshot),
         "availability": availability(quota_response, wf_cfg, now),
     }
     cut = {name: kind == "ok" and bool(v.get("truncated"))
@@ -263,7 +302,7 @@ def build(project: str, *, projects, runbook_result, policy, books: tuple[str, s
             shown[name] = {"source": sections[name]["source"], "state": "dropped",
                            "rows" if name == "availability" else "items": []}
         return {
-            "ok": True, "project": project, **shown,
+            "ok": True, "project": project, "labels": labels, **shown,
             "revision": {"critboard": _s(commit, 64), "pages": _page_revisions(shown), "fetched_at": now_iso},
             "degraded": base_degraded + [f"dropped:{n}" for n in dropped],
         }
@@ -278,7 +317,7 @@ def build(project: str, *, projects, runbook_result, policy, books: tuple[str, s
     if len(render(body)) > limit:
         # Last resort, so the cap always holds: the entrypoint cannot fit.
         body = {
-            "ok": True, "project": project, "state": "over_cap",
+            "ok": True, "project": project, "labels": labels, "state": "over_cap",
             "revision": {"critboard": _s(commit, 64), "pages": [], "fetched_at": now_iso},
             "degraded": base_degraded + [f"dropped:{n}" for n in DROP_ORDER] + ["entrypoint_dropped", "over_cap"],
         }

@@ -1364,7 +1364,7 @@ def build_app() -> FastAPI:
     app.state.context_cache = context_cache  # exposed for tests: age or inspect entries
 
     @app.get("/api/context")
-    async def context_view(request: Request, project: str = Query("")):
+    async def context_view(request: Request, project: str = Query(""), also: str = Query("")):
         """Session-start context for one project. Same gate as /api/workflow.
         See SPEC.md, "Context endpoint"."""
         if (refused := _knowledge_gate(request, "context")) is not None:
@@ -1373,6 +1373,12 @@ def build_app() -> FastAPI:
             return JSONResponse(
                 {"ok": False, "error": {"code": "invalid_project",
                                         "message": "project must match ^[a-z0-9][a-z0-9._-]{0,63}$"}},
+                status_code=400, headers={"Cache-Control": "no-store"})
+        aliases = context_mod.parse_also(also)
+        if aliases is None:
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_also",
+                                        "message": "also: at most 5 comma-separated labels, each a valid project slug"}},
                 status_code=400, headers={"Cache-Control": "no-store"})
         now = datetime.now(UTC)
         cfg = module_config(config.sources, "context") or {}
@@ -1416,7 +1422,7 @@ def build_app() -> FastAPI:
             or (await asyncio.to_thread(update_mod.git_identity, config.dashboard_root))["commit"]
         stale_after_s = config.sources.get("quota_stale_after_s", 3600)
         body = context_mod.build(
-            project, projects=projects, runbook_result=runbook_result, policy=policy, books=books,
+            project, also=aliases, projects=projects, runbook_result=runbook_result, policy=policy, books=books,
             snapshot=snap.snapshot, quota_response=quota.build_quota_response(store.get_quota_cache(), stale_after_s),
             wf_cfg=wf_cfg, commit=commit, now=now, limit=context_mod.max_bytes(cfg))
         return Response(context_mod.render(body), media_type="application/json",

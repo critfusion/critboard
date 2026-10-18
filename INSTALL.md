@@ -717,6 +717,8 @@ Knowledge those parts say `not_configured` and the bead part still works.
 curl -s "http://127.0.0.1:9999/api/context?project=<slug>" | head -c 600
 ```
 
+   If a project's beads or pages use more than one label, add up to 5 with
+   `&also=<label>,<label>`; the answer lists them in `labels`.
    A bad `project` returns 400. With the module off the route returns 404.
    The body never exceeds `max_bytes` (8192 to 262144); when it would, the
    runbooks, then the standards, then the ownership list are dropped and

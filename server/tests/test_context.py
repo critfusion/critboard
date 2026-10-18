@@ -145,8 +145,9 @@ def cached(tmp_path, monkeypatch, wiki):
     return _client(tmp_path, monkeypatch, wiki)
 
 
-def _get(client, project="proj-a", **kw):
-    return client.get("/api/context", params={"project": project}, **kw)
+def _get(client, project="proj-a", also=None, **kw):
+    params = {"project": project} if also is None else {"project": project, "also": also}
+    return client.get("/api/context", params=params, **kw)
 
 
 # ---------------- gate and slug ----------------
@@ -264,7 +265,8 @@ def test_runbooks_keep_project_and_scope_all_tags_only(cc):
     r = _get(cc).json()["runbooks"]
     assert sorted(i["title"] for i in r["items"]) == ["Restore A", "Shared rule"]
     assert "runbooks_note" not in r
-    assert set(r["items"][0]) == {"id", "title", "url", "updated_at"}
+    assert set(r["items"][0]) == {"id", "title", "url", "updated_at", "matched"}
+    assert {i["title"]: i["matched"] for i in r["items"]} == {"Restore A": "proj-a", "Shared rule": "scope:all"}
 
 
 def test_untagged_runbooks_give_an_empty_list_and_a_note(tmp_path, monkeypatch):
@@ -929,3 +931,88 @@ def test_rotating_the_token_leaves_only_the_current_entries(tmp_path, monkeypatc
         assert len(c.app.state.context_cache.entries) == 3  # three books, current credential only
     assert {k[1] for k in c.app.state.context_cache.entries} == {
         next(iter(c.app.state.context_cache.entries))[1]}  # one fingerprint left
+
+
+# ---------------- also=<label>,<label> ----------------
+
+@pytest.mark.parametrize("also,ok", [
+    ("", True), ("proj-b", True), ("a,b,c,d,e", True), ("a,b,c,d,e,f", False),
+    ("proj-b,Bad", False), ("proj-b,", False), (",a", False), ("a b", False), ("a/b", False),
+    ("a,a,a,a,a,a", False), ("é", False)])
+def test_also_validation(cc, also, ok):
+    resp = _get(cc, also=also)
+    assert resp.status_code == (200 if ok else 400)
+    if not ok:
+        assert resp.json()["error"]["code"] == "invalid_also"
+
+
+def test_labels_are_echoed_deduped_with_the_project_first(cc):
+    assert _get(cc).json()["labels"] == ["proj-a"]
+    assert _get(cc, also="proj-b,proj-a,proj-c,proj-b").json()["labels"] == ["proj-a", "proj-b", "proj-c"]
+
+
+def test_parse_also_unit():
+    assert ctx.parse_also("") == [] and ctx.parse_also("x,y,x") == ["x", "y"]
+    assert ctx.parse_also("a,b,c,d,e,f") is None and ctx.parse_also("ok,BAD") is None
+
+
+def test_ownership_spans_labels_once_per_bead_and_keeps_the_cap(cc):
+    items = [_bead(id="x1", labels=["proj-a", "proj-b"])]  # on both labels: counted once
+    items += [_bead(id=f"b{i:03d}", labels=["proj-b"]) for i in range(25)]
+    items += [_bead(id="c1", labels=["proj-c"]), _bead(id="o1", labels=["other"])]
+    cc.app.state.snap.snapshot["beads"]["items"] = items
+    o = _get(cc, also="proj-b,proj-c").json()["ownership"]
+    assert o["total"] == 27 and len(o["items"]) == 20 and o["truncated"] is True
+    assert len({i["id"] for i in o["items"]}) == 20
+    only = _get(cc).json()["ownership"]
+    assert [i["id"] for i in only["items"]] == ["x1"]  # without also, only the primary label
+    ids = {i["id"] for i in _get(cc, also="proj-c,other").json()["ownership"]["items"]}
+    assert {"c1", "o1", "x1"} <= ids
+
+
+def _entry_book(tmp_path, monkeypatch, pages):
+    w = _wiki()
+    w.add_book(PROJECTS, 4, pages)
+    return _client(tmp_path, monkeypatch, w)
+
+
+def test_match_precedence_primary_tag_then_alias_tag_then_primary_prefix_then_alias_prefix(tmp_path, monkeypatch):
+    pages = [_page(1, "proj-b-pre", "Alias prefix"), _page(2, "proj-a-pre", "Primary prefix"),
+             _page(3, "t-b", "Alias tag", [("project", "proj-b")]), _page(4, "t-a", "Primary tag", [("project", "proj-a")])]
+    expect = [("Primary tag", "tag", "proj-a"), ("Alias tag", "tag", "proj-b"),
+              ("Primary prefix", "slug_prefix", "proj-a"), ("Alias prefix", "slug_prefix", "proj-b")]
+    for drop in range(4):
+        (tmp_path / f"d{drop}").mkdir()
+        c = _entry_book(tmp_path / f"d{drop}", monkeypatch, [p for p in pages
+                                                           if p["name"] not in [e[0] for e in expect[:drop]]])
+        e = _get(c, also="proj-b").json()["entrypoint"]
+        assert (e["title"], e["match"], e["matched_label"]) == expect[drop]
+
+
+def test_alias_tag_beats_a_primary_prefix(tmp_path, monkeypatch):
+    pages = [_page(2, "proj-a-pre", "Primary prefix"), _page(3, "t-b", "Alias tag", [("project", "proj-b")])]
+    (tmp_path / "x").mkdir()
+    e = _get(_entry_book(tmp_path / "x", monkeypatch, pages), also="proj-b").json()["entrypoint"]
+    assert (e["title"], e["matched_label"]) == ("Alias tag", "proj-b")
+
+
+def test_the_entrypoint_reports_the_primary_label_without_also(cc):
+    e = _get(cc).json()["entrypoint"]
+    assert e["matched_label"] == "proj-a" and e["match"] == "slug_prefix"
+
+
+def test_runbooks_match_tags_for_every_label(cc):
+    r = _get(cc, also="proj-b").json()["runbooks"]
+    assert {i["title"]: i["matched"] for i in r["items"]} == {
+        "Restore A": "proj-a", "Restore B": "proj-b", "Shared rule": "scope:all"}
+
+
+def test_the_size_cap_holds_with_labels(tmp_path, monkeypatch):
+    w = _wiki()
+    w.add_book(RUNBOOKS, 7, [_page(200 + i, f"rb-{i}", "R" * 190 + str(i), [("project", f"l{i % 6}")]) for i in range(40)])
+    c = _client(tmp_path, monkeypatch, w, {"max_bytes": 8192})
+    c.app.state.snap.snapshot["beads"]["items"] = [
+        _bead(id=f"b{i:03d}", title="T" * 190, labels=[f"l{i % 6}"]) for i in range(60)]
+    resp = _get(c, "l0", also="l1,l2,l3,l4,l5")
+    assert resp.status_code == 200 and len(resp.content) <= 8192
+    assert "dropped:runbooks" in resp.json()["degraded"]
