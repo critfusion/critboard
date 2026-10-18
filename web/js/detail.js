@@ -433,11 +433,15 @@ export function renderReplySection(bodyEl, id, data) {
   closeBtn.addEventListener("click", () => submit("close"));
 
   bodyEl.appendChild(section("Reply", wrap));
-  // renderBody keeps the old scrollTop, so in a tall popup a new error can land
-  // below the visible area. Scroll to it once per failure, not on every rebuild.
+  // modal.js restores the old scrollTop right after rebuild() returns, which
+  // would undo a scroll done here. So defer it until that restore has run. Once
+  // per failure, not on every rebuild.
   if (alertEl && state.scrollToError) {
     state.scrollToError = false;
-    if (typeof alertEl.scrollIntoView === "function") alertEl.scrollIntoView({ block: "nearest" });
+    const later = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f) => setTimeout(f, 0);
+    later(() => {
+      if (typeof alertEl.scrollIntoView === "function") alertEl.scrollIntoView({ block: "nearest" });
+    });
   }
 }
 

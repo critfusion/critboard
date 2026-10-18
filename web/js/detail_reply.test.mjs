@@ -25,6 +25,10 @@ globalThis.document = { createElement: (t) => new Node(t), createTextNode: (t) =
 globalThis.window = { addEventListener() {} };
 globalThis.location = { hash: "", hostname: "board.example.net" };
 
+const rafQueue = [];
+globalThis.requestAnimationFrame = (f) => rafQueue.push(f);
+const flushRaf = () => rafQueue.splice(0).forEach((f) => f());
+
 let replyStatus = 200;
 let replyBody = {};
 globalThis.fetch = async (url, opts) => {
@@ -98,6 +102,7 @@ await test("a 409 reply renders the server message in the popup", async () => {
 });
 
 await test("a failed reply scrolls the error into view, once", async () => {
+  flushRaf(); // frames left queued by earlier tests
   globalThis.scrolls = [];
   const body = await render("b-scroll", "open");
   replyStatus = 409;
@@ -109,10 +114,14 @@ await test("a failed reply scrolls the error into view, once", async () => {
     beads: { items: [{ id: "b-scroll", status: "open", updated_at: "2026-10-17T12:00:00Z" }] },
   };
   renderReplySection(new Node("div"), "b-scroll", data);
+  // modal.js restores scrollTop right after the rebuild: nothing may scroll before that
+  assert.equal(globalThis.scrolls.length, 0, "scroll must wait for the next frame");
+  flushRaf();
   assert.equal(globalThis.scrolls.length, 1);
   assert.deepEqual(globalThis.scrolls[0].opts, { block: "nearest" });
   assert.equal(globalThis.scrolls[0].node.attrs.role, "alert");
   renderReplySection(new Node("div"), "b-scroll", data); // passive rebuild: no re-scroll
+  flushRaf();
   assert.equal(globalThis.scrolls.length, 1);
 });
 
