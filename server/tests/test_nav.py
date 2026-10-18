@@ -71,3 +71,13 @@ def test_workflow_view_node_test_passes():
     )
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "passed" in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed on this host")
+def test_detail_reply_node_test_passes():
+    # fake DOM: Close on blocked human beads, send-back open-only, server errors shown
+    result = subprocess.run(
+        ["node", str(WEB / "js" / "detail_reply.test.mjs")], capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "passed" in result.stdout

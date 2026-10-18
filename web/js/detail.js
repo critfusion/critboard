@@ -289,7 +289,7 @@ function commentNode(c) {
   return row;
 }
 
-function renderReplySection(bodyEl, id, data) {
+export function renderReplySection(bodyEl, id, data) {
   if (!data?.settings?.bead_reply_enabled) return;
 
   const state = beadReplyState.get(id) || { sending: false, result: null, error: null };
@@ -332,6 +332,11 @@ function renderReplySection(bodyEl, id, data) {
   const info = entry.body || {};
   const humanPresent = info.human_labels_present || [];
   if (humanPresent.length === 0) return; // not human-owned -- no reply UI
+  // Mirror the server's rule (POST /api/bead/{id}/reply): close on open or
+  // blocked, send back on open only. The server re-checks; this only hides
+  // controls it would refuse.
+  const canClose = info.status === "open" || info.status === "blocked";
+  const canSendBack = info.status === "open";
 
   const wrap = el("div", { class: "bead-reply" });
   const comments = info.comments || [];
@@ -342,6 +347,8 @@ function renderReplySection(bodyEl, id, data) {
       comments.length ? comments.map(commentNode) : [el("div", { class: "detail-note" }, "No comments yet.")]
     )
   );
+
+  if (!canClose) return bodyEl.appendChild(section("Reply", wrap));
 
   const textarea = el("textarea", {
     class: "settings-input bead-reply-textarea",
@@ -356,23 +363,23 @@ function renderReplySection(bodyEl, id, data) {
   textarea.addEventListener("input", () => beadReplyDraft.set(id, textarea.value));
   wrap.appendChild(textarea);
 
-  wrap.appendChild(
-    el("div", { class: "detail-note bead-reply-route" }, `Send back will route to: ${info.route_preview || "?"}`)
-  );
+  if (canSendBack) {
+    wrap.appendChild(
+      el("div", { class: "detail-note bead-reply-route" }, `Send back will route to: ${info.route_preview || "?"}`)
+    );
+  }
 
-  if (state.error) wrap.appendChild(el("div", { class: "detail-note-warn" }, state.error));
-
-  const sendBtn = el(
-    "button",
-    { type: "button", class: "settings-btn-primary", disabled: state.sending ? "" : null },
-    "Send back"
-  );
+  const sendBtn = canSendBack
+    ? el("button", { type: "button", class: "settings-btn-primary", disabled: state.sending ? "" : null }, "Send back")
+    : null;
   const closeBtn = el(
     "button",
     { type: "button", class: "settings-btn-secondary", disabled: state.sending ? "" : null },
     "Close bead"
   );
   wrap.appendChild(el("div", { class: "bead-reply-actions" }, [sendBtn, closeBtn]));
+  // Under the buttons, next to the click that failed.
+  if (state.error) wrap.appendChild(el("div", { class: "detail-note-warn", role: "alert" }, state.error));
 
   function submit(action) {
     const s = beadReplyState.get(id) || {};
@@ -418,7 +425,7 @@ function renderReplySection(bodyEl, id, data) {
       });
   }
 
-  sendBtn.addEventListener("click", () => submit("send_back"));
+  if (sendBtn) sendBtn.addEventListener("click", () => submit("send_back"));
   closeBtn.addEventListener("click", () => submit("close"));
 
   bodyEl.appendChild(section("Reply", wrap));

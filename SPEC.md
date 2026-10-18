@@ -516,6 +516,9 @@ when nothing matches — this is how SEND BACK decides which `needs-*` label to 
 actor-naming convention (this repo ships no fleet-specific defaults).
 
 - `GET /api/bead/{id}/comments` -> `200 {"comments": [{"id","author","text","created_at"}], "status": "open", "labels": [...], "human_labels_present": [...], "route_preview": "needs-claude"}`.
+  `status` is the bead's current status; the popup shows **Close bead** for `open` and `blocked`
+  and **Send back** for `open` only, and shows the server's `detail.message` (or `HTTP <n>`) on any
+  non-2xx reply.
   `human_labels_present` is the subset of `config/layout.json`'s `human_labels` that this bead
   currently carries (empty means "not human-owned" — the frontend hides the reply form).
   `route_preview` is the label SEND BACK would add right now, computed server-side so the frontend
@@ -523,9 +526,11 @@ actor-naming convention (this repo ships no fleet-specific defaults).
 
 - `POST /api/bead/{id}/reply` — body `{"action": "send_back"|"close", "text": "..."}`.
   Before acting, the bead is always re-fetched fresh via `bd show` (never the cached snapshot) and
-  the write is refused with `409 {"detail": {"reason": "not_actionable", ...}}` unless it is
-  currently `open` and carries at least one human label — this stops a stale popup from
-  reopening/relabelling a bead an agent already took.
+  the write is refused with `409 {"detail": {"reason": "not_actionable", ...}}` unless it carries
+  at least one human label and its status allows the action: `close` needs `open` or `blocked`,
+  `send_back` needs `open` only (relabelling a blocked bead could hand an agent work it is still
+  waiting on). `closed`, `in_progress` and any other status get the 409 — this stops a stale popup
+  from reopening/relabelling a bead an agent already took.
   - `send_back`: `text` is required (400 if empty after stripping). Adds `text` as a comment, then
     removes every human label present, adds the chosen route label, clears the assignee, and sets
     status to `open` — all in one `bd update` call. Returns
