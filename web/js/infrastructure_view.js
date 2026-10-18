@@ -45,9 +45,9 @@ function link(text, href) {
 }
 
 function wikiLinks(rec) {
-  const items = wikiLinkItems(rec);
+  const items = wikiLinkItems(rec, rec.title);
   return items.length
-    ? el("p", { class: "infra-wiki-links" }, items.map((it) => link(it.text, it.href)))
+    ? el("p", { class: "infra-wiki-links" }, items.map((it) => el("a", { href: it.href, target: "_blank", rel: "noopener noreferrer", "aria-label": it.label }, it.text)))
     : null;
 }
 

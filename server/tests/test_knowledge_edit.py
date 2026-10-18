@@ -54,6 +54,11 @@ def test_a_hostile_slug_gives_no_link_in_either_position(bad):
     assert infra.page_links(BASE, bad, "p") == none
 
 
+@pytest.mark.parametrize("tail", ["?x=1", "/?x=1", "#frag", "/#frag", "?", "#"])
+def test_a_base_url_with_a_query_or_fragment_gives_no_link(tail):
+    assert infra.page_links(BASE + tail, "b", "p") == {"edit_url": None, "history_url": None}
+
+
 def test_the_longest_allowed_slug_still_links():
     assert infra.page_links(BASE, "b", "a" * 191)["edit_url"] is not None
 
@@ -116,6 +121,41 @@ def test_serving_a_page_again_keeps_it_over_older_ones():
     m.record([_page_ref(4)], "proj-a", SERVED_AT)
     assert list(m.pages) == [3, 1, 4]
     assert m.status(1, T2) == {"state": "served", "served_at": SERVED_AT, "project": "proj-b"}
+
+
+NAIVE = "2026-10-12T10:00:00"
+AWARE = "2026-10-12T10:00:00+00:00"
+DATE_ONLY = "2026-10-12"
+
+
+@pytest.mark.parametrize("recorded,current", [
+    (AWARE, NAIVE), (NAIVE, AWARE), (NAIVE, NAIVE), (DATE_ONLY, AWARE), (AWARE, DATE_ONLY),
+])
+def test_mixed_naive_and_aware_times_never_raise_and_read_pending(recorded, current):
+    m = ctx.ServedMarker()
+    m.record([_page_ref(10, recorded)], "proj-a", SERVED_AT)
+    assert m.status(10, current)["state"] == "pending"
+
+
+def test_a_naive_or_date_only_time_is_not_recorded():
+    m = ctx.ServedMarker()
+    m.record([_page_ref(1, NAIVE), _page_ref(2, DATE_ONLY)], "proj-a", SERVED_AT)
+    assert m.pages == {}
+
+
+def test_an_offset_time_compares_by_instant():
+    m = ctx.ServedMarker()
+    m.record([_page_ref(10, "2026-10-12T12:00:00+02:00")], "proj-a", SERVED_AT)
+    assert m.status(10, "2026-10-12T10:00:00Z")["state"] == "served"
+    assert m.status(10, "2026-10-12T10:00:01Z")["state"] == "pending"
+
+
+def test_a_naive_updated_at_from_the_wiki_gives_200_not_500(lc, lw):
+    _get(lc)
+    lw.pages[10]["updated_at"] = NAIVE
+    resp = lc.get("/api/knowledge/page/10")
+    assert resp.status_code == 200 and resp.json()["served"]["state"] == "pending"
+    assert lc.get("/api/knowledge/search?q=a").status_code == 200
 
 
 # ---------------- endpoints ----------------

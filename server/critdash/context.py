@@ -335,10 +335,14 @@ SERVED_MAX_PAGES = 500
 
 
 def _when(iso) -> datetime | None:
+    """A time with an offset, or None. A time without one (naive, or a bare
+    date) is refused: comparing it with an aware time raises, and guessing a
+    zone would be a claim about the revision. Record and status both use this."""
     try:
-        return datetime.fromisoformat(iso) if isinstance(iso, str) else None
+        when = datetime.fromisoformat(iso) if isinstance(iso, str) else None
     except ValueError:
         return None
+    return when if when is not None and when.utcoffset() is not None else None
 
 
 class ServedMarker:

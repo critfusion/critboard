@@ -453,7 +453,7 @@ Decision: CritBoard does not edit knowledge pages. Editing uses BookStack's own 
 
 - The BookStack API has no conditional write. `PUT /api/pages/{id}` is last-write-wins, so a CritBoard
   write could silently overwrite a newer edit. CritBoard has no safe way to prevent that.
-- Bryan is the only human editor. An in-app editor gives no clear value over a link to the native one.
+- The deployment has a single human editor. An in-app editor gives no clear value over a link to the native one.
 
 BookStack (v26.09.1) already provides login, per-role permissions, page revisions with diffs and restore,
 drafts, and a warning when two people edit one page. CritBoard adds none of these and keeps no second copy.

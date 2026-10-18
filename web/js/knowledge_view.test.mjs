@@ -73,6 +73,7 @@ await test("link items keep only http(s) URLs", () => {
   assert.deepEqual(wikiLinkItems({ edit_url: EDIT, history_url: HIST }).map((i) => i.text), ["Edit", "History"]);
   assert.deepEqual(wikiLinkItems({ edit_url: "javascript:alert(1)", history_url: null }), []);
   assert.deepEqual(wikiLinkItems({}), []);
+  assert.equal(wikiLinkItems({ edit_url: EDIT }, "Page X")[0].label, "Edit Page X");
   assert.deepEqual(wikiLinkItems(null), []);
 });
 
@@ -121,6 +122,12 @@ await test("each search row shows the marker and the links the server validated"
   assert.deepEqual(hrefs(rows[0]), [EDIT, HIST]);
   assert.deepEqual(hrefs(rows[1]), []);
   assert.deepEqual(hrefs(rows[2]), []);
+});
+
+await test("links sit inside their card and name the page for screen readers", () => {
+  assert.equal(rows[0].className, "kb-card");
+  assert.deepEqual(anchors(rows[0]).map((a) => a.attrs["aria-label"]), ["Edit Page one", "History of Page one"]);
+  assert.equal(rows[1].find((n) => n.className === "kb-result-links").length, 0);
 });
 
 await test("every link opens in a new tab with noopener noreferrer", () => {
@@ -174,6 +181,7 @@ await test("infrastructure cards link Edit and History; a record without them sh
   const a = cards.find((c) => /Svc A/.test(c.text()));
   const b = cards.find((c) => /Svc B/.test(c.text()));
   assert.deepEqual(a.find((n) => n.className === "infra-wiki-links").flatMap(hrefs), [EDIT, HIST]);
+  assert.deepEqual(anchors(a).filter((x) => x.attrs["aria-label"]).map((x) => x.attrs["aria-label"]), ["Edit Svc A", "History of Svc A"]);
   assert.equal(b.find((n) => n.className === "infra-wiki-links").length, 0);
 });
 
@@ -188,6 +196,7 @@ await test("workflow policy cards link Edit and History", async () => {
   await view.onShow();
   await settle();
   assert.deepEqual(r.find((n) => n.className === "infra-wiki-links").flatMap(hrefs), [EDIT, HIST]);
+  assert.deepEqual(anchors(r).map((x) => x.attrs["aria-label"]).filter(Boolean), ["Edit Rule A", "History of Rule A"]);
 });
 
 console.log(`knowledge_view.test.mjs: ${passed} passed`);

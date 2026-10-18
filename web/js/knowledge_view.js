@@ -27,10 +27,11 @@ function problemText(body) {
   return describeProblem(body.error, body.status, fmt, location.hostname);
 }
 
-function wikiAnchors(rec, editText = "Edit", historyText = "History") {
+function wikiAnchors(rec, name, editText = "Edit", historyText = "History") {
   const names = { Edit: editText, History: historyText };
-  return wikiLinkItems(rec).map((it) =>
-    el("a", { href: it.href, target: "_blank", rel: "noopener noreferrer", class: "kb-edit" }, names[it.text]));
+  return wikiLinkItems(rec, name).map((it) => el("a", {
+    href: it.href, target: "_blank", rel: "noopener noreferrer", class: "kb-edit", "aria-label": it.label,
+  }, names[it.text]));
 }
 
 // fmtRelTime says "now ago" inside 5 s; this view says "just now".
@@ -95,7 +96,7 @@ export function mountKnowledge(root) {
       ? el("dl", { class: "kb-tags" }, prov.tags.flatMap((t) => [el("dt", {}, t.name), el("dd", {}, t.value || "--")]))
       : el("p", { class: "kb-unknown" }, "No source or provenance tags on this page. Origin unknown.");
     const links = [];
-    links.push(...wikiAnchors(body, "Edit in BookStack", "History in BookStack"));
+    links.push(...wikiAnchors(body, body.name, "Edit in BookStack", "History in BookStack"));
     if (body.open_url) {
       links.push(el("a", { href: body.open_url, target: "_blank", rel: "noopener noreferrer" }, "Open in BookStack"));
     }
@@ -135,7 +136,8 @@ export function mountKnowledge(root) {
         servedNote(r.served),
       ]);
       btn.addEventListener("click", () => openPage(r.id));
-      return el("li", {}, [btn, el("span", { class: "kb-result-links" }, wikiAnchors(r))]);
+      const links = wikiAnchors(r, r.name);
+      return el("li", { class: "kb-card" }, [btn, links.length ? el("span", { class: "kb-result-links" }, links) : null]);
     }));
   }
 

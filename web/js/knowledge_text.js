@@ -47,9 +47,10 @@ export function servedLine(served, fmtRel) {
 
 // Edit and History links of a record, in display order. A missing or
 // non-http(s) URL gives no link.
-export function wikiLinkItems(rec) {
+// `name` is the page title, for the screen-reader label.
+export function wikiLinkItems(rec, name = "") {
   const out = [];
-  if (rec && safeHref(rec.edit_url)) out.push({ text: "Edit", href: rec.edit_url });
-  if (rec && safeHref(rec.history_url)) out.push({ text: "History", href: rec.history_url });
+  if (rec && safeHref(rec.edit_url)) out.push({ text: "Edit", href: rec.edit_url, label: `Edit ${name}`.trim() });
+  if (rec && safeHref(rec.history_url)) out.push({ text: "History", href: rec.history_url, label: `History of ${name}`.trim() });
   return out;
 }
