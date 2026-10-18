@@ -386,6 +386,24 @@ class BookStackAdapter:
             self._record_failure(err)
             raise err from None
 
+    async def book(self, slug: str, now: datetime, stale_days: int) -> dict:
+        """Records of the book `slug`, read like workflow_policy(): one
+        deadline, any failure fails the whole call, nothing cached. Used by
+        the context endpoint for its projects, runbooks and policy books."""
+        if module_config(self._sources, "knowledge") is None:
+            raise KnowledgeError(
+                "not_configured", "context reads BookStack through modules.knowledge: enable it first"
+            )
+        _, timeout = self._settings()
+        try:
+            return await asyncio.wait_for(self._book_records(slug, now, stale_days),
+                                          timeout * DEADLINE_FACTOR)
+        except TimeoutError:
+            logger.warning("bookstack book read exceeded its overall deadline")
+            err = KnowledgeError("unreachable", "BookStack did not finish in time")
+            self._record_failure(err)
+            raise err from None
+
     async def _infrastructure(self, now: datetime) -> dict:
         cfg = module_config(self._sources, "infrastructure") or {}
         return await self._book_records(cfg_book_slug(cfg), now, stale_after_days(cfg))

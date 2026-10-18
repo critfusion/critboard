@@ -242,7 +242,7 @@ Notes on real shapes observed on this host:
   `commit`/`branch`/`dirty` are this checkout's git identity, all `null` outside a git checkout (e.g. a tarball
   install) -- never an error for that case.
 
-### Opt-in modules: Infrastructure / Workflow / Knowledge (all off by default)
+### Opt-in modules: Infrastructure / Workflow / Knowledge / Context (all off by default)
 
 A default install is the board with agents and beads, exactly as before. Extra views exist only
 when `config/sources.json` (machine-local, never tracked) sets `modules.<name>.enabled` to the JSON
@@ -250,7 +250,7 @@ boolean `true`. `config/sources.example.json` ships every module `false`. Config
 request, so a change needs no restart.
 
 - `GET /api/modules` -> `{"enabled": ["knowledge", ...]}`, in nav order (infrastructure, workflow,
-  knowledge). `[]` on a default install.
+  knowledge, context; `context` has no view). `[]` on a default install.
 - UI: with `[]` there is no navigation at all and the page is unchanged. With one or more, a view bar
   `Live | <enabled views>` appears. The view is the `?view=<name>` query parameter (never the hash:
   the hash is the bead/agent deep link). Switching only toggles `hidden`; it never rebuilds the Live
@@ -346,6 +346,106 @@ request, so a change needs no restart.
   - UI: a `Workflow` tab with four panels (Intended policy, Observed runtime, Assignments, Availability).
     `REVIEW GATE MISSING` is a solid red badge with a thick left border and a count above the list; `STALE`
     and `UNKNOWN` are dashed. Every state is a word, not colour alone. Links are made only from http(s) URLs.
+
+#### Context endpoint (`modules.context`, off by default, API only)
+
+One small answer for an agent starting a session. It has no view and no nav entry. It reads the same
+records as the UI: BookStack-curated pages (through `modules.knowledge`) and the bead collector. It
+sends no request to any AI provider and writes nothing.
+
+- Config: `modules.context` = `{"enabled": true, "projects_book_slug": "projects", "runbooks_book_slug":
+  "runbooks", "max_bytes": 16384, "stale_after_days": 90, "cache_ttl_s": 60}`. The policy book is
+  `modules.workflow.policy_book_slug` (default `workflow-policy-projections`); `modules.workflow` need not
+  be enabled. `max_bytes` is an integer clamped to 8192 to 262144 (any other value: 16384). `cache_ttl_s`
+  (integer 0 to 3600, default 60; 0 turns the cache off) is how long a successful read of each of the three
+  books is reused. Only a success is cached: an error is read again on the next request. Within the TTL a
+  page edit is not visible, and an outage is not seen; `revision.pages[].updated_at` shows the page version
+  that was read, and `revision.fetched_at` is the time of the request, not of the read.
+  The cache holds at most 64 entries (oldest evicted first), drops expired entries on every store, and is
+  emptied whenever the wiki base URL or the token file (path or contents) differs from the last request, so
+  a rotated token leaves no entry behind. Known window: the key hashes the token file as read at the start
+  of a request and the fetch reads the file again, so a token file replaced in those few milliseconds can
+  cache a read under the old key. The next request sees the new token and empties the cache.
+  Likewise a request still running when the scope changes may store one entry under the old scope. It is
+  never served (every lookup is keyed on the current scope) and the next store or scope change purges it.
+- `GET /api/context?project=<slug>`. Same gate as `/api/workflow`: module off -> 404; foreign Host or
+  Origin -> 403 `host_not_allowed` / `origin_not_allowed`. Then `project` must match
+  `^[a-z0-9][a-z0-9._-]{0,63}$`, else 400 `{"ok":false,"error":{"code":"invalid_project"}}`. `Cache-Control:
+  no-store`. Nothing is cached.
+- Optional `also=<label>,<label>`: alias labels for a project whose beads or pages sit under more than one
+  label. At most 5 labels, comma separated, each matching the slug regex; duplicates (and the primary
+  label) are dropped; any other input returns 400 `invalid_also`, including a repeated `also` parameter. The labels used are echoed as `labels`
+  (primary first). The cache key does not include labels: the three books are read once for all of them.
+- With Knowledge off or down the wiki-backed sections report `state: "not_configured"` or
+  `"unavailable"` with `error: <code>` and nothing else; `ownership` and `availability` still answer. A
+  fact the data does not state is the string `unknown`.
+- Body: `{ok, project, labels, entrypoint, standards, runbooks, ownership, availability, revision, degraded}`.
+  Every section but `revision` and `degraded` carries `source` (`bookstack:<book slug>`, `beads`, `quota`).
+  - `entrypoint`: `state` is `ok`, `no_match`, `not_configured` or `unavailable`. Match order, over
+    `labels`: a page in the projects book tagged `project:<label>` for the primary, then for each alias in
+    order; then a page whose slug starts with `<label>-` for the primary, then for each alias. First page in
+    book order wins within a step. `matched_label` says which label matched. On `ok`: `match` (`tag` or `slug_prefix`), `matched_label`, `id, title, url, updated_at`,
+    `provenance{repo, path, git_sha, status, [path_note], [git_sha_note]}`, `canonical_repo`,
+    `canonical_location`, `dev_prod_boundary`. The last three come from the rows `Canonical repo`,
+    `Canonical location` and `Dev/prod boundary` of a `| Field | Value |` table on the page (the
+    Provenance table or a Facts table); absent -> `unknown`. `url` is `unknown` when the page has none.
+    The slug-prefix rule matches a longer slug: `proj` matches `proj-a-notes`. `match` says which rule was
+    used (`tag` or `slug_prefix`), so a caller can tell an explicit tag from a prefix guess.
+    `state: "incomplete"` means the projects book has more pages than were read (the read stops at 50); no
+    match is not claimed then.
+  - `standards`: the pages of the workflow policy book: `items[]` of `{id, title, url, updated_at,
+    status}`, `truncated`. These are the intended review and approval roles, not observed behaviour.
+  - `runbooks`: pages of the runbooks book tagged `project:<slug>` or `scope:all`: `items[]` of `{id, title,
+    url, updated_at, matched}`, `truncated`. A page is tagged `project:<label>` for any label in `labels`
+    (`matched` is that label, primary first) or `scope:all` (`matched: "scope:all"`); runbooks are matched by
+    tag only, not by slug prefix. No match -> `items: []` and `runbooks_note: "untagged"`, except when the
+    book was cut short: then `truncated` is true and the note is not given. The whole book is never listed.
+  - `ownership`: in-progress beads with a label equal to any of `labels` (a bead on several is listed once): `items[]` of `{id, title, assignee,
+    coder, reviewers[], approvers[], review_gate}` (rules as in `assignments` above), `total`, `truncated`.
+  - `availability`: `ttl_s` and `rows[]` of `{provider, basis, state, observed_at, expires_at, expired}`.
+    Freshness only: no values, spend, cost or detail text. `state` is one of `observed`, `stale`, `unknown`,
+    `available`, `unavailable`, `degraded`, `limited`; any other (owner-typed) text is shown as `unknown`.
+  - `revision`: `{critboard, pages[{id, updated_at}], fetched_at}`. `critboard` is the commit the update
+    banner reads (`unknown` outside a git checkout). `pages` lists every BookStack page id in the body.
+  - `degraded`: reasons, in this order: `knowledge_not_configured`, `knowledge_unavailable`,
+    `no_entrypoint`, `projects_truncated`, `runbooks_truncated` (the book has more pages than the 50 read),
+    `beads_stale` (the beads source is not ok, or stale, or missing), then `dropped:<section>` for each
+    section removed by the cap, and `entrypoint_dropped` and `over_cap` for the stub below.
+- Lists hold at most 20 items. Each text field is cut at 200 BYTES of UTF-8, at a character boundary. A
+  lone surrogate becomes `?` and a control character a space. Page bodies are never returned.
+- Size cap: the bytes sent (compact JSON, UTF-8) never exceed `max_bytes`. When the body is over, whole
+  sections are dropped in this order, stopping at the first that fits: `runbooks`, `standards`,
+  `ownership`, `availability`. A dropped section stays in the body as `{source, state: "dropped",
+  items: []}` (`rows: []` for availability), its pages leave `revision.pages`, and `degraded` names it.
+  If the body is still over `max_bytes` with those four dropped (the entrypoint alone is too large), a stub
+  is served: `{ok, project, state: "over_cap", revision{critboard, pages: [], fetched_at}, degraded}`, with
+  every section removed and `entrypoint_dropped`, `over_cap` and all four `dropped:` reasons in `degraded`.
+  The bytes sent never exceed `max_bytes`; `server/tests/test_context.py` asserts this for ASCII, CJK, emoji,
+  control-character and escape-heavy text at 8192 and at the default.
+
+##### Context data boundary (checkable)
+
+The response may hold only BookStack-curated records and bead assignment fields. The boundary is the
+allowlist projection in `context.py`: each section copies named fields and nothing else. The forbidden-key
+scrub below is a second layer, not the boundary. Free text passes through as written: page titles, bead
+titles, provenance values and the page-stated canonical location and boundary. CritBoard does not judge
+whether that text is sensitive; keep it out of the curated pages. Each line below is true of every
+response; `server/tests/test_context.py` checks them.
+
+- [ ] Keys: no key named `session`, `sessions`, `agents`, `transcript`, `memory`, `cost`, `spend`, `token`,
+  `token_file`, `auth`, `auth_path`, `values`, `detail`, `local_path`, `cwd`, `host`, `hosts`,
+  `cost_estimate_today_usd`, `cost_basis`, `authorization`, `secret`, `api_key`, `apikey`, `password`,
+  `passwd`, `credential`, `credentials`, `session_id`, `sessionid`, `token_path`, `file_path`, `filepath`,
+  `memory_path`, `transcript_path` or `home`, at any depth (case-insensitive). `context.scrub`
+  removes them from the final body even if a section starts to pass one.
+- [ ] Ownership holds only `id, title, assignee, coder, reviewers, approvers, review_gate`. Observed
+  sessions are never read.
+- [ ] Availability holds only `provider, basis, state, observed_at, expires_at, expired`.
+- [ ] BookStack data is limited to title, url, id, `updated_at`, status, provenance and the three canonical
+  facts. No page body, no tag list, no editor name, no error message text (only the error code).
+- [ ] No BookStack token, token id, token path or Authorization header, and no host path of the
+  CritBoard machine.
+- [ ] The beads and sessions of other projects do not appear: ownership matches the slug label exactly.
 
 #### Infrastructure record contract
 

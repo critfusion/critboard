@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -16,10 +17,11 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import bead_reply as bead_reply_mod
+from . import context as context_mod
 from . import detect, quota, workflow
 from . import settings as settings_mod
 from . import update as update_mod
@@ -46,7 +48,8 @@ from .collectors.worktrees import WorktreesCollector
 from .config import Config, load_config
 from .ctx import AppContext
 from .history import InvalidWindowError, bucket_count, build_grouped_history, parse_window
-from .knowledge import BookStackAdapter, KnowledgeError
+from .infrastructure import stale_after_days
+from .knowledge import BookStackAdapter, KnowledgeError, read_token
 from .knowledge import now_iso as knowledge_now_iso
 from .modules import enabled_modules, module_config
 from .pricing import compute_cost_usd
@@ -1356,6 +1359,76 @@ def build_app() -> FastAPI:
                               cfg, policy, now)
         return JSONResponse({"ok": True, **body, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
                             headers={"Cache-Control": "no-store"})
+
+    context_cache = context_mod.TtlCache()
+    app.state.context_cache = context_cache  # exposed for tests: age or inspect entries
+
+    @app.get("/api/context")
+    async def context_view(request: Request, project: str = Query(""), also: str = Query("")):
+        """Session-start context for one project. Same gate as /api/workflow.
+        See SPEC.md, "Context endpoint"."""
+        if (refused := _knowledge_gate(request, "context")) is not None:
+            return refused
+        if not context_mod.SLUG_RE.fullmatch(project):
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_project",
+                                        "message": "project must match ^[a-z0-9][a-z0-9._-]{0,63}$"}},
+                status_code=400, headers={"Cache-Control": "no-store"})
+        # A repeated parameter is refused: FastAPI would keep only the last value.
+        repeated = len(request.query_params.getlist("also")) > 1
+        aliases = None if repeated else context_mod.parse_also(also)
+        if aliases is None:
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_also",
+                                        "message": "also: at most 5 comma-separated labels, each a valid project slug"}},
+                status_code=400, headers={"Cache-Control": "no-store"})
+        now = datetime.now(UTC)
+        cfg = module_config(config.sources, "context") or {}
+        wf_cfg = module_config(config.sources, "workflow") or {}
+        books = (*context_mod.book_slugs(cfg), workflow.policy_book_slug(wf_cfg))
+        stale_days = stale_after_days(cfg)
+
+        ttl = context_mod.cache_ttl_s(cfg)
+
+        async def read(slug: str):
+            # Only a successful read is cached; an error is read again next time.
+            # Local checks first, as on a cold read: a cached read must not outlive the
+            # module, its wiki, a usable token file or the token it was read with.
+            try:
+                base_url, _ = knowledge._settings()
+                token = read_token(knowledge._token_path())
+            except KnowledgeError as err:
+                return "error", err.code
+            if ttl == 0:
+                context_cache.entries.clear()  # caching was switched off: drop old snapshots
+                key = None
+            else:
+                # Entries are bound to the credential by a hash of the token and its path.
+                # The token text is never kept.
+                path = os.path.realpath(os.path.expanduser(knowledge._token_path()))
+                fp = hashlib.sha256(f"{path}\0{token}".encode()).hexdigest()
+                context_cache.bind((base_url, fp))  # a new wiki or credential: drop the old entries
+                key = (base_url, fp, slug, stale_days)
+                if (hit := context_cache.get(key, time.monotonic(), max_age=ttl)) is not None:
+                    return "ok", hit
+            try:
+                payload = await knowledge.book(slug, now, stale_days)
+            except KnowledgeError as err:
+                return "error", err.code
+            if key is not None:
+                context_cache.put(key, payload, time.monotonic(), ttl)
+            return "ok", payload
+
+        projects, runbook_result, policy = await asyncio.gather(*(read(b) for b in books))
+        commit = (snap.snapshot.get("update") or {}).get("current") \
+            or (await asyncio.to_thread(update_mod.git_identity, config.dashboard_root))["commit"]
+        stale_after_s = config.sources.get("quota_stale_after_s", 3600)
+        body = context_mod.build(
+            project, also=aliases, projects=projects, runbook_result=runbook_result, policy=policy, books=books,
+            snapshot=snap.snapshot, quota_response=quota.build_quota_response(store.get_quota_cache(), stale_after_s),
+            wf_cfg=wf_cfg, commit=commit, now=now, limit=context_mod.max_bytes(cfg))
+        return Response(context_mod.render(body), media_type="application/json",
+                        headers={"Cache-Control": "no-store"})
 
     web_dir = config.dashboard_root / "web"
     if web_dir.exists():

@@ -153,7 +153,7 @@ def test_modules_endpoint_lists_enabled_in_nav_order(tmp_path, monkeypatch):
 
 def test_example_config_ships_every_module_disabled():
     example = json.loads((config_mod.DASHBOARD_ROOT / "config" / "sources.example.json").read_text())
-    assert set(example["modules"]) == {"infrastructure", "workflow", "knowledge"}
+    assert set(example["modules"]) == {"infrastructure", "workflow", "knowledge", "context"}
     assert all(m["enabled"] is False for m in example["modules"].values())
     assert config_mod.DEFAULT_SOURCES["modules"]["knowledge"]["enabled"] is False
 

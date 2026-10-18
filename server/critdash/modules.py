@@ -10,7 +10,9 @@ config/sources.example.json.
 from __future__ import annotations
 
 # Nav order. "live" is not a module; it is always present.
-KNOWN_MODULES = ("infrastructure", "workflow", "knowledge")
+# "context" is an API-only module (GET /api/context): it has no view, so the
+# web nav ignores it.
+KNOWN_MODULES = ("infrastructure", "workflow", "knowledge", "context")
 
 
 def module_config(sources: dict, name: str) -> dict | None:
