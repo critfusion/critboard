@@ -7,6 +7,7 @@ proj-a). The pure-function tests pass a fixed clock; none reads the time.
 from __future__ import annotations
 
 import json
+import pathlib
 from datetime import UTC, datetime
 
 import httpx
@@ -54,6 +55,7 @@ class MultiWiki:
         self.pages: dict[int, dict] = {}
         self.mode = "ok"
         self.requests: list[httpx.Request] = []
+        self.require: str | None = None  # when set, only this Authorization header is accepted
 
     def add_book(self, slug, bid, pages):
         self.books[slug] = {"id": bid, "name": slug.title(), "slug": slug, "pages": [p["id"] for p in pages]}
@@ -63,6 +65,8 @@ class MultiWiki:
         self.requests.append(request)
         if self.mode == "down":
             raise httpx.ConnectError("synthetic connection refused", request=request)
+        if self.require and request.headers.get("authorization") != self.require:
+            return httpx.Response(401, json={})
         path, q = request.url.path, dict(request.url.params)
         if path == "/api/books":
             hit = [b for b in self.books.values() if b["slug"] == q.get("filter[slug]")]
@@ -751,3 +755,122 @@ def test_changing_stale_after_days_reads_again(tmp_path, monkeypatch, wiki):
     _edit_sources(d, lambda m: m["context"].update(stale_after_days=30))
     _get(c)
     assert len(wiki.requests) > n
+
+
+# ---------------- cache vs. reloaded ttl and credentials ----------------
+
+def _set_ttl(d, ttl):
+    _edit_sources(d, lambda m: m["context"].update(cache_ttl_s=ttl))
+
+
+def test_reloading_ttl_to_zero_bypasses_and_clears_a_warm_cache(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    assert _get(c).json()["entrypoint"]["title"] == "Proj A entry"
+    wiki.pages[10]["name"] = "Renamed entry"
+    assert _get(c).json()["entrypoint"]["title"] == "Proj A entry"  # warm
+    _set_ttl(d, 0)
+    assert _get(c).json()["entrypoint"]["title"] == "Renamed entry"
+    assert c.app.state.context_cache.entries == {}
+
+
+def test_reloading_ttl_to_zero_shows_an_outage(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    assert _get(c).json()["entrypoint"]["state"] == "ok"
+    _set_ttl(d, 0)
+    wiki.mode = "down"
+    assert _get(c).json()["entrypoint"]["state"] == "unavailable"
+
+
+def test_a_hit_is_honoured_only_while_the_current_ttl_holds(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    _get(c)
+    for entry in c.app.state.context_cache.entries.values():
+        entry[2] -= 45  # stored 45 s ago
+    n = len(wiki.requests)
+    _get(c)
+    assert len(wiki.requests) == n  # ttl 60: still a hit
+    _set_ttl(d, 30)
+    _get(c)
+    assert len(wiki.requests) > n  # ttl 30: 45 s old is too old
+
+
+def test_ttl_cache_max_age_unit():
+    c = ctx.TtlCache()
+    c.put("k", 1, 10.0, 60.0)
+    assert c.get("k", 40.0, max_age=30.0) is None and c.get("k", 40.0) is None  # dropped by the first call
+    c.put("k", 1, 10.0, 60.0)
+    assert c.get("k", 40.0, max_age=31.0) == 1
+
+
+TOKEN_B = "id-b:secret-b"
+
+
+def _token_file(tmp_path, name, text, mode=0o600):
+    f = tmp_path / name
+    f.write_text(text + "\n")
+    f.chmod(mode)
+    return f
+
+
+def _warm_with_token_a(tmp_path, monkeypatch, wiki):
+    wiki.require = f"Token {TOKEN}"
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    assert _get(c).json()["entrypoint"]["state"] == "ok"
+    return c, d
+
+
+def _entry_state(c):
+    return _get(c).json()["entrypoint"]
+
+
+def test_switching_token_file_reads_again_and_is_denied(tmp_path, monkeypatch, wiki, caplog):
+    c, d = _warm_with_token_a(tmp_path, monkeypatch, wiki)
+    b = _token_file(tmp_path, "b.token", TOKEN_B)
+    _edit_sources(d, lambda m: m["knowledge"]["bookstack"].update(token_file=str(b)))
+    e = _entry_state(c)
+    assert e["state"] == "unavailable" and e["error"] == "auth_failed"
+    assert "secret-b" not in caplog.text
+
+
+def test_replacing_the_token_file_contents_reads_again(tmp_path, monkeypatch, wiki):
+    c, d = _warm_with_token_a(tmp_path, monkeypatch, wiki)
+    path = json.loads((d / "sources.json").read_text())["modules"]["knowledge"]["bookstack"]["token_file"]
+    _token_file(pathlib.Path(path).parent, pathlib.Path(path).name, TOKEN_B)
+    e = _entry_state(c)
+    assert e["state"] == "unavailable" and e["error"] == "auth_failed"
+
+
+def test_same_token_keeps_the_warm_entry(tmp_path, monkeypatch, wiki):
+    c, d = _warm_with_token_a(tmp_path, monkeypatch, wiki)
+    n = len(wiki.requests)
+    assert _entry_state(c)["state"] == "ok" and len(wiki.requests) == n
+
+
+def test_a_missing_token_file_is_a_local_error_not_a_warm_ok(tmp_path, monkeypatch, wiki):
+    c, d = _warm_with_token_a(tmp_path, monkeypatch, wiki)
+    path = json.loads((d / "sources.json").read_text())["modules"]["knowledge"]["bookstack"]["token_file"]
+    import os
+    os.unlink(path)
+    n = len(wiki.requests)
+    e = _entry_state(c)
+    assert e["state"] == "unavailable" and e["error"] == "token_file_missing" and len(wiki.requests) == n
+
+
+def test_an_unsafe_token_file_mode_is_a_local_error_not_a_warm_ok(tmp_path, monkeypatch, wiki):
+    c, d = _warm_with_token_a(tmp_path, monkeypatch, wiki)
+    path = json.loads((d / "sources.json").read_text())["modules"]["knowledge"]["bookstack"]["token_file"]
+    import os
+    os.chmod(path, 0o660)
+    e = _entry_state(c)
+    assert e["state"] == "unavailable" and e["error"] == "token_file_permissions"
+
+
+def test_token_and_its_hash_never_appear_in_responses_or_logs(tmp_path, monkeypatch, wiki, caplog):
+    import hashlib
+    caplog.set_level("DEBUG")
+    c, d = _warm_with_token_a(tmp_path, monkeypatch, wiki)
+    resp = _get(c)
+    secret = TOKEN.split(":")[1]
+    digests = [hashlib.sha256(TOKEN.encode()).hexdigest(), hashlib.sha256((TOKEN + "\n").encode()).hexdigest()]
+    for text in (resp.text, caplog.text):
+        assert secret not in text and not any(dg in text or dg[:16] in text for dg in digests)

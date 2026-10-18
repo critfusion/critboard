@@ -286,23 +286,25 @@ def build(project: str, *, projects, runbook_result, policy, books: tuple[str, s
 
 class TtlCache:
     """In-process cache of successful BookStack book reads. Entries are
-    [expires_at, value]; the caller passes the clock."""
+    [expires_at, value, stored_at]; the caller passes the clock."""
 
     def __init__(self) -> None:
         self.entries: dict = {}
 
-    def get(self, key, now: float):
+    def get(self, key, now: float, max_age: float | None = None):
+        """The value, or None. `max_age` is the CURRENT ttl: an entry stored
+        longer ago than that is dropped, whatever ttl it was stored under."""
         entry = self.entries.get(key)
         if entry is None:
             return None
-        if now >= entry[0]:
+        if now >= entry[0] or (max_age is not None and now - entry[2] >= max_age):
             del self.entries[key]
             return None
         return entry[1]
 
     def put(self, key, value, now: float, ttl_s: float) -> None:
         if ttl_s > 0:
-            self.entries[key] = [now + ttl_s, value]
+            self.entries[key] = [now + ttl_s, value, now]
 
 
 def cache_ttl_s(cfg: dict) -> int:
@@ -310,4 +312,3 @@ def cache_ttl_s(cfg: dict) -> int:
     if isinstance(v, bool) or not isinstance(v, int) or v < 0:
         return DEFAULT_CACHE_TTL_S
     return min(v, MAX_CACHE_TTL_S)
-

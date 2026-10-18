@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -48,7 +49,7 @@ from .config import Config, load_config
 from .ctx import AppContext
 from .history import InvalidWindowError, bucket_count, build_grouped_history, parse_window
 from .infrastructure import stale_after_days
-from .knowledge import BookStackAdapter, KnowledgeError
+from .knowledge import BookStackAdapter, KnowledgeError, read_token
 from .knowledge import now_iso as knowledge_now_iso
 from .modules import enabled_modules, module_config
 from .pricing import compute_cost_usd
@@ -1383,19 +1384,30 @@ def build_app() -> FastAPI:
 
         async def read(slug: str):
             # Only a successful read is cached; an error is read again next time.
-            # Settings first: a cached read must not outlive the module or its wiki.
+            # Local checks first, as on a cold read: a cached read must not outlive the
+            # module, its wiki, a usable token file or the token it was read with.
             try:
                 base_url, _ = knowledge._settings()
+                token = read_token(knowledge._token_path())
             except KnowledgeError as err:
                 return "error", err.code
-            key = (base_url, slug, stale_days)
-            if (hit := context_cache.get(key, time.monotonic())) is not None:
-                return "ok", hit
+            if ttl == 0:
+                context_cache.entries.clear()  # caching was switched off: drop old snapshots
+                key = None
+            else:
+                # Entries are bound to the credential by a hash of the token and its path.
+                # The token text is never kept.
+                path = os.path.realpath(os.path.expanduser(knowledge._token_path()))
+                fp = hashlib.sha256(f"{path}\0{token}".encode()).hexdigest()
+                key = (base_url, fp, slug, stale_days)
+                if (hit := context_cache.get(key, time.monotonic(), max_age=ttl)) is not None:
+                    return "ok", hit
             try:
                 payload = await knowledge.book(slug, now, stale_days)
             except KnowledgeError as err:
                 return "error", err.code
-            context_cache.put(key, payload, time.monotonic(), ttl)
+            if key is not None:
+                context_cache.put(key, payload, time.monotonic(), ttl)
             return "ok", payload
 
         projects, runbook_result, policy = await asyncio.gather(*(read(b) for b in books))
