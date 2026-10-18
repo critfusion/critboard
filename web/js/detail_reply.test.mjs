@@ -125,6 +125,40 @@ await test("a failed reply scrolls the error into view, once", async () => {
   assert.equal(globalThis.scrolls.length, 1);
 });
 
+for (const later of ["in_progress", "closed"]) {
+  await test(`a 409 message survives the bead turning ${later}, with no buttons and no new scroll`, async () => {
+    flushRaf();
+    globalThis.scrolls = [];
+    const id = `b-flip-${later}`;
+    const body = await render(id, "open");
+    replyStatus = 409;
+    replyBody = { detail: { message: "refused: exact text" } };
+    buttons(body)[1].listeners.click();
+    await settle(); await settle();
+    // the 409 is rendered and scrolled to once
+    const mk = (status, updated_at) => ({
+      settings: { bead_reply_enabled: true },
+      beads: { items: [{ id, status, updated_at, labels: ["example-human"] }] },
+    });
+    renderReplySection(new Node("div"), id, mk("open", "2026-10-17T12:00:00Z"));
+    flushRaf();
+    assert.equal(globalThis.scrolls.length, 1);
+    // snapshot and comments refresh: still human-labelled, no longer actionable
+    commentsBody = { comments: [], status: later, labels: ["example-human"], human_labels_present: ["example-human"], route_preview: "x" };
+    const flipped = mk(later, "2026-10-17T12:05:00Z");
+    renderReplySection(new Node("div"), id, flipped); // starts the refetch
+    await settle();
+    const after = new Node("div");
+    renderReplySection(after, id, flipped);
+    flushRaf();
+    const alerts = after.find((n) => n.attrs.role === "alert");
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].text().trim(), "refused: exact text");
+    assert.deepEqual(buttons(after), []);
+    assert.equal(globalThis.scrolls.length, 1, "no second scroll");
+  });
+}
+
 await test("Next includes blocked human beads", async () => {
   const items = [
     { id: "a", status: "open", labels: ["example-human"] },

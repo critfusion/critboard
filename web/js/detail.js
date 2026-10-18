@@ -348,7 +348,12 @@ export function renderReplySection(bodyEl, id, data) {
     )
   );
 
-  if (!canClose) return bodyEl.appendChild(section("Reply", wrap));
+  if (!canClose) {
+    // Status changed under a refused write: no controls, but keep the server's
+    // explanation. No scroll here -- it was already scrolled to, or not shown.
+    if (state.error) wrap.appendChild(el("div", { class: "detail-note-warn", role: "alert" }, state.error));
+    return bodyEl.appendChild(section("Reply", wrap));
+  }
 
   const textarea = el("textarea", {
     class: "settings-input bead-reply-textarea",
