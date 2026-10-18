@@ -1383,7 +1383,12 @@ def build_app() -> FastAPI:
 
         async def read(slug: str):
             # Only a successful read is cached; an error is read again next time.
-            key = (slug, stale_days)
+            # Settings first: a cached read must not outlive the module or its wiki.
+            try:
+                base_url, _ = knowledge._settings()
+            except KnowledgeError as err:
+                return "error", err.code
+            key = (base_url, slug, stale_days)
             if (hit := context_cache.get(key, time.monotonic())) is not None:
                 return "ok", hit
             try:

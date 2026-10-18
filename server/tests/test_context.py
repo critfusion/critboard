@@ -117,13 +117,17 @@ def wiki():
 
 
 def _client(tmp_path, monkeypatch, wiki, ctxcfg=None):
+    return _client_and_dir(tmp_path, monkeypatch, wiki, ctxcfg)[0]
+
+
+def _client_and_dir(tmp_path, monkeypatch, wiki, ctxcfg=None):
     n = 0
     while (tmp_path / f"c{n}").exists():
         n += 1
     (tmp_path / f"c{n}").mkdir()
-    client, _ = _make_client(tmp_path / f"c{n}", monkeypatch, lambda tf: _modules(tf, ctxcfg))
+    client, config_dir = _make_client(tmp_path / f"c{n}", monkeypatch, lambda tf: _modules(tf, ctxcfg))
     client.app.state.knowledge._transport = httpx.MockTransport(wiki)
-    return _prime(client)
+    return _prime(client), config_dir
 
 
 @pytest.fixture
@@ -702,3 +706,48 @@ def test_availability_projection_has_no_values_even_when_given_some():
 def test_a_knowledge_error_carries_only_its_code_into_the_response():
     body = ctx.entrypoint("proj-a", ("error", KnowledgeError("auth_failed", "secret detail", 403).code), PROJECTS)
     assert body == {"source": f"bookstack:{PROJECTS}", "state": "unavailable", "error": "auth_failed"}
+
+
+def _edit_sources(config_dir, fn):
+    path = config_dir / "sources.json"
+    doc = json.loads(path.read_text())
+    fn(doc["modules"])
+    path.write_text(json.dumps(doc))
+
+
+def test_cache_does_not_outlive_the_knowledge_module(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    assert _get(c).json()["entrypoint"]["state"] == "ok"  # primes the cache
+    _edit_sources(d, lambda m: m["knowledge"].update(enabled=False))
+    body = _get(c, headers={"host": "localhost"}).json()  # the knowledge allowlist went with it
+    for name in ("entrypoint", "standards", "runbooks"):
+        assert body[name]["state"] == "not_configured"
+    assert body["degraded"] == ["knowledge_not_configured"]
+
+
+def test_cache_does_not_serve_a_wiki_without_base_url(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    _get(c)
+    _edit_sources(d, lambda m: m["knowledge"]["bookstack"].update(base_url=""))
+    assert _get(c).json()["entrypoint"]["state"] == "not_configured"
+
+
+def test_repointing_the_wiki_reads_it_again(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    first = _get(c).json()["entrypoint"]["url"]
+    n = len(wiki.requests)
+    _edit_sources(d, lambda m: m["knowledge"]["bookstack"].update(base_url="https://wiki2.example.com"))
+    second = _get(c).json()["entrypoint"]["url"]
+    assert len(wiki.requests) > n
+    assert first.startswith(BASE) and second.startswith("https://wiki2.example.com")
+
+
+def test_changing_stale_after_days_reads_again(tmp_path, monkeypatch, wiki):
+    c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
+    _get(c)
+    n = len(wiki.requests)
+    _get(c)
+    assert len(wiki.requests) == n  # cached
+    _edit_sources(d, lambda m: m["context"].update(stale_after_days=30))
+    _get(c)
+    assert len(wiki.requests) > n
