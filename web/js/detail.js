@@ -267,9 +267,9 @@ function fetchBeadComments(id, updatedAt) {
 // "Next" jumps to the next OPEN, human-labelled bead after this one, in the
 // order the snapshot's beads.items array already lists them (top to bottom
 // -- the owner works the queue one item at a time), wrapping around once.
-function findNextHumanBead(data, currentId, humanLabels) {
+export function findNextHumanBead(data, currentId, humanLabels) {
   const items = data?.beads?.items || [];
-  const isHumanOpen = (b) => b.status === "open" && (b.labels || []).some((l) => humanLabels.includes(l));
+  const isHumanOpen = (b) => ["open", "blocked"].includes(b.status) && (b.labels || []).some((l) => humanLabels.includes(l));
   const idx = items.findIndex((b) => b.id === currentId);
   const ordered = idx >= 0 ? items.slice(idx + 1).concat(items.slice(0, idx + 1)) : items;
   return ordered.find((b) => b.id !== currentId && isHumanOpen(b)) || null;
@@ -379,7 +379,11 @@ export function renderReplySection(bodyEl, id, data) {
   );
   wrap.appendChild(el("div", { class: "bead-reply-actions" }, [sendBtn, closeBtn]));
   // Under the buttons, next to the click that failed.
-  if (state.error) wrap.appendChild(el("div", { class: "detail-note-warn", role: "alert" }, state.error));
+  let alertEl = null;
+  if (state.error) {
+    alertEl = el("div", { class: "detail-note-warn", role: "alert" }, state.error);
+    wrap.appendChild(alertEl);
+  }
 
   function submit(action) {
     const s = beadReplyState.get(id) || {};
@@ -420,7 +424,7 @@ export function renderReplySection(bodyEl, id, data) {
         })
       )
       .catch((err) => {
-        beadReplyState.set(id, { sending: false, result: null, error: String((err && err.message) || err) });
+        beadReplyState.set(id, { sending: false, result: null, error: String((err && err.message) || err), scrollToError: true });
         modal.refreshOpen({ force: true }); // FORCED: error result must show immediately
       });
   }
@@ -429,6 +433,12 @@ export function renderReplySection(bodyEl, id, data) {
   closeBtn.addEventListener("click", () => submit("close"));
 
   bodyEl.appendChild(section("Reply", wrap));
+  // renderBody keeps the old scrollTop, so in a tall popup a new error can land
+  // below the visible area. Scroll to it once per failure, not on every rebuild.
+  if (alertEl && state.scrollToError) {
+    state.scrollToError = false;
+    if (typeof alertEl.scrollIntoView === "function") alertEl.scrollIntoView({ block: "nearest" });
+  }
 }
 
 export function openBeadModal(idOrBead, data, triggerEl) {

@@ -14,6 +14,7 @@ class Node {
   text() {
     return `${this.textContent} ${this.children.map((c) => (c.text ? c.text() : String(c.t))).join(" ")}`;
   }
+  scrollIntoView(opts) { (globalThis.scrolls ||= []).push({ node: this, opts }); }
   find(pred, out = []) {
     if (pred(this)) out.push(this);
     this.children.forEach((c) => c.find && c.find(pred, out));
@@ -37,7 +38,7 @@ globalThis.fetch = async (url, opts) => {
 };
 let commentsBody = {};
 
-const { renderReplySection } = await import("./detail.js");
+const { renderReplySection, findNextHumanBead } = await import("./detail.js");
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 async function render(id, status) {
@@ -90,7 +91,38 @@ await test("a 409 reply renders the server message in the popup", async () => {
     settings: { bead_reply_enabled: true },
     beads: { items: [{ id: "b-409", status: "blocked", updated_at: "2026-10-17T12:00:00Z" }] },
   });
-  assert.match(again.text(), /bead is not actionable: test message/);
+  const alertNode = again.find((n) => n.attrs.role === "alert")[0];
+  // exact message: the JSON.stringify fallback would also contain the text
+  assert.equal(alertNode.text().trim(), "bead is not actionable: test message");
+  assert.ok(!alertNode.text().trim().startsWith("{"));
+});
+
+await test("a failed reply scrolls the error into view, once", async () => {
+  globalThis.scrolls = [];
+  const body = await render("b-scroll", "open");
+  replyStatus = 409;
+  replyBody = { detail: { message: "nope" } };
+  buttons(body)[1].listeners.click();
+  await settle(); await settle();
+  const data = {
+    settings: { bead_reply_enabled: true },
+    beads: { items: [{ id: "b-scroll", status: "open", updated_at: "2026-10-17T12:00:00Z" }] },
+  };
+  renderReplySection(new Node("div"), "b-scroll", data);
+  assert.equal(globalThis.scrolls.length, 1);
+  assert.deepEqual(globalThis.scrolls[0].opts, { block: "nearest" });
+  assert.equal(globalThis.scrolls[0].node.attrs.role, "alert");
+  renderReplySection(new Node("div"), "b-scroll", data); // passive rebuild: no re-scroll
+  assert.equal(globalThis.scrolls.length, 1);
+});
+
+await test("Next includes blocked human beads", async () => {
+  const items = [
+    { id: "a", status: "open", labels: ["example-human"] },
+    { id: "b", status: "blocked", labels: ["example-human"] },
+    { id: "c", status: "closed", labels: ["example-human"] },
+  ];
+  assert.equal(findNextHumanBead({ beads: { items } }, "a", ["example-human"]).id, "b");
 });
 
 await test("a non-JSON failure renders HTTP <n>", async () => {
