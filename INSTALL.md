@@ -672,7 +672,10 @@ What it shows, and what it will not claim:
   reviewer or approver who is the coder (the `coder:` label or the assignee)
   is not independent, and a bead with no coder at all is also missing. Several
   `coder:` labels or a comma list all count as coders; a blank assignee is no assignee.
-  A label list over 20 names, or a name over 200 characters, is `missing` too.
+  A `coder:`, `reviewer:` or `approver:` list over 20 names, or a name over 200
+  characters, is `missing` too (the 20 counts all labels of that kind together).
+  `reviewed:` refs past 20, or over 200 characters, are dropped from the list
+  without changing the gate: a ref is evidence, not a person.
 - Availability readings expire after `availability_ttl_s` seconds (60 to
   86400, default 1800). An expired reading shows `STALE` and its numbers are
   hidden. `owner_reported` is a list of

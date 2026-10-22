@@ -458,6 +458,17 @@ def test_a_name_over_the_length_cap_fails_closed():
     assert a["review_gate"] == "missing" and a["gate_missing"] == ["too_many_names"]
 
 
+def test_reviewed_ref_overflow_is_cut_without_changing_the_gate():
+    # SPEC assignment bounds / INSTALL 9c: a ref is evidence, not a person (#8)
+    base = ["waiting-review", "coder:cod-a", "reviewer:rev-a", "approver:app-a"]
+    over = _gate(base + [f"reviewed:{_names(21, 'ref')}"])
+    assert over["review_gate"] == "named" and over["gate_missing"] == []
+    assert len(over["reviewed_refs"]) == wf.MAX_NAMES
+    long_ref = _gate(base + ["reviewed:" + "r" * 300])
+    assert long_ref["review_gate"] == "named" and long_ref["gate_missing"] == []
+    assert long_ref["reviewed_refs"] == []
+
+
 def test_overflow_does_not_mark_a_bead_that_needs_no_review():
     a = _gate(["bug", f"coder:{_names(30)}"])
     assert a["review_gate"] == "no_review_marked" and a["gate_missing"] == []
