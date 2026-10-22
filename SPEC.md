@@ -371,7 +371,8 @@ sends no request to any AI provider and writes nothing.
   Likewise a request still running when the scope changes may store one entry under the old scope. It is
   never served (every lookup is keyed on the current scope). It stays until the scope changes (which
   empties the cache), it expires and a later store purges it, a store under the same key replaces it, or the
-  64-entry cap evicts it. A store under another scope does not remove it.
+  64-entry cap evicts it, or a request made while `cache_ttl_s` is 0 empties the cache. A store under another
+  scope does not remove it.
 - `GET /api/context?project=<slug>`. Same gate as `/api/workflow`: module off -> 404; foreign Host or
   Origin -> 403 `host_not_allowed` / `origin_not_allowed`. Then `project` must match
   `^[a-z0-9][a-z0-9._-]{0,63}$`, else 400 `{"ok":false,"error":{"code":"invalid_project"}}`. `Cache-Control:
