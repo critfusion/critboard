@@ -330,8 +330,10 @@ request, so a change needs no restart.
     trimmed assignee (blank means none); a reviewer or approver equal to either is not independent. Label values may be comma
     separated (`reviewer:a,b`) and each name is checked. No coder name at all is `coder_unknown`.
     Bounds: each label value is split first; a name is at most 200 characters and each of coder, reviewer,
-    approver and reviewed keeps at most 20 names. A dropped name (too many, or too long) adds
-    `too_many_names` to `gate_missing` on a bead that needs review: the gate fails closed. Missing items sort first. The view treats
+    approver and reviewed keeps at most 20 names. A dropped coder, reviewer or approver name (too many, or too
+    long) adds `too_many_names` to `gate_missing` on a bead that needs review: the gate fails closed. A dropped
+    `reviewed:` ref is only cut from `reviewed_refs`: refs name evidence, not people, so they cannot break
+    independence and the gate does not change. Missing items sort first. The view treats
     any unknown gate value as missing.
   - `availability`: `{ttl_s, rows[], note}`. Each row: `provider, basis, state, values, observed_at,
     expires_at, expired, detail`. `expires_at = observed_at + ttl_s`. `basis` is `provider-observed` (the
@@ -367,7 +369,9 @@ sends no request to any AI provider and writes nothing.
   of a request and the fetch reads the file again, so a token file replaced in those few milliseconds can
   cache a read under the old key. The next request sees the new token and empties the cache.
   Likewise a request still running when the scope changes may store one entry under the old scope. It is
-  never served (every lookup is keyed on the current scope) and the next store or scope change purges it.
+  never served (every lookup is keyed on the current scope). It stays until the scope changes (which
+  empties the cache), it expires and a later store purges it, a store under the same key replaces it, or the
+  64-entry cap evicts it. A store under another scope does not remove it.
 - `GET /api/context?project=<slug>`. Same gate as `/api/workflow`: module off -> 404; foreign Host or
   Origin -> 403 `host_not_allowed` / `origin_not_allowed`. Then `project` must match
   `^[a-z0-9][a-z0-9._-]{0,63}$`, else 400 `{"ok":false,"error":{"code":"invalid_project"}}`. `Cache-Control:
