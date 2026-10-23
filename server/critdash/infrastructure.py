@@ -38,7 +38,7 @@ _TAG_SCALARS = ("kind", "owner", "environment", "purpose", "status", "class")
 _TAG_LISTS = {"runbook": "runbooks", "backup": "backups", "related": "related",
               "project": "projects", "scope": "scopes"}
 # Provenance fields whose value may end in a "(note)": the note moves to `<field>_note`.
-_NOTE_FIELDS = ("source_path", "source_git_sha")
+_NOTE_FIELDS = ("source_repo", "source_path", "source_git_sha")
 # Facts-table rows the context endpoint reads (normalized field name -> key).
 _FACT_ROWS = {
     "canonical repo": "repo", "canonical repository": "repo",
@@ -101,8 +101,8 @@ def _cells(line: str) -> list[str]:
 def parse_provenance_table(markdown: str) -> dict[str, str]:
     """First `| Field | Value |` table in the page. Returns the six known
     fields, each UNKNOWN when the table, the row or the value is absent.
-    Backticks are removed. A trailing "(note)" on the path or SHA moves to
-    `source_path_note` / `source_git_sha_note`, present only when there is one."""
+    Backticks are removed. A trailing "(note)" on the repo, path or SHA moves to
+    `source_repo_note` / `source_path_note` / `source_git_sha_note`, present only when there is one."""
     out = {name: UNKNOWN for name in _TABLE_FIELDS.values()}
     lines = (markdown or "").splitlines()
     start = None
@@ -331,7 +331,7 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
             "repo_href": repo if re.match(r"https?://[^\s]+$", repo, re.I) else None,
             "path": prov["source_path"],
             "git_sha": prov["source_git_sha"],
-            **{k: prov[f] for k, f in (("path_note", "source_path_note"), ("git_sha_note", "source_git_sha_note"))
+            **{k: prov[f] for k, f in (("repo_note", "source_repo_note"), ("path_note", "source_path_note"), ("git_sha_note", "source_git_sha_note"))
                if f in prov},
             "class": klass,
             "live_check": prov["live_check"],

@@ -472,3 +472,21 @@ def test_reviewed_ref_overflow_is_cut_without_changing_the_gate():
 def test_overflow_does_not_mark_a_bead_that_needs_no_review():
     a = _gate(["bug", f"coder:{_names(30)}"])
     assert a["review_gate"] == "no_review_marked" and a["gate_missing"] == []
+
+
+def test_name_length_boundary_is_200_kept_201_fails_closed():
+    assert wf.MAX_NAME_CHARS == 200
+    kept = _gate(["waiting-review", "coder:" + "x" * 200, "reviewer:rev-a", "approver:app-a"])
+    assert kept["review_gate"] == "named" and kept["coder"] == "x" * 200
+    cut = _gate(["waiting-review", "coder:" + "x" * 201, "reviewer:rev-a", "approver:app-a"])
+    assert cut["review_gate"] == "missing" and cut["gate_missing"] == ["too_many_names"]
+
+
+def test_name_cap_is_cumulative_across_repeated_labels():
+    def labels(k, per):
+        return ["waiting-review", *(f"coder:{_names(per, f'c{j}_')}" for j in range(k)),
+                "reviewer:rev-a", "approver:app-a"]
+    ok = _gate(labels(2, 10))
+    assert ok["review_gate"] == "named" and len(ok["coder"].split(", ")) == 20
+    over = _gate(labels(3, 7))
+    assert over["review_gate"] == "missing" and over["gate_missing"] == ["too_many_names"]
