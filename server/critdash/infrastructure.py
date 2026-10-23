@@ -124,6 +124,7 @@ def parse_provenance_table(markdown: str) -> dict[str, str]:
         if key:
             out[key] = _status_text(cells[1]) if key == "status" else _clean(cells[1])
             if key in _NOTE_FIELDS:
+                out.pop(key + "_note", None)  # last row wins, note included
                 out[key], note = _split_note(out[key])
                 if note and note != UNKNOWN:
                     out[key + "_note"] = note

@@ -137,6 +137,32 @@ def test_repo_parenthetical_moves_to_its_own_note_field_and_keeps_the_link():
     assert "repo_note" not in _record()["source"]
 
 
+_NOTE_ROWS = (("Source repo", "source_repo", "repo", "example-org/old-repo", "example-org/new-repo"),
+              ("Source path", "source_path", "path", "projects/old.md", "projects/new.md"),
+              ("Source git SHA", "source_git_sha", "git_sha", "0123abc", "89abcde"))
+_REPLACEMENTS = (("{new}", "{new}"), ("{new} ()", "{new}"), ("unknown", "unknown"), ("{new} ( )", "{new}"))
+
+
+def _replaced(label, old, newcell):
+    return f"| Field | Value |\n|---|---|\n| {label} | {old} (main) |\n| {label} | {newcell} |\n"
+
+
+@pytest.mark.parametrize("label,pkey,skey,old,new", _NOTE_ROWS)
+@pytest.mark.parametrize("cell,want", _REPLACEMENTS)
+def test_replacing_a_row_drops_the_earlier_rows_note(label, pkey, skey, old, new, cell, want):
+    md = _replaced(label, old, cell.format(new=new))
+    out = parse_provenance_table(md)
+    assert out[pkey] == want.format(new=new) and pkey + "_note" not in out
+    src = _record(markdown=md)["source"]
+    assert src[skey] == want.format(new=new) and skey + "_note" not in src
+
+
+@pytest.mark.parametrize("label,pkey,skey,old,new", _NOTE_ROWS)
+def test_replacing_a_row_with_a_noted_one_keeps_only_the_new_note(label, pkey, skey, old, new):
+    md = f"| Field | Value |\n|---|---|\n| {label} | {old} (main) |\n| {label} | {new} (dev) |\n"
+    assert parse_provenance_table(md)[pkey + "_note"] == "dev"
+
+
 def test_path_parenthetical_moves_to_its_own_note_field():
     md = "| Field | Value |\n|---|---|\n| Source path | `docs/a.md` (copy of `docs/b.md`) |\n"
     out = parse_provenance_table(md)

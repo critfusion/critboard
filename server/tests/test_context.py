@@ -222,6 +222,15 @@ def test_entrypoint_fields(cc):
     assert e["dev_prod_boundary"].startswith("Dev edits happen on branches")
 
 
+@pytest.mark.parametrize("cell,want", [("example-org/new-repo", "example-org/new-repo"),
+                                       ("example-org/new-repo ()", "example-org/new-repo"), ("unknown", "unknown")])
+def test_replaced_repo_row_does_not_publish_the_earlier_repos_note(cc, wiki, cell, want):
+    wiki.pages[10]["markdown"] = (PROV + FACTS).replace(
+        "| Source path |", f"| Source repo | {cell} |\n| Source path |", 1)
+    prov = _get(cc).json()["entrypoint"]["provenance"]
+    assert prov["repo"] == want and "repo_note" not in prov
+
+
 def test_missing_canonical_facts_are_unknown_not_invented(cc, wiki):
     wiki.pages[10]["markdown"] = PROV
     e = _get(cc).json()["entrypoint"]
