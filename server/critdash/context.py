@@ -161,7 +161,7 @@ def entrypoint(project, result, book_slug: str) -> dict:
         "repo": _s(src.get("repo")), "path": _s(src.get("path")), "git_sha": _s(src.get("git_sha")),
         "status": _s(hit.get("status")),
     }
-    for key in ("path_note", "git_sha_note"):
+    for key in ("repo_note", "path_note", "git_sha_note"):
         if _opt(src.get(key)):
             provenance[key] = _opt(src.get(key))
     return {

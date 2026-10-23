@@ -390,7 +390,7 @@ sends no request to any AI provider and writes nothing.
     `labels`: a page in the projects book tagged `project:<label>` for the primary, then for each alias in
     order; then a page whose slug starts with `<label>-` for the primary, then for each alias. First page in
     book order wins within a step. `matched_label` says which label matched. On `ok`: `match` (`tag` or `slug_prefix`), `matched_label`, `id, title, url, updated_at`,
-    `provenance{repo, path, git_sha, status, [path_note], [git_sha_note]}`, `canonical_repo`,
+    `provenance{repo, path, git_sha, status, [repo_note], [path_note], [git_sha_note]}`, `canonical_repo`,
     `canonical_location`, `dev_prod_boundary`. The last three come from the rows `Canonical repo`,
     `Canonical location` and `Dev/prod boundary` of a `| Field | Value |` table on the page (the
     Provenance table or a Facts table); absent -> `unknown`. `url` is `unknown` when the page has none.

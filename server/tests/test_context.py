@@ -216,10 +216,19 @@ def test_entrypoint_fields(cc):
     e = _get(cc).json()["entrypoint"]
     assert (e["state"], e["match"], e["id"], e["title"]) == ("ok", "slug_prefix", 10, "Proj A entry")
     assert e["url"] == f"{BASE}/books/{PROJECTS}/page/proj-a-entry" and e["updated_at"] == "2026-10-12T10:00:00.000000Z"
-    assert e["provenance"] == {"repo": "example-org/proj-a (main)", "path": "projects/proj-a.md",
+    assert e["provenance"] == {"repo": "example-org/proj-a", "repo_note": "main", "path": "projects/proj-a.md",
                                "git_sha": "0123abc", "git_sha_note": "blob 4567def", "status": "current"}
     assert e["canonical_repo"] == "example-org/proj-a" and e["canonical_location"] == "~/work/proj-a"
     assert e["dev_prod_boundary"].startswith("Dev edits happen on branches")
+
+
+@pytest.mark.parametrize("cell,want", [("example-org/new-repo", "example-org/new-repo"),
+                                       ("example-org/new-repo ()", "example-org/new-repo"), ("unknown", "unknown")])
+def test_replaced_repo_row_does_not_publish_the_earlier_repos_note(cc, wiki, cell, want):
+    wiki.pages[10]["markdown"] = (PROV + FACTS).replace(
+        "| Source path |", f"| Source repo | {cell} |\n| Source path |", 1)
+    prov = _get(cc).json()["entrypoint"]["provenance"]
+    assert prov["repo"] == want and "repo_note" not in prov
 
 
 def test_missing_canonical_facts_are_unknown_not_invented(cc, wiki):

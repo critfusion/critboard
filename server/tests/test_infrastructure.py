@@ -117,7 +117,7 @@ LIVE_SHAPE = """\
 
 def test_backticks_are_removed_from_every_value():
     out = parse_provenance_table(LIVE_SHAPE)
-    assert out["source_repo"] == "example-org/repo-a (main)"
+    assert out["source_repo"] == "example-org/repo-a" and out["source_repo_note"] == "main"
     assert out["source_path"] == "projects/proj-a.md"
     assert out["status"] == "current"
     assert "`" not in "".join(out.values())
@@ -126,6 +126,41 @@ def test_backticks_are_removed_from_every_value():
 def test_sha_parenthetical_moves_to_its_own_note_field():
     out = parse_provenance_table(LIVE_SHAPE)
     assert out["source_git_sha"] == "0123abc\u2026" and out["source_git_sha_note"] == "blob 4567def"
+
+
+def test_repo_parenthetical_moves_to_its_own_note_field_and_keeps_the_link():
+    md = "| Field | Value |\n|---|---|\n| Source repo | `https://github.com/example-org/repo-a` (`main`) |\n"
+    assert parse_provenance_table(md)["source_repo_note"] == "main"
+    src = _record(markdown=md)["source"]
+    assert src["repo"] == "https://github.com/example-org/repo-a" and src["repo_note"] == "main"
+    assert src["repo_href"] == "https://github.com/example-org/repo-a"
+    assert "repo_note" not in _record()["source"]
+
+
+_NOTE_ROWS = (("Source repo", "source_repo", "repo", "example-org/old-repo", "example-org/new-repo"),
+              ("Source path", "source_path", "path", "projects/old.md", "projects/new.md"),
+              ("Source git SHA", "source_git_sha", "git_sha", "0123abc", "89abcde"))
+_REPLACEMENTS = (("{new}", "{new}"), ("{new} ()", "{new}"), ("unknown", "unknown"), ("{new} ( )", "{new}"))
+
+
+def _replaced(label, old, newcell):
+    return f"| Field | Value |\n|---|---|\n| {label} | {old} (main) |\n| {label} | {newcell} |\n"
+
+
+@pytest.mark.parametrize("label,pkey,skey,old,new", _NOTE_ROWS)
+@pytest.mark.parametrize("cell,want", _REPLACEMENTS)
+def test_replacing_a_row_drops_the_earlier_rows_note(label, pkey, skey, old, new, cell, want):
+    md = _replaced(label, old, cell.format(new=new))
+    out = parse_provenance_table(md)
+    assert out[pkey] == want.format(new=new) and pkey + "_note" not in out
+    src = _record(markdown=md)["source"]
+    assert src[skey] == want.format(new=new) and skey + "_note" not in src
+
+
+@pytest.mark.parametrize("label,pkey,skey,old,new", _NOTE_ROWS)
+def test_replacing_a_row_with_a_noted_one_keeps_only_the_new_note(label, pkey, skey, old, new):
+    md = f"| Field | Value |\n|---|---|\n| {label} | {old} (main) |\n| {label} | {new} (dev) |\n"
+    assert parse_provenance_table(md)[pkey + "_note"] == "dev"
 
 
 def test_path_parenthetical_moves_to_its_own_note_field():
@@ -785,3 +820,21 @@ def test_status_controls_via_the_route(infra, wiki, table, tags, status):
     r = _routed(infra, wiki, table, tags)
     assert r["status"] == status
     assert (r["status_conflict"] is not None) == (tags == ["needs-verification"])
+
+
+# ---------------- route: contradicted and stale records ----------------
+
+def test_contradicted_record_stays_contradicted_via_the_route_even_when_old(infra, wiki):
+    for check in ((datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d"), "2020-01-01"):
+        wiki.pages[1]["markdown"] = f"| Field | Value |\n|---|---|\n| Live check | {check} |\n| Status | contradicted |\n"
+        wiki.pages[1]["tags"] = []
+        r = next(r for r in infra.get("/api/infrastructure").json()["records"] if r["id"] == 1)
+        assert r["status"] == "contradicted" and r["status_reason"] is None
+
+
+def test_stale_record_says_why_and_a_stale_tag_conflict_is_visible_via_the_route(infra, wiki):
+    wiki.pages[1]["markdown"] = "| Field | Value |\n|---|---|\n| Live check | 2020-01-01 |\n| Status | current |\n"
+    wiki.pages[1]["tags"] = [{"name": "status", "value": "stale"}]
+    r = next(r for r in infra.get("/api/infrastructure").json()["records"] if r["id"] == 1)
+    assert r["status"] == "stale" and "older than 90 days" in r["status_reason"]
+    assert r["status_conflict"] == "status conflict: table current, tag stale"
