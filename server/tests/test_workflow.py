@@ -513,3 +513,7 @@ def test_oversized_raw_label_is_cut_before_the_split():
     value = "a," + " " * wf.MAX_LABEL_CHARS + ",tail-name"
     a = _gate(["waiting-review", f"coder:{value}", "reviewer:rev-a", "approver:app-a"])
     assert a["coder"] == "a" and a["gate_missing"] == ["too_many_names"]
+
+
+def test_raw_label_cap_is_4040():
+    assert wf.MAX_LABEL_CHARS == 4040 == 20 * 202

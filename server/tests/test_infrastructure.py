@@ -184,7 +184,7 @@ def test_an_unknown_value_carries_no_note(cell, label, pkey, skey):
     assert src[skey] == "unknown" and skey + "_note" not in src
 
 
-@pytest.mark.parametrize("url", ["https://en.wikipedia.org/wiki/Foo_(bar)", "http://example.com/a_(b)"])
+@pytest.mark.parametrize("url", ["https://en.wikipedia.org/wiki/Foo_(bar)", "http://example.com/a_(b)", "HTTPS://X/Y(z)"])
 def test_a_url_repo_ending_in_a_parenthetical_is_not_split(url):
     md = f"| Field | Value |\n|---|---|\n| Source repo | {url} |\n"
     out = parse_provenance_table(md)
@@ -881,3 +881,15 @@ def test_a_status_spelled_like_the_old_sentinel_is_just_unreadable(table, tags):
     md = TABLE if table is None else TABLE.replace("| Status | current |", f"| Status | {table} |")
     r = _record(markdown=md, tags=[{"name": "status", "value": t} for t in tags])
     assert r["status_conflict"] is None
+
+
+@pytest.mark.parametrize("cells,flag,merged", [
+    (("unknown", "current"), False, "current"),
+    (("current", "unknown"), True, "unknown"),
+    (("unknown", "tbd"), False, "unknown"),
+])
+def test_a_later_status_row_replaces_the_declared_unknown_flag(cells, flag, merged):
+    md = "| Field | Value |\n|---|---|\n" + "".join(f"| Status | {c} |\n" for c in cells)
+    out = parse_provenance_table(md)
+    assert ("status_declared_unknown" in out) is flag
+    assert merge_status((out["status"], bool(out.get("status_declared_unknown"))))[0] == merged
