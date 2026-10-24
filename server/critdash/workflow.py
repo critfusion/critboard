@@ -163,13 +163,15 @@ def _bead_people(labels) -> dict:
     for label in labels if isinstance(labels, list) else []:
         name, sep, value = str(label).partition(":")
         field = _BEAD_LABEL_FIELDS.get(name.strip().lower())
-        value = value.strip()
-        if not field or not sep or not value:
+        if not field or not sep:
             continue
         field = "coders" if field == "coder" else field
-        if len(value) > MAX_LABEL_CHARS:
+        if len(value) > MAX_LABEL_CHARS:  # raw size, before strip, so padding cannot hide a cut
             out["overflow"].add(field)
             value = value[:MAX_LABEL_CHARS]
+        value = value.strip()
+        if not value:
+            continue
         for part in (v.strip() for v in value.split(",")):  # split first, then bound each name
             if not part or part in out[field]:
                 continue
