@@ -68,7 +68,10 @@ def _clean(value: str) -> str:
 
 def _split_note(value: str) -> tuple[str, str | None]:
     """'e2125a5 (blob 2508d55)' -> ('e2125a5', 'blob 2508d55'). Only a trailing
-    parenthetical with no nested parentheses moves; an empty one is dropped."""
+    parenthetical with no nested parentheses moves; an empty one is dropped.
+    A bare http(s) URL (no whitespace) is never split: 'https://x/Foo_(bar)' is one value."""
+    if re.fullmatch(r"https?://\S+", value, re.I):
+        return value, None
     m = re.fullmatch(r"(.*?)\s*\(([^()]*)\)", value)
     if not m or not m.group(1):
         return value, None
@@ -76,17 +79,11 @@ def _split_note(value: str) -> tuple[str, str | None]:
     return _clean(m.group(1)), (_clean(note) if note else None) or None
 
 
-# A status the page explicitly declares as `unknown` is a real value (worse than
-# `current`); an empty, `tbd` or junk status is absent. `_clean` folds both to
-# UNKNOWN, so the status fields carry this marker for the declared one.
-DECLARED_UNKNOWN = "unknown (declared)"
-
-
-def _status_text(value: str) -> str:
-    """Status cell/tag text -> cleaned text; DECLARED_UNKNOWN for a literal unknown."""
-    if re.sub(r"[\s_]+", "-", (value or "").strip().strip("`*").strip().lower()) == UNKNOWN:
-        return DECLARED_UNKNOWN
-    return _clean(value)
+def _declared_unknown(value: str) -> bool:
+    """A status the page explicitly declares as `unknown` is a real value (worse
+    than `current`); an empty, `tbd` or junk status is absent. `_clean` folds
+    both to UNKNOWN, so this flag (never an in-band marker) tells them apart."""
+    return re.sub(r"[\s_]+", "-", (value or "").strip().strip("`*").strip().lower()) == UNKNOWN
 
 
 def _cells(line: str) -> list[str]:
@@ -98,11 +95,12 @@ def _cells(line: str) -> list[str]:
     return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line)]
 
 
-def parse_provenance_table(markdown: str) -> dict[str, str]:
+def parse_provenance_table(markdown: str) -> dict:
     """First `| Field | Value |` table in the page. Returns the six known
     fields, each UNKNOWN when the table, the row or the value is absent.
     Backticks are removed. A trailing "(note)" on the repo, path or SHA moves to
-    `source_repo_note` / `source_path_note` / `source_git_sha_note`, present only when there is one."""
+    `source_repo_note` / `source_path_note` / `source_git_sha_note`, present only when there is one.
+    `status_declared_unknown: True` is present only when the Status cell literally says unknown."""
     out = {name: UNKNOWN for name in _TABLE_FIELDS.values()}
     lines = (markdown or "").splitlines()
     start = None
@@ -122,11 +120,15 @@ def parse_provenance_table(markdown: str) -> dict[str, str]:
             continue  # malformed row or the |---|---| separator
         key = _TABLE_FIELDS.get(re.sub(r"[`*_]", "", cells[0]).strip().lower())
         if key:
-            out[key] = _status_text(cells[1]) if key == "status" else _clean(cells[1])
+            out[key] = _clean(cells[1])
+            if key == "status":
+                out.pop("status_declared_unknown", None)  # last row wins
+                if _declared_unknown(cells[1]):
+                    out["status_declared_unknown"] = True
             if key in _NOTE_FIELDS:
                 out.pop(key + "_note", None)  # last row wins, note included
                 out[key], note = _split_note(out[key])
-                if note and note != UNKNOWN:
+                if note and note != UNKNOWN and out[key] != UNKNOWN:
                     out[key + "_note"] = note
     return out
 
@@ -163,20 +165,20 @@ def parse_tags(tags) -> dict:
     out: dict = {name: UNKNOWN for name in _TAG_SCALARS}
     for name in _TAG_LISTS.values():
         out[name] = []
-    out["statuses"] = []  # every readable `status` tag, in page order
+    out["statuses"] = []  # every readable `status` tag, in page order, as (text, declared_unknown)
     for tag in (tags if isinstance(tags, list) else [])[:MAX_TAGS]:
         if not isinstance(tag, dict):
             continue
         name = str(tag.get("name") or "").strip().lower()
         raw = str(tag.get("value") or "")
         value = _clean(raw)
-        if name == "status" and _status_text(raw) == DECLARED_UNKNOWN:
-            out["statuses"].append(DECLARED_UNKNOWN)
+        if name == "status" and _declared_unknown(raw):
+            out["statuses"].append((UNKNOWN, True))
             continue
         if value == UNKNOWN:
             continue
         if name == "status":
-            out["statuses"].append(value)
+            out["statuses"].append((value, False))
         if name in _TAG_SCALARS and out[name] == UNKNOWN:
             out[name] = value
         elif name in _TAG_LISTS and value not in out[_TAG_LISTS[name]]:
@@ -214,15 +216,15 @@ def _normal_status(raw: str) -> str:
     return s if s in STATUSES else UNKNOWN
 
 
-def merge_status(table: str, *tags: str) -> tuple[str, str | None]:
-    """Declared status from the table and every `status` tag (raw text).
-    Unreadable ones are ignored; a declared `unknown` (DECLARED_UNKNOWN) is a
-    real value, worse than `current`. One distinct readable value -> that value.
+def merge_status(table: tuple[str, bool], *tags: tuple[str, bool]) -> tuple[str, str | None]:
+    """Declared status from the table and every `status` tag, each a
+    (text, declared_unknown) pair. Unreadable ones are ignored; a declared
+    `unknown` is a real value, worse than `current`. One distinct readable value -> that value.
     Several that differ -> the worst, plus a visible conflict note."""
     found: list[tuple[str, str]] = []
-    for source, raw in (("table", table), *(("tag", t) for t in tags)):
-        value = UNKNOWN if raw == DECLARED_UNKNOWN else _normal_status(raw)
-        if (value != UNKNOWN or raw == DECLARED_UNKNOWN) and (source, value) not in found:
+    for source, (raw, declared) in (("table", table), *(("tag", t) for t in tags)):
+        value = UNKNOWN if declared else _normal_status(raw)
+        if (value != UNKNOWN or declared) and (source, value) not in found:
             found.append((source, value))
     values = {v for _, v in found}
     if not values:
@@ -302,7 +304,7 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
     facts = parse_facts(markdown)
     tags = parse_tags(page.get("tags"))
     updated_at = page["updated_at"][:MAX_TEXT_CHARS] if isinstance(page.get("updated_at"), str) else None
-    declared, conflict = merge_status(prov["status"], *tags["statuses"])
+    declared, conflict = merge_status((prov["status"], bool(prov.get("status_declared_unknown"))), *tags["statuses"])
     state = compute_status(declared, prov["live_check"], updated_at, now, stale_days)
     state["status_conflict"] = conflict
     klass = prov["class"] if prov["class"] != UNKNOWN else tags["class"]

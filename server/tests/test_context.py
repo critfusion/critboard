@@ -231,6 +231,13 @@ def test_replaced_repo_row_does_not_publish_the_earlier_repos_note(cc, wiki, cel
     assert prov["repo"] == want and "repo_note" not in prov
 
 
+def test_noted_row_replaced_by_a_noted_row_publishes_only_the_new_note(cc, wiki):
+    wiki.pages[10]["markdown"] = (PROV + FACTS).replace(
+        "| Source path |", "| Source repo | example-org/new-repo (dev) |\n| Source path |", 1)
+    prov = _get(cc).json()["entrypoint"]["provenance"]
+    assert prov["repo"] == "example-org/new-repo" and prov["repo_note"] == "dev"
+
+
 def test_missing_canonical_facts_are_unknown_not_invented(cc, wiki):
     wiki.pages[10]["markdown"] = PROV
     e = _get(cc).json()["entrypoint"]

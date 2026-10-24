@@ -490,3 +490,56 @@ def test_name_cap_is_cumulative_across_repeated_labels():
     assert ok["review_gate"] == "named" and len(ok["coder"].split(", ")) == 20
     over = _gate(labels(3, 7))
     assert over["review_gate"] == "missing" and over["gate_missing"] == ["too_many_names"]
+
+
+def test_oversized_raw_label_sets_overflow_before_any_split():
+    cap = wf.MAX_LABEL_CHARS
+    # duplicates collapse after the split, so only a raw-size guard can see this one
+    a = _gate(["waiting-review", "coder:" + "a," * cap, "reviewer:rev-a", "approver:app-a"])
+    assert a["review_gate"] == "missing" and "too_many_names" in a["gate_missing"]
+    a = _gate(["waiting-review", "coder:cod-a", "reviewer:" + "a," * cap, "approver:app-a"])
+    assert a["review_gate"] == "missing" and "too_many_names" in a["gate_missing"]
+
+
+def test_raw_label_exactly_at_the_cap_is_still_read():
+    cap = wf.MAX_LABEL_CHARS
+    value = "a," + " " * (cap - 3) + "b"
+    assert len(value) == cap
+    a = _gate(["waiting-review", f"coder:{value}", "reviewer:rev-a", "approver:app-a"])
+    assert a["review_gate"] == "named" and a["coder"] == "a, b"
+
+
+def test_oversized_raw_label_is_cut_before_the_split():
+    value = "a," + " " * wf.MAX_LABEL_CHARS + ",tail-name"
+    a = _gate(["waiting-review", f"coder:{value}", "reviewer:rev-a", "approver:app-a"])
+    assert a["coder"] == "a" and a["gate_missing"] == ["too_many_names"]
+
+
+def test_raw_label_cap_is_4040():
+    assert wf.MAX_LABEL_CHARS == 4040 == 20 * 202
+
+
+def _padded(kind, pad):
+    """Label list whose `kind` value is one name plus `pad` blanks, leading or trailing."""
+    return {"lead": " " * pad + "x", "trail": "x" + " " * pad}[kind]
+
+
+@pytest.mark.parametrize("where", ["lead", "trail"])
+@pytest.mark.parametrize("field", ["coder", "reviewer", "approver"])
+def test_raw_label_whitespace_boundary_is_measured_before_strip(field, where):
+    cap = wf.MAX_LABEL_CHARS
+    base = {"coder": "cod-a", "reviewer": "rev-a", "approver": "app-a"}
+
+    def gate(raw):
+        labels = ["waiting-review", *(f"{k}:{v}" for k, v in base.items() if k != field), f"{field}:{raw}"]
+        return wf.build({"agents": [], "beads": {"items": [_bead(labels=labels, assignee="")]}}, {"providers": []},
+                        {}, wf.policy_unavailable("x", "y"), NOW)["assignments"]["items"][0]
+    at = gate(_padded(where, cap - 1))   # 4040 raw chars: read
+    assert len(_padded(where, cap - 1)) == cap and "too_many_names" not in at["gate_missing"]
+    over = gate(_padded(where, cap))     # 4041 raw chars: flagged
+    assert over["review_gate"] == "missing" and "too_many_names" in over["gate_missing"]
+
+
+def test_blank_oversized_label_still_flags_overflow():
+    a = _gate(["waiting-review", "coder:cod-a", "reviewer:rev-a", "approver:" + " " * (wf.MAX_LABEL_CHARS + 1)])
+    assert "too_many_names" in a["gate_missing"]

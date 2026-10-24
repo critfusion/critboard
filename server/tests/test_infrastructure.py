@@ -17,14 +17,13 @@ from test_knowledge import BASE, TOKEN, _enabled, _make_client
 
 from critdash import knowledge as knowledge_mod
 from critdash.infrastructure import (
-    DECLARED_UNKNOWN,
     compute_status,
     parse_provenance_table,
     parse_record,
     parse_tags,
     parse_facts,
     parse_when,
-    merge_status,
+    merge_status as _merge_status,
 )
 
 NOW = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
@@ -102,6 +101,14 @@ def test_field_names_ignore_case_and_markup_and_underscores_in_values_survive():
     assert parse_provenance_table(md)["source_repo"] == "example-org/host_a_repo"
 
 
+D = ("unknown", True)  # a status the page declares as unknown
+
+
+def merge_status(table, *tags):
+    """Bare strings are readable-text statuses; D is a declared unknown."""
+    return _merge_status(*((v if isinstance(v, tuple) else (v, False)) for v in (table, *tags)))
+
+
 # ---------------- backticks, notes and facts (context endpoint) ----------------
 
 LIVE_SHAPE = """\
@@ -161,6 +168,35 @@ def test_replacing_a_row_drops_the_earlier_rows_note(label, pkey, skey, old, new
 def test_replacing_a_row_with_a_noted_one_keeps_only_the_new_note(label, pkey, skey, old, new):
     md = f"| Field | Value |\n|---|---|\n| {label} | {old} (main) |\n| {label} | {new} (dev) |\n"
     assert parse_provenance_table(md)[pkey + "_note"] == "dev"
+    src = _record(markdown=md)["source"]  # the record carries the new note too
+    assert src[skey + "_note"] == "dev" and src[skey] == new
+
+
+@pytest.mark.parametrize("cell", ["n/a (z)", "tbd (z)", "unknown (z)", "- (z)"])
+@pytest.mark.parametrize("label,pkey,skey", [("Source repo", "source_repo", "repo"),
+                                             ("Source path", "source_path", "path"),
+                                             ("Source git SHA", "source_git_sha", "git_sha")])
+def test_an_unknown_value_carries_no_note(cell, label, pkey, skey):
+    md = f"| Field | Value |\n|---|---|\n| {label} | {cell} |\n"
+    out = parse_provenance_table(md)
+    assert out[pkey] == "unknown" and pkey + "_note" not in out
+    src = _record(markdown=md)["source"]
+    assert src[skey] == "unknown" and skey + "_note" not in src
+
+
+@pytest.mark.parametrize("url", ["https://en.wikipedia.org/wiki/Foo_(bar)", "http://example.com/a_(b)", "HTTPS://X/Y(z)"])
+def test_a_url_repo_ending_in_a_parenthetical_is_not_split(url):
+    md = f"| Field | Value |\n|---|---|\n| Source repo | {url} |\n"
+    out = parse_provenance_table(md)
+    assert out["source_repo"] == url and "source_repo_note" not in out
+    src = _record(markdown=md)["source"]
+    assert src["repo_href"] == url and "repo_note" not in src
+
+
+def test_a_url_with_a_spaced_parenthetical_still_splits():
+    md = "| Field | Value |\n|---|---|\n| Source repo | https://github.com/example-org/repo-a (main) |\n"
+    out = parse_provenance_table(md)
+    assert out["source_repo"] == "https://github.com/example-org/repo-a" and out["source_repo_note"] == "main"
 
 
 def test_path_parenthetical_moves_to_its_own_note_field():
@@ -380,21 +416,21 @@ def test_agreeing_or_absent_statuses_have_no_conflict_note():
 
 
 def test_declared_unknown_is_a_real_value_worse_than_current():
-    assert merge_status("current", DECLARED_UNKNOWN) == ("unknown", "status conflict: table current, tag unknown")
-    assert merge_status(DECLARED_UNKNOWN, "current") == ("unknown", "status conflict: table unknown, tag current")
-    assert merge_status(DECLARED_UNKNOWN, "stale")[0] == "stale"  # stale is still worse
-    assert merge_status(DECLARED_UNKNOWN, DECLARED_UNKNOWN) == ("unknown", None)
+    assert merge_status("current", D) == ("unknown", "status conflict: table current, tag unknown")
+    assert merge_status(D, "current") == ("unknown", "status conflict: table unknown, tag current")
+    assert merge_status(D, "stale")[0] == "stale"  # stale is still worse
+    assert merge_status(D, D) == ("unknown", None)
 
 
 def test_parse_separates_declared_unknown_from_absent_and_junk():
     md = "| Field | Value |\n|---|---|\n| Status | Unknown |\n"
-    assert parse_provenance_table(md)["status"] == DECLARED_UNKNOWN
+    assert parse_provenance_table(md)["status_declared_unknown"] is True
     for cell in ("", "tbd", "-", "sparkly"):
         out = parse_provenance_table(f"| Field | Value |\n|---|---|\n| Status | {cell} |\n")
-        assert out["status"] != DECLARED_UNKNOWN
+        assert "status_declared_unknown" not in out
     tags = parse_tags([{"name": "status", "value": " `Unknown` "}, {"name": "status", "value": ""},
                        {"name": "status", "value": "tbd"}, {"name": "status", "value": "junk"}])
-    assert tags["statuses"] == [DECLARED_UNKNOWN, "junk"]
+    assert tags["statuses"] == [D, ("junk", False)]
 
 
 def test_conflict_note_reaches_the_record_and_current_is_not_shown_when_a_tag_disagrees():
@@ -838,3 +874,22 @@ def test_stale_record_says_why_and_a_stale_tag_conflict_is_visible_via_the_route
     r = next(r for r in infra.get("/api/infrastructure").json()["records"] if r["id"] == 1)
     assert r["status"] == "stale" and "older than 90 days" in r["status_reason"]
     assert r["status_conflict"] == "status conflict: table current, tag stale"
+
+
+@pytest.mark.parametrize("table,tags", [("unknown (declared)", ["current"]), (None, ["unknown (declared)", "current"])])
+def test_a_status_spelled_like_the_old_sentinel_is_just_unreadable(table, tags):
+    md = TABLE if table is None else TABLE.replace("| Status | current |", f"| Status | {table} |")
+    r = _record(markdown=md, tags=[{"name": "status", "value": t} for t in tags])
+    assert r["status_conflict"] is None
+
+
+@pytest.mark.parametrize("cells,flag,merged", [
+    (("unknown", "current"), False, "current"),
+    (("current", "unknown"), True, "unknown"),
+    (("unknown", "tbd"), False, "unknown"),
+])
+def test_a_later_status_row_replaces_the_declared_unknown_flag(cells, flag, merged):
+    md = "| Field | Value |\n|---|---|\n" + "".join(f"| Status | {c} |\n" for c in cells)
+    out = parse_provenance_table(md)
+    assert ("status_declared_unknown" in out) is flag
+    assert merge_status((out["status"], bool(out.get("status_declared_unknown"))))[0] == merged
