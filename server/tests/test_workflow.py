@@ -490,3 +490,26 @@ def test_name_cap_is_cumulative_across_repeated_labels():
     assert ok["review_gate"] == "named" and len(ok["coder"].split(", ")) == 20
     over = _gate(labels(3, 7))
     assert over["review_gate"] == "missing" and over["gate_missing"] == ["too_many_names"]
+
+
+def test_oversized_raw_label_sets_overflow_before_any_split():
+    cap = wf.MAX_LABEL_CHARS
+    # duplicates collapse after the split, so only a raw-size guard can see this one
+    a = _gate(["waiting-review", "coder:" + "a," * cap, "reviewer:rev-a", "approver:app-a"])
+    assert a["review_gate"] == "missing" and "too_many_names" in a["gate_missing"]
+    a = _gate(["waiting-review", "coder:cod-a", "reviewer:" + "a," * cap, "approver:app-a"])
+    assert a["review_gate"] == "missing" and "too_many_names" in a["gate_missing"]
+
+
+def test_raw_label_exactly_at_the_cap_is_still_read():
+    cap = wf.MAX_LABEL_CHARS
+    value = "a," + " " * (cap - 3) + "b"
+    assert len(value) == cap
+    a = _gate(["waiting-review", f"coder:{value}", "reviewer:rev-a", "approver:app-a"])
+    assert a["review_gate"] == "named" and a["coder"] == "a, b"
+
+
+def test_oversized_raw_label_is_cut_before_the_split():
+    value = "a," + " " * wf.MAX_LABEL_CHARS + ",tail-name"
+    a = _gate(["waiting-review", f"coder:{value}", "reviewer:rev-a", "approver:app-a"])
+    assert a["coder"] == "a" and a["gate_missing"] == ["too_many_names"]

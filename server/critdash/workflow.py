@@ -27,6 +27,9 @@ MIN_TTL_S, MAX_TTL_S = 60, 86400
 MAX_OWNER_REPORTS = 50
 MAX_NAMES = 20       # per label kind (coder / reviewer / approver / reviewed)
 MAX_NAME_CHARS = 200
+# Longest raw label value read: MAX_NAMES names of MAX_NAME_CHARS with ", " between. Longer is
+# cut before the split (no giant list) and flagged as overflow, never silently dropped.
+MAX_LABEL_CHARS = MAX_NAMES * (MAX_NAME_CHARS + 2)
 ROLES = ("orchestrator", "coder", "reviewer", "worker")
 BASES = ("provider-observed", "owner-reported", "unknown")
 # Family prefix of a model id -> provider. Only what the id itself states.
@@ -164,6 +167,9 @@ def _bead_people(labels) -> dict:
         if not field or not sep or not value:
             continue
         field = "coders" if field == "coder" else field
+        if len(value) > MAX_LABEL_CHARS:
+            out["overflow"].add(field)
+            value = value[:MAX_LABEL_CHARS]
         for part in (v.strip() for v in value.split(",")):  # split first, then bound each name
             if not part or part in out[field]:
                 continue

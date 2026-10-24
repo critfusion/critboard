@@ -329,7 +329,8 @@ request, so a change needs no restart.
     self-approval is not allowed) or `coder_unknown`). The coder names are every `coder:` label value (several labels and comma lists all count) and the
     trimmed assignee (blank means none); a reviewer or approver equal to either is not independent. Label values may be comma
     separated (`reviewer:a,b`) and each name is checked. No coder name at all is `coder_unknown`.
-    Bounds: each label value is split first; a name is at most 200 characters and each of coder, reviewer,
+    Bounds: a raw label value over 4040 characters (`MAX_NAMES` x (`MAX_NAME_CHARS` + 2)) is cut before the split and counts as
+    a dropped name (`too_many_names`); then each label value is split first; a name is at most 200 characters and each of coder, reviewer,
     approver and reviewed keeps at most 20 names. A dropped coder, reviewer or approver name (too many, or too
     long) adds `too_many_names` to `gate_missing` on a bead that needs review: the gate fails closed. A dropped
     `reviewed:` ref is only cut from `reviewed_refs`: refs name evidence, not people, so they cannot break
@@ -511,6 +512,12 @@ and the view shows `unknown`). The server never guesses a value.
   `Class`, `Status`. A page with no `markdown` (saved in BookStack's WYSIWYG editor) has no readable
   table: its provenance shows as `unknown`. No such table, a missing row, an empty cell, or `-`, `n/a`, `none`, `tbd`, `?`
   -> `unknown`. A row with fewer than two cells is skipped.
+  - Notes: a trailing plain `(note)` on `Source repo`, `Source path` or `Source git SHA` moves out of the value into
+    `source.repo_note`, `source.path_note` or `source.git_sha_note` (present only when the page has one; the context
+    endpoint carries them as `provenance.repo_note`, `path_note`, `git_sha_note`). Only one trailing parenthetical with no
+    nested parentheses moves; an empty one is dropped. A bare `http(s)` URL (no whitespace) is never split, so
+    `https://en.wikipedia.org/wiki/Foo_(bar)` stays whole. A value that is `unknown` carries no note (`n/a (z)` ->
+    `unknown`, no `repo_note`). When a later row repeats a field, it replaces the earlier value and the earlier note.
 - Tags (name/value, name matches without regard to case): `kind` (host, service, repo, ...), `owner`,
   `environment`, `purpose`, `status`, `class` (first non-empty wins), and `runbook`, `backup`, `related` (may repeat;
   duplicates collapse). A `runbook` or `backup` value is a link only if it is an `http(s)` URL or a
