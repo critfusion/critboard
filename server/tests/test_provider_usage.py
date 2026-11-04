@@ -344,11 +344,23 @@ def test_grok_and_other_providers_cost_is_always_unknown():
         assert compute_provider_cost_usd(PRICING, provider, "gpt-test", 10, 10, 0, 0) is None
 
 
-def test_shipped_pricing_has_no_invented_codex_rates():
+def test_shipped_codex_prices_resolve_each_local_model_to_its_own_row():
     path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "pricing.json")
     shipped = json.load(open(path))
-    assert [k for k in shipped["codex_models"] if not k.startswith("_")] == []
-    assert compute_provider_cost_usd(shipped, "codex", "gpt-6-luna", 1000, 1000, 0, 0) is None
+    # (model, input, cache_read, output) USD per 1M; gpt-6.1-* must not fall into gpt-6-*
+    expected = {
+        "gpt-5.6-terra": (2.00, 0.20, 12.00), "gpt-6-astra": (10.00, 1.00, 50.00),
+        "gpt-6-luna": (0.10, 0.01, 0.50), "gpt-6.1-sol": (2.00, 0.10, 10.00),
+        "gpt-5.6-sol": (4.00, 0.40, 20.00), "gpt-6.1-terra": (1.00, 0.05, 5.00),
+        "gpt-6-sol": (2.00, 0.20, 10.00), "gpt-5.6-luna": (0.20, 0.02, 1.20),
+    }
+    for model, (inp, cached, out) in expected.items():
+        cost = compute_provider_cost_usd(
+            shipped, "codex", model + "-2026-11-01", 1_000_000, 1_000_000, 1_000_000, 0
+        )
+        assert cost == pytest.approx(inp + out + cached), model
+    # a model with no row stays unknown
+    assert compute_provider_cost_usd(shipped, "codex", "gpt-7-unlisted", 1000, 1000, 0, 0) is None
 
 
 # -- rollups (usage.by_provider, per-session map) --------------------------------
