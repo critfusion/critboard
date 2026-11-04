@@ -17,6 +17,7 @@ from critdash import remote_probe as rp
 from critdash.collectors import agents as agents_mod
 from critdash.collectors.provider_usage import (
     ProviderUsageCollector,
+    _basename,
     grok_ts,
     new_codex_state,
     parse_codex_lines,
@@ -671,3 +672,35 @@ def test_probe_state_save_keeps_keys_written_during_the_scan(tmp_path, monkeypat
     saved = json.loads(state.read_text())
     assert saved["files"] == {"x": 1} and saved["kimi_files"] == {"y": 2}
     assert "provider_files" in saved
+
+
+def test_codex_timestamp_is_normalised_and_unparseable_rows_are_skipped():
+    def rec(rid, ts):
+        return _line({"timestamp": ts, "type": "token_usage_record", "payload": {
+            "response_id": rid, "turn_id": "t", "session_id": SESSION,
+            "usage": {"input_tokens": 10, "output_tokens": 1}}})
+
+    data = (rec("a", "2026-11-04T10:15:30+00:00") + rec("b", "2026-11-04T12:15:30+02:00")
+            + rec("c", "garbage") + rec("d", None)).encode()
+    local = parse_codex_lines(data, new_codex_state())
+    assert [e["ts"] for e in local] == ["2026-11-04T10:15:30.000Z", "2026-11-04T10:15:30.000Z"]
+    assert rp.parse_codex_usage(data) == local
+    buckets = rp._bucket_provider_events(rp.parse_codex_usage(data))
+    assert list(buckets) == ["codex" + rp._SEP + "2026-11-04T10" + rp._SEP + "unknown"]
+    assert buckets[next(iter(buckets))]["messages"] == 2
+
+
+def test_cwd_base_root_and_trailing_slash_match_local_and_remote():
+    for cwd, want in (("/", None), ("", None), ("/work/demo/", "demo"), ("/work/demo", "demo"), (None, None)):
+        assert _basename(cwd) == want == rp._cwd_base(cwd), cwd
+
+
+def test_probe_buckets_do_not_alias_across_keys(tmp_path):
+    codex_root = tmp_path / "codex"
+    text = _codex_records(model="gpt-a", turn="t1", n=1) + _codex_records(model="gpt-b", turn="t2", n=3)
+    _write_codex(codex_root, text=text)
+    out = rp.collect_provider_usage(str(codex_root), str(tmp_path / "g"), str(tmp_path / "s.json"))
+    by_model: dict[str, int] = {}
+    for b in out["provider_usage_buckets"]:
+        by_model[b["model"]] = by_model.get(b["model"], 0) + b["messages"]
+    assert by_model == {"gpt-a": 1, "gpt-b": 3}

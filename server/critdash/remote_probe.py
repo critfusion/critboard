@@ -1849,7 +1849,7 @@ def _grok_ts(value) -> str | None:
 
 
 def _cwd_base(cwd) -> str | None:
-    return (os.path.basename(cwd.rstrip("/")) or None) if isinstance(cwd, str) else None
+    return (os.path.basename(cwd.rstrip("/")) or None) if isinstance(cwd, str) else None  # "/" -> None
 
 
 def parse_codex_usage(data: bytes) -> list[dict]:
@@ -1880,7 +1880,8 @@ def parse_codex_usage(data: bytes) -> list[dict]:
         elif kind == "token_usage_record":
             usage = payload.get("usage")
             response_id = payload.get("response_id")
-            ts = doc.get("timestamp")
+            # real files carry "...SS.mmmZ", but do not rely on it: the hour bucket slices this
+            ts = _grok_ts(doc.get("timestamp"))
             session_id = payload.get("session_id") or state["session_id"]
             if not isinstance(usage, dict) or not response_id or not ts or not session_id:
                 continue
