@@ -354,11 +354,14 @@ def test_shipped_codex_prices_resolve_each_local_model_to_its_own_row():
         "gpt-5.6-sol": (4.00, 0.40, 20.00), "gpt-6.1-terra": (1.00, 0.05, 5.00),
         "gpt-6-sol": (2.00, 0.20, 10.00), "gpt-5.6-luna": (0.20, 0.02, 1.20),
     }
+    # cache_write is the 30-minute write rate, 1.25x input
+    for model in expected:
+        assert shipped["codex_models"][model]["cache_write"] == pytest.approx(expected[model][0] * 1.25), model
     for model, (inp, cached, out) in expected.items():
         cost = compute_provider_cost_usd(
-            shipped, "codex", model + "-2026-11-01", 1_000_000, 1_000_000, 1_000_000, 0
+            shipped, "codex", model + "-2026-11-01", *(1_000_000,) * 4
         )
-        assert cost == pytest.approx(inp + out + cached), model
+        assert cost == pytest.approx(inp + out + cached + inp * 1.25), model
     # a model with no row stays unknown
     assert compute_provider_cost_usd(shipped, "codex", "gpt-7-unlisted", 1000, 1000, 0, 0) is None
 
