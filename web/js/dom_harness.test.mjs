@@ -66,6 +66,9 @@ try {
     throw new Error(`GET /api/config/layout returned ${layoutRes.status}`);
   }
   const layout = await layoutRes.json();
+  if (!Array.isArray(layout.panels)) {
+    throw new Error(`layout.panels is not an array: ${JSON.stringify(layout).slice(0, 200)}`);
+  }
   const expectedIds = layout.panels.filter((p) => !p.hidden).map((p) => p.id);
 
   await page.goto(`${base}/index.html?fixture=1`);

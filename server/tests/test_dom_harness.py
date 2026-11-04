@@ -36,8 +36,9 @@ def _skip_reason() -> str | None:
         ["node", "-p", "process.versions.node.split('.')[0]"],
         capture_output=True, text=True, timeout=30, check=False,
     )
-    if ver.returncode != 0 or not ver.stdout.strip().isdigit() or int(ver.stdout) < 18:
-        return f"node >= 18 is required (found {ver.stdout.strip() or 'unknown'})"
+    major = ver.stdout.strip()
+    if ver.returncode != 0 or not major.isdigit() or int(major) < 18:
+        return f"node >= 18 is required (found {major or 'unknown'})"
     probe = subprocess.run(
         ["node", "-e", "require.resolve('playwright')"],
         capture_output=True, timeout=30, check=False,
