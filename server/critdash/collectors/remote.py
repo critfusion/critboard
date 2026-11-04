@@ -370,6 +370,8 @@ class RemoteCollector(BaseCollector):
             self.store.upsert_remote_kimi_usage_buckets([{**r, "host": name} for r in rows])
         if rows := payload.get("kimi_error_buckets"):
             self.store.upsert_remote_kimi_error_buckets([{**r, "host": name} for r in rows])
+        if rows := payload.get("provider_usage_buckets"):
+            self.store.upsert_remote_provider_usage_buckets([{**r, "host": name} for r in rows])
 
     def _fail_entry(
         self, name: str, error: str, duration_ms: float,

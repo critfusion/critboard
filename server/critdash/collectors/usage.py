@@ -32,7 +32,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 
-from ..pricing import compute_cost_usd
+from ..pricing import compute_cost_usd, compute_provider_cost_usd
 from ..store import zero_fill_hourly
 from ..tzutil import ctx_tz_name, local_day_start_utc_iso
 from . import BaseCollector
@@ -282,6 +282,52 @@ def _by_host_rollup(store, since_iso: str | None, local_host: str, pricing: dict
         h["cost_usd"] = round(h["cost_usd"] + _remote_row_cost(pricing, r), 6)
     for host_name, v in per_host.items():
         out.append({"host": host_name, **v})
+    return out
+
+
+_CURSOR_UNKNOWN = {"provider": "cursor", "tokens": None, "messages": None, "cost_usd": None}
+
+
+def _row_tokens(r) -> int:
+    return r["input"] + r["output"] + r["cache_read"] + r["cache_write"]
+
+
+def provider_cost_usd(pricing: dict, provider: str, rows) -> float | None:
+    """Total dollars for rows shaped like Store.provider_usage_grouped (each
+    carrying provider-model token sums), or None if ANY row with tokens has
+    no known price -- a partial sum would read as a real, smaller number."""
+    total = 0.0
+    for r in rows:
+        tokens = _row_tokens(r)
+        cost = compute_provider_cost_usd(
+            pricing, provider, r["model"], r["input"], r["output"], r["cache_read"], r["cache_write"],
+        )
+        if cost is None:
+            if tokens:
+                return None
+            continue
+        total += cost
+    return round(total, 6)
+
+
+def _provider_session_map(store, pricing: dict, since_iso: str, host: str) -> dict[str, dict]:
+    """ctx.usage_by_session entries for Codex/Grok sessions (today). Same keys
+    the Claude entries carry; cost_today_usd is None where unknown."""
+    by_session: dict[str, list] = {}
+    for r in store.provider_usage_grouped(("provider", "session_id", "model"), since_iso, host=host):
+        by_session.setdefault(r["session_id"], []).append(r)
+    out: dict[str, dict] = {}
+    for sid, rows in by_session.items():
+        cats = {k: sum(r[k] for r in rows) for k in ("input", "output", "cache_read", "cache_write")}
+        newest = max(rows, key=lambda r: r["last_ts"])
+        out[sid] = {
+            "last_activity": newest["last_ts"],
+            "last_model": newest["model"],
+            "tokens_today": {**cats, "total": sum(cats.values())},
+            "cost_today_usd": provider_cost_usd(pricing, rows[0]["provider"], rows),
+            "msg_count_today": sum(r["messages"] for r in rows),
+            "subagents_active": 0,
+        }
     return out
 
 
@@ -551,7 +597,11 @@ class UsageCollector(BaseCollector):
         remote_kimi_usage_buckets (every other host's, once one grows a Kimi
         install -- see remote_probe.py). cost_usd is always None for Kimi:
         it bills by subscription quota, not per token -- see
-        collectors/kimi.py's module docstring."""
+        collectors/kimi.py's module docstring. Codex is priced per token from
+        pricing.json (None while a model has no price) and Grok is tokens
+        with cost None (collectors/provider_usage.py). Cursor keeps no local
+        usage at all, so its row is entirely None -- unknown, not zero."""
+        pricing = self._current_pricing()
         rows: list[dict] = []
         for wname, since in windows.items():
             claude_totals = totals[wname]
@@ -564,6 +614,11 @@ class UsageCollector(BaseCollector):
                 rows.append({
                     "provider": "kimi", "window": wname, "tokens": 0, "messages": 0, "cost_usd": None,
                 })
+                for provider in ("codex", "grok"):
+                    rows.append({
+                        "provider": provider, "window": wname, "tokens": 0, "messages": 0, "cost_usd": None,
+                    })
+                rows.append(_CURSOR_UNKNOWN | {"window": wname})
                 continue
             local_kimi = self.store.kimi_usage_totals(since)
             remote_kimi = self.store.remote_kimi_usage_totals(since)
@@ -573,6 +628,18 @@ class UsageCollector(BaseCollector):
                 "messages": local_kimi["messages"] + remote_kimi["messages"],
                 "cost_usd": None,
             })
+            usage_rows = list(self.store.provider_usage_grouped(("provider", "model"), since)) + list(
+                self.store.provider_usage_grouped(("provider", "model"), since, remote=True)
+            )
+            for provider in ("codex", "grok"):
+                mine = [r for r in usage_rows if r["provider"] == provider]
+                rows.append({
+                    "provider": provider, "window": wname,
+                    "tokens": sum(_row_tokens(r) for r in mine),
+                    "messages": sum(r["messages"] for r in mine),
+                    "cost_usd": provider_cost_usd(pricing, provider, mine),
+                })
+            rows.append(_CURSOR_UNKNOWN | {"window": wname})
         return rows
 
     def _update_ctx_session_map(self) -> None:
@@ -619,4 +686,5 @@ class UsageCollector(BaseCollector):
                 "msg_count_today": total_today["messages"] if total_today else 0,
                 "subagents_active": sidechain_by_session.get(sid, 0),
             }
+        session_map.update(_provider_session_map(self.store, self._current_pricing(), today_start, self.host))
         self.ctx.usage_by_session = session_map

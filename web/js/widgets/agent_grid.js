@@ -82,8 +82,9 @@ function agentCard(a, data) {
   ]);
 
   const metrics = el("div", { style: "display:flex; justify-content:space-between; align-items:baseline; margin-top:2px;" }, [
-    el("span", { class: "mono tabular-nums", style: "font-size:12px;" }, fmtTokens(a.tokens_today?.total ?? 0) + " tok"),
-    el("span", { class: "mono tabular-nums", style: "font-size:12px; color:var(--color-accent-amber);" }, fmtCost(a.cost_today_usd ?? 0)),
+    el("span", { class: "mono tabular-nums", style: "font-size:12px;" }, fmtTokens(a.tokens_today === null ? null : (a.tokens_today?.total ?? 0)) + " tok"),
+    // null = unknown (Cursor, Grok, Kimi, unpriced Codex model): "--", never $0.00
+    el("span", { class: "mono tabular-nums", style: "font-size:12px; color:var(--color-accent-amber);" }, fmtCost(a.cost_today_usd === undefined ? 0 : a.cost_today_usd)),
   ]);
 
   const footer = el("div", { style: "display:flex; justify-content:space-between; font-size:9px;" }, [
@@ -115,7 +116,7 @@ export default {
     if (sort === "status") {
       list.sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || (a.repo || "").localeCompare(b.repo || ""));
     } else if (sort === "cost") {
-      list.sort((a, b) => (b.cost_today_usd ?? 0) - (a.cost_today_usd ?? 0));
+      list.sort((a, b) => (b.cost_today_usd ?? -1) - (a.cost_today_usd ?? -1));
     }
 
     if (list.length === 0) {

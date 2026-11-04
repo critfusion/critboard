@@ -19,5 +19,8 @@
     "claude-opus-5":   {"input": 10.0, "output": 50.0, "cache_write_5m": 12.50, "cache_write_1h": 20.0, "cache_read": 1.00},
     "claude-opus-4-8": {"input": 10.0, "output": 50.0, "cache_write_5m": 12.50, "cache_write_1h": 20.0, "cache_read": 1.00}
   },
+  "codex_models": {
+    "_comment": "Codex runs on an API key, so it has a real per-token cost: model-id prefix -> {input, output, cache_read, cache_write} in USD per 1,000,000 tokens (cache_write defaults to input). EMPTY ON PURPOSE: no verified OpenAI price is on file for the models this host runs (gpt-5.6-*, gpt-6-*, gpt-6.1-*), and a guessed rate would put an invented number in the spend totals. Until a model has an entry here its Codex cost shows as unknown (null), never $0. Take the rates from the official OpenAI API pricing page and note the date in _verified."
+  },
   "monthly_budget_usd": 2000
 }
