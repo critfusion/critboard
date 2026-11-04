@@ -18,8 +18,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from critdash import config as config_mod
-from critdash import main as main_mod
 from critdash import knowledge as knowledge_mod
+from critdash import main as main_mod
 from critdash.knowledge import html_to_text
 
 BASE = "https://wiki.example.com"

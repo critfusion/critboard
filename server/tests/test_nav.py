@@ -67,7 +67,11 @@ def test_workflow_view_never_writes_server_text_as_html():
 def test_workflow_view_node_test_passes():
     # fake DOM + fake clock: expiry at render, one 60 s timer, re-show after expiry
     result = subprocess.run(
-        ["node", str(WEB / "js" / "workflow_view.test.mjs")], capture_output=True, text=True, timeout=30, check=False,
+        ["node", str(WEB / "js" / "workflow_view.test.mjs")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "passed" in result.stdout
@@ -77,7 +81,11 @@ def test_workflow_view_node_test_passes():
 def test_detail_reply_node_test_passes():
     # fake DOM: Close on blocked human beads, send-back open-only, server errors shown
     result = subprocess.run(
-        ["node", str(WEB / "js" / "detail_reply.test.mjs")], capture_output=True, text=True, timeout=30, check=False,
+        ["node", str(WEB / "js" / "detail_reply.test.mjs")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "passed" in result.stdout
@@ -87,7 +95,11 @@ def test_detail_reply_node_test_passes():
 def test_knowledge_view_node_test_passes():
     # fake DOM: Edit/History links, served-revision marker wording, infra and workflow link cards
     result = subprocess.run(
-        ["node", str(WEB / "js" / "knowledge_view.test.mjs")], capture_output=True, text=True, timeout=30, check=False,
+        ["node", str(WEB / "js" / "knowledge_view.test.mjs")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "passed" in result.stdout

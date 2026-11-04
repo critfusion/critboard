@@ -294,14 +294,18 @@ class BookStackAdapter:
                 continue
             book = item.get("book") if isinstance(item.get("book"), dict) else {}
             preview = item.get("preview_html") if isinstance(item.get("preview_html"), dict) else {}
-            results.append({
-                "id": item["id"],
-                "name": str(item.get("name") or ""),
-                "book": str(book.get("name") or ""),
-                "updated_at": item.get("updated_at"),
-                **page_links(base, book.get("slug"), item.get("slug")),
-                "preview": html_to_text(str(preview.get("content") or "")[:PREVIEW_INPUT_MAX_CHARS])[:PREVIEW_CHARS],
-            })
+            results.append(
+                {
+                    "id": item["id"],
+                    "name": str(item.get("name") or ""),
+                    "book": str(book.get("name") or ""),
+                    "updated_at": item.get("updated_at"),
+                    **page_links(base, book.get("slug"), item.get("slug")),
+                    "preview": html_to_text(str(preview.get("content") or "")[:PREVIEW_INPUT_MAX_CHARS])[
+                        :PREVIEW_CHARS
+                    ],
+                }
+            )
         return {"results": results, "total": body.get("total", len(results))}
 
     async def page(self, page_id: int) -> dict:

@@ -304,7 +304,9 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
     facts = parse_facts(markdown)
     tags = parse_tags(page.get("tags"))
     updated_at = page["updated_at"][:MAX_TEXT_CHARS] if isinstance(page.get("updated_at"), str) else None
-    declared, conflict = merge_status((prov["status"], bool(prov.get("status_declared_unknown"))), *tags["statuses"])
+    declared, conflict = merge_status(
+        (prov["status"], bool(prov.get("status_declared_unknown"))), *tags["statuses"]
+    )
     state = compute_status(declared, prov["live_check"], updated_at, now, stale_days)
     state["status_conflict"] = conflict
     klass = prov["class"] if prov["class"] != UNKNOWN else tags["class"]
@@ -334,15 +336,24 @@ def parse_record(page: dict, *, base_url: str, book_slug: str, now: datetime,
             "repo_href": repo if re.match(r"https?://[^\s]+$", repo, re.I) else None,
             "path": prov["source_path"],
             "git_sha": prov["source_git_sha"],
-            **{k: prov[f] for k, f in (("repo_note", "source_repo_note"), ("path_note", "source_path_note"), ("git_sha_note", "source_git_sha_note"))
-               if f in prov},
+            **{
+                k: prov[f]
+                for k, f in (
+                    ("repo_note", "source_repo_note"),
+                    ("path_note", "source_path_note"),
+                    ("git_sha_note", "source_git_sha_note"),
+                )
+                if f in prov
+            },
             "class": klass,
             "live_check": prov["live_check"],
             "declared_status": declared,
         },
         **state,
         "updated_at": updated_at or UNKNOWN,
-        "updated_by": str(updated_by["name"])[:MAX_TEXT_CHARS] if isinstance(updated_by, dict) and updated_by.get("name") else UNKNOWN,
+        "updated_by": str(updated_by["name"])[:MAX_TEXT_CHARS]
+        if isinstance(updated_by, dict) and updated_by.get("name")
+        else UNKNOWN,
     }
 
 

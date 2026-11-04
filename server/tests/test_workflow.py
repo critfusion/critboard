@@ -77,7 +77,9 @@ def test_cost_is_an_estimate_never_spend():
     [s] = wf.observed_sessions([_agent()])
     assert s["cost_estimate_today_usd"] == 1.23 and s["cost_basis"] == "estimate"
     assert not any("spend" in k or "remaining" in k for k in s)
-    note = wf.build({"agents": []}, {"providers": []}, {}, wf.policy_unavailable("x", "y"), NOW)["observed"]["cost_note"]
+    note = wf.build({"agents": []}, {"providers": []}, {}, wf.policy_unavailable("x", "y"), NOW)["observed"][
+        "cost_note"
+    ]
     assert "estimate" in note and "not spend" in note
 
 
@@ -96,7 +98,9 @@ def test_reviewer_is_never_invented_from_the_actor():
 
 
 def test_reviewer_and_approver_labels_make_the_gate_named():
-    [a] = wf.assignments([_bead(labels=["waiting-review", "reviewer:rev-a", "approver:app-a", "reviewed:abc1234"])], [])
+    [a] = wf.assignments(
+        [_bead(labels=["waiting-review", "reviewer:rev-a", "approver:app-a", "reviewed:abc1234"])], []
+    )
     assert a["review_gate"] == "named" and a["gate_missing"] == []
     assert a["reviewers"] == ["rev-a"] and a["approvers"] == ["app-a"] and a["reviewed_refs"] == ["abc1234"]
 
@@ -189,11 +193,20 @@ def test_future_dated_reading_is_unknown():
 
 
 def test_owner_report_has_its_own_basis_and_expires_too():
-    rows = _avail([], owner=[
-        {"provider": "prov-a", "state": "available", "observed_at": "2026-10-17T11:50:00Z", "note": "told by owner"},
-        {"provider": "prov-b", "state": "available", "observed_at": "2026-10-17T09:00:00Z"},
-        {"provider": "prov-c", "state": "available"},
-        "junk"])
+    rows = _avail(
+        [],
+        owner=[
+            {
+                "provider": "prov-a",
+                "state": "available",
+                "observed_at": "2026-10-17T11:50:00Z",
+                "note": "told by owner",
+            },
+            {"provider": "prov-b", "state": "available", "observed_at": "2026-10-17T09:00:00Z"},
+            {"provider": "prov-c", "state": "available"},
+            "junk",
+        ],
+    )
     assert [(r["provider"], r["basis"], r["state"]) for r in rows] == [
         ("prov-a", "owner-reported", "available"), ("prov-b", "owner-reported", "stale"),
         ("prov-c", "unknown", "unknown")]
@@ -201,7 +214,10 @@ def test_owner_report_has_its_own_basis_and_expires_too():
 
 
 def test_every_row_has_a_basis_from_the_closed_set():
-    rows = _avail([_entry(), _entry(ok=None)], owner=[{"provider": "p", "state": "up", "observed_at": "2026-10-17T11:59:00Z"}])
+    rows = _avail(
+        [_entry(), _entry(ok=None)],
+        owner=[{"provider": "p", "state": "up", "observed_at": "2026-10-17T11:59:00Z"}],
+    )
     assert {r["basis"] for r in rows} <= set(wf.BASES)
 
 
@@ -244,7 +260,10 @@ def test_four_sections_stay_separate(wfc):
     body = wfc.get("/api/workflow").json()
     assert body["ok"] is True
     assert body["policy"]["label"] == "intended policy" and body["policy"]["state"] == "ok"
-    assert [p["title"] for p in body["policy"]["pages"]] == ["host-2", "Review rule"]  # the wiki read sorts by kind, then title
+    assert [p["title"] for p in body["policy"]["pages"]] == [
+        "host-2",
+        "Review rule",
+    ]  # the wiki read sorts by kind, then title
     page = body["policy"]["pages"][1]
     assert page["source"]["repo"] == "example-org/repo" and page["source"]["git_sha"] == "0123abc"
     assert page["url"] == f"{BASE}/books/{SLUG}/page/review-rule"
@@ -258,7 +277,9 @@ def test_four_sections_stay_separate(wfc):
 
 def test_policy_status_unknown_and_needs_verification_pass_through(wfc, wiki):
     wiki.pages[2]["markdown"] = "No provenance table here."
-    wiki.pages[1]["markdown"] = wiki.pages[1]["markdown"].replace("| Status | current |", "| Status | needs-verification |")
+    wiki.pages[1]["markdown"] = wiki.pages[1]["markdown"].replace(
+        "| Status | current |", "| Status | needs-verification |"
+    )
     by = {p["title"]: p for p in wfc.get("/api/workflow").json()["policy"]["pages"]}
     assert by["host-2"]["status"] == "unknown" and by["host-2"]["source"]["repo"] == "unknown"
     assert by["Review rule"]["status"] == "needs-verification"
@@ -290,7 +311,9 @@ def test_missing_policy_book_is_reported_in_the_policy_half(wfc, wiki):
 
 def test_custom_policy_book_slug_is_read(tmp_path, monkeypatch, wiki):
     wiki.book = {"id": 9, "name": "Other", "slug": "other-book"}
-    client, _ = _make_client(tmp_path, monkeypatch, lambda tf: _wf_modules(tf, {"policy_book_slug": "other-book"}))
+    client, _ = _make_client(
+        tmp_path, monkeypatch, lambda tf: _wf_modules(tf, {"policy_book_slug": "other-book"})
+    )
     client.app.state.knowledge._transport = httpx.MockTransport(wiki)
     assert client.get("/api/workflow").json()["policy"]["book"]["slug"] == "other-book"
 
@@ -298,7 +321,9 @@ def test_custom_policy_book_slug_is_read(tmp_path, monkeypatch, wiki):
 def test_expired_quota_reading_is_stale_through_the_endpoint(wfc):
     store = wfc.app.state.store
     store.set_quota_cache("openrouter", _entry(provider="openrouter", checked_at="2020-01-01T00:00:00Z"))
-    store.set_quota_cache("kimi", _entry(provider="kimi", checked_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")))
+    store.set_quota_cache(
+        "kimi", _entry(provider="kimi", checked_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    )
     rows = {r["provider"]: r for r in wfc.get("/api/workflow").json()["availability"]["rows"]}
     assert rows["openrouter"]["state"] == "stale" and rows["openrouter"]["values"] is None
     assert rows["kimi"]["state"] == "observed" and rows["kimi"]["basis"] == "provider-observed"
@@ -306,7 +331,11 @@ def test_expired_quota_reading_is_stale_through_the_endpoint(wfc):
 
 def test_owner_reported_config_flows_through(tmp_path, monkeypatch, wiki):
     owner = [{"provider": "prov-z", "state": "available", "observed_at": "2020-01-01T00:00:00Z"}]
-    client, _ = _make_client(tmp_path, monkeypatch, lambda tf: _wf_modules(tf, {"owner_reported": owner, "availability_ttl_s": 120}))
+    client, _ = _make_client(
+        tmp_path,
+        monkeypatch,
+        lambda tf: _wf_modules(tf, {"owner_reported": owner, "availability_ttl_s": 120}),
+    )
     client.app.state.knowledge._transport = httpx.MockTransport(wiki)
     av = client.get("/api/workflow").json()["availability"]
     row = next(r for r in av["rows"] if r["provider"] == "prov-z")
@@ -367,8 +396,15 @@ def test_reviewer_and_approver_are_checked_against_label_coder_and_assignee():
 
 def test_unknown_coder_is_never_badged_named():
     a = _gate(["waiting-review", "reviewer:rev-a", "approver:app-a"], assignee=None)
-    assert a["coder"] == "unknown" and a["review_gate"] == "missing" and a["gate_missing"] == ["coder_unknown"]
-    assert wf.assignments([_bead(assignee="", labels=["waiting-review", "reviewer:r", "approver:a"])], [])[0]["review_gate"] == "missing"
+    assert (
+        a["coder"] == "unknown" and a["review_gate"] == "missing" and a["gate_missing"] == ["coder_unknown"]
+    )
+    assert (
+        wf.assignments([_bead(assignee="", labels=["waiting-review", "reviewer:r", "approver:a"])], [])[0][
+            "review_gate"
+        ]
+        == "missing"
+    )
 
 
 def test_comma_separated_label_values_split_and_each_is_checked():
@@ -409,10 +445,16 @@ def test_every_coder_label_value_counts_as_a_coder():
 
 def test_assignee_is_stripped_and_blank_means_no_coder():
     a = _gate(["waiting-review", "reviewer:actor-a", "approver:app-a"], assignee=" actor-a ")
-    assert a["gate_missing"] == ["independent_reviewer"] and a["coder"] == "actor-a" and a["assignee"] == "actor-a"
+    assert (
+        a["gate_missing"] == ["independent_reviewer"]
+        and a["coder"] == "actor-a"
+        and a["assignee"] == "actor-a"
+    )
     for blank in ("   ", "\t", ""):
         a = _gate(["waiting-review", "reviewer:rev-a", "approver:app-a"], assignee=blank)
-        assert a["gate_missing"] == ["coder_unknown"] and a["coder"] == "unknown" and a["assignee"] == "unknown"
+        assert (
+            a["gate_missing"] == ["coder_unknown"] and a["coder"] == "unknown" and a["assignee"] == "unknown"
+        )
         assert a["coder_basis"] == "none"
 
 
@@ -532,8 +574,13 @@ def test_raw_label_whitespace_boundary_is_measured_before_strip(field, where):
 
     def gate(raw):
         labels = ["waiting-review", *(f"{k}:{v}" for k, v in base.items() if k != field), f"{field}:{raw}"]
-        return wf.build({"agents": [], "beads": {"items": [_bead(labels=labels, assignee="")]}}, {"providers": []},
-                        {}, wf.policy_unavailable("x", "y"), NOW)["assignments"]["items"][0]
+        return wf.build(
+            {"agents": [], "beads": {"items": [_bead(labels=labels, assignee="")]}},
+            {"providers": []},
+            {},
+            wf.policy_unavailable("x", "y"),
+            NOW,
+        )["assignments"]["items"][0]
     at = gate(_padded(where, cap - 1))   # 4040 raw chars: read
     assert len(_padded(where, cap - 1)) == cap and "too_many_names" not in at["gate_missing"]
     over = gate(_padded(where, cap))     # 4041 raw chars: flagged
@@ -541,5 +588,7 @@ def test_raw_label_whitespace_boundary_is_measured_before_strip(field, where):
 
 
 def test_blank_oversized_label_still_flags_overflow():
-    a = _gate(["waiting-review", "coder:cod-a", "reviewer:rev-a", "approver:" + " " * (wf.MAX_LABEL_CHARS + 1)])
+    a = _gate(
+        ["waiting-review", "coder:cod-a", "reviewer:rev-a", "approver:" + " " * (wf.MAX_LABEL_CHARS + 1)]
+    )
     assert "too_many_names" in a["gate_missing"]
