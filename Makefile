@@ -1,12 +1,12 @@
 # CritBoard -- developer/operator convenience targets. See INSTALL.md for
 # the full agent-drivable install walkthrough; this Makefile is a thin
-# wrapper around install.sh, uv, and scripts/check-public.sh.
+# wrapper around install.sh, uv, scripts/check-public.sh and scripts/gate.sh.
 
 PORT ?= 9999
 BIND ?= 127.0.0.1
 SHELL := /bin/bash
 
-.PHONY: install run test check doctor update
+.PHONY: install run test lint check gate doctor update
 
 install: ## One-command setup: venv, deps, config/sources.json. See install.sh --help.
 	./install.sh --port $(PORT) --bind $(BIND)
@@ -27,6 +27,19 @@ test: ## Run the backend test suite. Uses server/.venv if it's set up, else fall
 		echo "Makefile: ERROR: Neither venv (server/.venv/bin/pytest missing) nor 'uv' found. Run 'make install' first, or install uv (https://docs.astral.sh/uv/) to run tests." >&2; \
 		exit 1; \
 	fi
+
+lint: ## Run ruff over server/ (rules in server/pyproject.toml). Uses server/.venv if it has ruff, else uv.
+	@if [ -x server/.venv/bin/ruff ]; then \
+		cd server && .venv/bin/ruff check .; \
+	elif command -v uv >/dev/null 2>&1; then \
+		cd server && uv run ruff check .; \
+	else \
+		echo "Makefile: ERROR: Neither server/.venv/bin/ruff nor 'uv' found. Run 'make install' first, or install uv." >&2; \
+		exit 1; \
+	fi
+
+gate: ## Lint, tests and the public-repo guard in one run (scripts/gate.sh). Run before every push.
+	bash scripts/gate.sh
 
 check: ## Run the public-repo sanitization guard (scripts/check-public.sh).
 	bash scripts/check-public.sh

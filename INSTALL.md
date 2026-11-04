@@ -738,6 +738,8 @@ curl -s "http://127.0.0.1:9999/api/context?project=<slug>" | head -c 600
 | `make test` | Backend test suite (uses `server/.venv` if set up -- the common case after `make install` -- else falls back to `uv`). |
 | `make doctor` / `./install.sh --doctor` | Configured vs. detected tool/data paths, one table. Exits non-zero on a `MISMATCH`. See "Tool & data path detection" below. |
 | `./install.sh --probe --json` | Same data as `--doctor`, as one JSON object for a script/agent -- no side effects. See "Probe schema" above. |
+| `make lint` | `ruff check` over `server/` (rules in `server/pyproject.toml`). |
+| `make gate` | `scripts/gate.sh`: lint, tests and `scripts/check-public.sh` in one run. Run it before every push. |
 | `make check` | `scripts/check-public.sh` -- the sanitization regression guard (only meaningful if you're working in a clone of this repo, not a downstream deploy). |
 | `make update` | `git pull --ff-only` + reinstall deps if the lockfile changed. Or use the in-app self-update API -- see `SPEC.md`'s `/api/update/*` contract; it's off by default (`allow_self_update: false`). |
 
