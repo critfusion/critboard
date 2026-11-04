@@ -429,7 +429,8 @@ def test_session_map_prices_each_provider_with_its_own_rates_on_id_collision(tmp
     _write_codex(tmp_path / "codex", text=_codex_records(session=same, n=1))
     # grok model named like a priced codex model: codex rates WOULD price it if groups mixed
     grok_models = {"gpt-test": {"inputTokens": 1000, "outputTokens": 50, "cachedReadTokens": 600}}
-    _write_grok(tmp_path / "grok", doc=_grok_doc(session=same, ended=_now_ts(), models=grok_models), session=same)
+    grok_doc = _grok_doc(session=same, ended=_now_ts(), models=grok_models)
+    _write_grok(tmp_path / "grok", doc=grok_doc, session=same)
     _collector(tmp_store, tmp_path)._ingest()
     since = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = _provider_session_map(tmp_store, PRICING, since, "localhost")[same]
