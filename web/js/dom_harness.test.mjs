@@ -61,7 +61,11 @@ try {
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
-  const layout = await (await fetch(`${base}/api/config/layout`)).json();
+  const layoutRes = await fetch(`${base}/api/config/layout`);
+  if (!layoutRes.ok) {
+    throw new Error(`GET /api/config/layout returned ${layoutRes.status}`);
+  }
+  const layout = await layoutRes.json();
   const expectedIds = layout.panels.filter((p) => !p.hidden).map((p) => p.id);
 
   await page.goto(`${base}/index.html?fixture=1`);

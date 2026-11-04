@@ -27,21 +27,28 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 TEST_FILE = ROOT / "web" / "js" / "dom_harness.test.mjs"
 
 
-def _playwright_resolvable() -> bool:
+def _skip_reason() -> str | None:
+    """None when the harness can run; else the real cause, one per check."""
     if shutil.which("node") is None:
-        return False
-    # fetch() in the .mjs needs Node >= 18; below that, skip instead of failing.
+        return "node is not installed"
+    # fetch() in the .mjs needs Node >= 18.
+    ver = subprocess.run(
+        ["node", "-p", "process.versions.node.split('.')[0]"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    if ver.returncode != 0 or not ver.stdout.strip().isdigit() or int(ver.stdout) < 18:
+        return f"node >= 18 is required (found {ver.stdout.strip() or 'unknown'})"
     probe = subprocess.run(
-        ["node", "-e", "if (+process.versions.node.split('.')[0] < 18) process.exit(1);"
-         "require.resolve('playwright')"],
+        ["node", "-e", "require.resolve('playwright')"],
         capture_output=True, timeout=30, check=False,
     )
-    return probe.returncode == 0
+    if probe.returncode != 0:
+        return "the node 'playwright' package is not installed"
+    return None
 
 
-pytestmark = pytest.mark.skipif(
-    not _playwright_resolvable(), reason="node >= 18 or the node 'playwright' package is not installed",
-)
+_REASON = _skip_reason()
+pytestmark = pytest.mark.skipif(_REASON is not None, reason=_REASON or "")
 
 
 @pytest.fixture
@@ -65,10 +72,10 @@ def live_server(tmp_path):
     env["CRITDASH_DB_PATH"] = str(tmp_path / "test.db")
     # Bind the port here and hand the listening socket to uvicorn (--fd), so
     # no other process can take the port between picking it and serving.
-    sock = socket.socket()
-    proc = None
-    log = (tmp_path / "server.log").open("w")
+    sock = log = proc = None
     try:
+        sock = socket.socket()
+        log = (tmp_path / "server.log").open("w")
         sock.bind(("127.0.0.1", 0))
         sock.listen(128)
         base = f"http://127.0.0.1:{sock.getsockname()[1]}"
@@ -77,7 +84,7 @@ def live_server(tmp_path):
             cwd=ROOT / "server", env=env, stdout=log, stderr=subprocess.STDOUT,
             pass_fds=(sock.fileno(),),
         )
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + 60
         while True:
             try:
                 with urllib.request.urlopen(f"{base}/api/healthz", timeout=2):
@@ -97,8 +104,10 @@ def live_server(tmp_path):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-        sock.close()
-        log.close()
+        if sock is not None:
+            sock.close()
+        if log is not None:
+            log.close()
 
 
 def test_dom_harness_passes(live_server):
