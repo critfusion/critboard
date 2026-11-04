@@ -1849,7 +1849,7 @@ def _grok_ts(value) -> str | None:
 
 
 def _cwd_base(cwd) -> str | None:
-    return os.path.basename(cwd.rstrip("/")) or None if isinstance(cwd, str) else None
+    return (os.path.basename(cwd.rstrip("/")) or None) if isinstance(cwd, str) else None
 
 
 def parse_codex_usage(data: bytes) -> list[dict]:
@@ -1989,6 +1989,11 @@ def collect_provider_usage(codex_dir: str, grok_dir: str, state_file: str | None
             for f_, n in v.items():
                 agg[f_] += n
 
+    # Deliberate second read (same as the "files" save at ~596 and the
+    # "kimi_files" save in collect_kimi): the state file is shared with those
+    # sections and with any overlapping probe process, and this scan can be
+    # long, so merge onto the file as it is NOW rather than the snapshot read
+    # at the top, which would write back a stale copy of the other keys.
     save_state(state_file, {**load_state(state_file), "provider_files": new})
     buckets = []
     for k, v in merged.items():

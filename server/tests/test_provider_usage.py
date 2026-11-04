@@ -653,3 +653,21 @@ def test_remote_codex_cost_priced_centrally_grok_unknown(tmp_store, tmp_path):
     assert _by_provider(rollups, "codex")["cost_usd"] > 0
     assert _by_provider(rollups, "grok")["cost_usd"] is None
     assert _by_provider(rollups, "grok")["tokens"] == 1050
+
+
+def test_probe_state_save_keeps_keys_written_during_the_scan(tmp_path, monkeypatch):
+    codex_root = tmp_path / "codex"
+    _write_codex(codex_root)
+    state = tmp_path / "state.json"
+    real_parse = rp.parse_codex_usage
+
+    def parse_and_race(data):
+        # another probe process saves its own section while this scan is running
+        rp.save_state(str(state), {"files": {"x": 1}, "kimi_files": {"y": 2}})
+        return real_parse(data)
+
+    monkeypatch.setattr(rp, "parse_codex_usage", parse_and_race)
+    rp.collect_provider_usage(str(codex_root), str(tmp_path / "no-grok"), str(state))
+    saved = json.loads(state.read_text())
+    assert saved["files"] == {"x": 1} and saved["kimi_files"] == {"y": 2}
+    assert "provider_files" in saved
