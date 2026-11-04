@@ -96,6 +96,11 @@ def compute_cost_usd(
     )
 
 
+# Providers billed per token, so a priced figure can exist. Everything else
+# (Grok, Kimi, Cursor) has no cost at all, whatever its token count.
+PRICED_PROVIDERS = frozenset({"codex"})
+
+
 def compute_provider_cost_usd(
     pricing: dict, provider: str, model: str,
     input_tokens: int, output_tokens: int, cache_read_tokens: int, cache_write_tokens: int,
@@ -110,7 +115,7 @@ def compute_provider_cost_usd(
     deliberately no default rate, because inventing one would put a made-up
     number in the spend totals. Every other provider (Grok: OAuth login,
     costUsdTicks unit unverified; Kimi, Cursor: subscription) is always None."""
-    if provider != "codex":
+    if provider not in PRICED_PROVIDERS:
         return None
     rate = _longest_prefix_match(pricing.get("codex_models") or {}, model)
     if rate is None:

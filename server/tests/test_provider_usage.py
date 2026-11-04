@@ -685,9 +685,9 @@ def test_codex_timestamp_is_normalised_and_unparseable_rows_are_skipped():
     local = parse_codex_lines(data, new_codex_state())
     assert [e["ts"] for e in local] == ["2026-11-04T10:15:30.000Z", "2026-11-04T10:15:30.000Z"]
     assert rp.parse_codex_usage(data) == local
-    buckets = rp._bucket_provider_events(rp.parse_codex_usage(data))
-    assert list(buckets) == ["codex" + rp._SEP + "2026-11-04T10" + rp._SEP + "unknown"]
-    assert buckets[next(iter(buckets))]["messages"] == 2
+    rows = rp._provider_event_rows(rp.parse_codex_usage(data))
+    assert len(rows) == 2
+    assert {r[1] for r in rows.values()} == {"2026-11-04T10"}
 
 
 def test_cwd_base_root_and_trailing_slash_match_local_and_remote():
@@ -704,3 +704,84 @@ def test_probe_buckets_do_not_alias_across_keys(tmp_path):
     for b in out["provider_usage_buckets"]:
         by_model[b["model"]] = by_model.get(b["model"], 0) + b["messages"]
     assert by_model == {"gpt-a": 1, "gpt-b": 3}
+
+
+def _two_response_rollup(session=SESSION, turn="turn-1"):
+    return _codex_records(session=session, turn=turn, n=2)
+
+
+def _local_vs_probe(tmp_path, codex_root):
+    local = Store(tmp_path / "local.db")
+    collector = ProviderUsageCollector(
+        store=local, host="localhost", codex_dir=str(codex_root), grok_dir=str(tmp_path / "g")
+    )
+    collector._ingest()
+    [lrow] = local.provider_usage_grouped(("provider",))
+    state = str(tmp_path / "state.json")
+    cold = rp.collect_provider_usage(str(codex_root), str(tmp_path / "g"), state)["provider_usage_buckets"]
+    cached = rp.collect_provider_usage(str(codex_root), str(tmp_path / "g"), state)["provider_usage_buckets"]
+    local.close()
+    return lrow, cold, cached
+
+
+def _sum(buckets, field):
+    return sum(b[field] for b in buckets)
+
+
+def test_probe_dedupes_a_response_present_in_two_rollout_files(tmp_path):
+    codex_root = tmp_path / "codex"
+    _write_codex(codex_root, name="rollout-a-" + SESSION + ".jsonl", text=_two_response_rollup())
+    _write_codex(codex_root, name="rollout-b-" + SESSION + ".jsonl", text=_two_response_rollup())
+    lrow, cold, cached = _local_vs_probe(tmp_path, codex_root)
+    assert lrow["messages"] == 2
+    for buckets in (cold, cached):  # cold read and state-file cache hit
+        assert _sum(buckets, "messages") == 2
+        for field in ("input", "output", "cache_read", "cache_write"):
+            assert _sum(buckets, field) == lrow[field], field
+
+
+def test_probe_counts_distinct_responses_across_files_and_repeats_within_one(tmp_path):
+    codex_root = tmp_path / "codex"
+    # distinct responses (different turn ids) in two files: all four count
+    _write_codex(codex_root, name="rollout-a-" + SESSION + ".jsonl", text=_two_response_rollup(turn="t1"))
+    _write_codex(codex_root, name="rollout-b-" + SESSION + ".jsonl", text=_two_response_rollup(turn="t2"))
+    # one file repeating a line it already holds: counted once
+    first = _codex_records(session="other-session", turn="t3", n=1)
+    _write_codex(codex_root, name="rollout-c-other-session.jsonl", text=first + first)
+    lrow, cold, cached = _local_vs_probe(tmp_path, codex_root)
+    assert lrow["messages"] == 5
+    for buckets in (cold, cached):
+        assert _sum(buckets, "messages") == 5
+        assert _sum(buckets, "input") == lrow["input"]
+
+
+def test_probe_cached_state_keeps_one_short_row_per_event(tmp_path):
+    codex_root = tmp_path / "codex"
+    _write_codex(codex_root, text=_two_response_rollup())
+    state = tmp_path / "state.json"
+    rp.collect_provider_usage(str(codex_root), str(tmp_path / "g"), str(state))
+    [entry] = json.loads(state.read_text())["provider_files"].values()
+    assert len(entry["events"]) == 2
+    assert all(len(ident) == 16 for ident in entry["events"])
+
+
+def _grok_event(key, tokens):
+    return {"provider": "grok", "host": "localhost", "session_id": "g1", "event_key": key, "ts": _now_ts(),
+            "model": "grok-test", "project": None, "input": tokens, "output": 0, "cache_read": 0,
+            "cache_write": 0}
+
+
+def test_grok_cost_is_none_with_no_rows_zero_token_rows_and_positive_rows(tmp_store):
+    def grok_cost():
+        rollups = UsageCollector(store=tmp_store, pricing=PRICING)._compute_rollups()
+        return [r["cost_usd"] for r in rollups["by_provider"] if r["provider"] == "grok"]
+
+    assert grok_cost() == [None] * 4  # no rows, every window
+    tmp_store.insert_provider_usage_events([_grok_event("1:grok-test", 0)])
+    assert grok_cost() == [None] * 4  # zero-token row
+    tmp_store.insert_provider_usage_events([_grok_event("2:grok-test", 500)])
+    assert grok_cost() == [None] * 4  # positive tokens
+    # the documented contract for a PRICED provider with no usage is 0.0, not unknown
+    codex = [r["cost_usd"] for r in UsageCollector(store=tmp_store, pricing=PRICING)
+             ._compute_rollups()["by_provider"] if r["provider"] == "codex"]
+    assert codex == [0.0] * 4

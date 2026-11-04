@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -1924,49 +1925,57 @@ def parse_grok_usage(doc, dirname: str | None = None) -> list[dict]:
     return out
 
 
-def _bucket_provider_events(events: list[dict]) -> dict:
-    """{"<provider>\x1f<hour>\x1f<model>": {input, output, cache_read, cache_write, messages}}"""
-    out: dict[str, dict] = {}
-    seen: set[tuple] = set()
+def _provider_event_rows(events: list[dict]) -> dict:
+    """{identity-hash: [provider, hour, model, input, output, cache_read,
+    cache_write]} for one file's events, first occurrence of an identity
+    winning. The identity is the server's unique key (provider, session_id,
+    event_key), hashed to 16 hex chars so cached state stays small."""
+    out: dict[str, list] = {}
     for e in events:
-        ident = (e["provider"], e["session_id"], e["event_key"])
-        if ident in seen:
-            continue
-        seen.add(ident)
-        b = out.setdefault(
-            _SEP.join((e["provider"], e["ts"][:13], e["model"])),
-            {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "messages": 0},
-        )
-        for k in ("input", "output", "cache_read", "cache_write"):
-            b[k] += e[k]
-        b["messages"] += 1
+        ident = hashlib.sha1(
+            _SEP.join((e["provider"], e["session_id"], e["event_key"])).encode()
+        ).hexdigest()[:16]
+        out.setdefault(ident, [
+            e["provider"], e["ts"][:13], e["model"],
+            e["input"], e["output"], e["cache_read"], e["cache_write"],
+        ])
     return out
 
 
 def collect_provider_usage(codex_dir: str, grok_dir: str, state_file: str | None = None) -> dict:
     """Returns {"provider_usage_buckets": [...]}. A changed file is re-read
     whole (cached by inode/size/mtime in the shared state file under
-    "provider_files"); an unchanged one reuses its cached buckets."""
+    "provider_files"); an unchanged one reuses its cached event rows.
+
+    The same response can appear in more than one rollout file (the server
+    counts it once: unique on provider, session, event key), so buckets are
+    summed only AFTER de-duplicating event identities across all files, files
+    taken in path order. That is why each cached entry keeps one short row
+    per event (a 16-hex identity plus the numbers needed to bucket it) and not
+    just aggregates. State size is bounded: one ~100-byte row per event of the
+    files that currently exist; a file that disappears drops out of the saved
+    state on the next probe."""
     patterns = [
         ("codex", os.path.join(codex_dir, "sessions", "*", "*", "*", "rollout-*.jsonl")),
         ("grok", os.path.join(grok_dir, "sessions", "*", "*", "usage.json")),
     ]
-    files = [(prov, path) for prov, pat in patterns for path in glob.glob(pat)]
+    files = sorted((path, prov) for prov, pat in patterns for path in glob.glob(pat))
     if not files:
         return {"provider_usage_buckets": []}
 
     state_file = state_file or default_state_path()
     old = load_state(state_file).get("provider_files", {})
     new: dict[str, dict] = {}
+    seen: set[str] = set()
     merged: dict[str, dict] = {}
-    for prov, path in files:
+    for path, prov in files:
         try:
             st = os.stat(path)
         except OSError:
             continue
         cached = old.get(path)
-        if cached and cached.get("inode") == st.st_ino and cached.get("size") == st.st_size \
-                and cached.get("mtime") == st.st_mtime:
+        if cached and "events" in cached and cached.get("inode") == st.st_ino \
+                and cached.get("size") == st.st_size and cached.get("mtime") == st.st_mtime:
             entry = cached
         else:
             try:
@@ -1981,14 +1990,21 @@ def collect_provider_usage(codex_dir: str, grok_dir: str, state_file: str | None
                 continue
             entry = {
                 "inode": st.st_ino, "size": st.st_size, "mtime": st.st_mtime,
-                "buckets": _bucket_provider_events(events),
+                "events": _provider_event_rows(events),
             }
         new[path] = entry
-        for k, v in entry["buckets"].items():
-            zero = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "messages": 0}
-            agg = merged.setdefault(k, zero)
-            for f_, n in v.items():
-                agg[f_] += n
+        for ident, (provider, hour, model, inp, out, cread, cwrite) in entry["events"].items():
+            if ident in seen:
+                continue
+            seen.add(ident)
+            agg = merged.setdefault(_SEP.join((provider, hour, model)), {
+                "input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "messages": 0,
+            })
+            agg["input"] += inp
+            agg["output"] += out
+            agg["cache_read"] += cread
+            agg["cache_write"] += cwrite
+            agg["messages"] += 1
 
     # Deliberate second read (same as the "files" save at ~596 and the
     # "kimi_files" save in collect_kimi): the state file is shared with those
@@ -2001,7 +2017,6 @@ def collect_provider_usage(codex_dir: str, grok_dir: str, state_file: str | None
         provider, hour, model = k.split(_SEP)
         buckets.append({"provider": provider, "hour": hour, "model": model, **v})
     return {"provider_usage_buckets": buckets}
-
 
 # -- worktrees (mirrors collectors/worktrees.py) -------------------------------
 

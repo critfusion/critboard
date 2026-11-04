@@ -32,7 +32,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 
-from ..pricing import compute_cost_usd, compute_provider_cost_usd
+from ..pricing import PRICED_PROVIDERS, compute_cost_usd, compute_provider_cost_usd
 from ..store import zero_fill_hourly
 from ..tzutil import ctx_tz_name, local_day_start_utc_iso
 from . import BaseCollector
@@ -295,7 +295,12 @@ def _row_tokens(r) -> int:
 def provider_cost_usd(pricing: dict, provider: str, rows) -> float | None:
     """Total dollars for rows shaped like Store.provider_usage_grouped (each
     carrying provider-model token sums), or None if ANY row with tokens has
-    no known price -- a partial sum would read as a real, smaller number."""
+    no known price -- a partial sum would read as a real, smaller number.
+    A provider with no per-token billing (Grok) is None whatever its rows
+    hold, including none. A PRICED provider (Codex) with no usage spent
+    nothing: 0.0 is its documented contract, not unknown."""
+    if provider not in PRICED_PROVIDERS:
+        return None
     total = 0.0
     for r in rows:
         tokens = _row_tokens(r)

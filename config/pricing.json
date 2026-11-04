@@ -20,7 +20,7 @@
     "claude-opus-4-8": {"input": 10.0, "output": 50.0, "cache_write_5m": 12.50, "cache_write_1h": 20.0, "cache_read": 1.00}
   },
   "codex_models": {
-    "_comment": "Codex runs on an API key: model-id prefix -> {input, output, cache_read, cache_write} in USD per 1,000,000 tokens. cache_write is the 30-minute write rate (1.25x input); the pricing page does not say which duration automatic caching uses, so 12-hour writes (2x input) would be under-costed. Standard tier, short context (<=272K input tokens) only; long-context and non-standard tiers are NOT modelled. gpt-5.6-sol is promotional pricing, available until November 30, 2026: re-verify it after that date. A model with no entry has unknown cost (null), never $0.",
+    "_comment": "Codex runs on an API key: model-id prefix -> {input, output, cache_read, cache_write} in USD per 1,000,000 tokens. cache_write is the 30-minute write rate (1.25x input), which OpenAI's prompt-caching guide (https://developers.openai.com/api/docs/guides/prompt-caching) names as the default; 12-hour writes cost 2.5x input and are NOT modelled, so they would be under-costed. Standard tier, short context (<=272K input tokens) only; long-context and non-standard tiers are NOT modelled. gpt-5.6-sol is promotional pricing, available until November 30, 2026: re-verify it after that date. A model with no entry has unknown cost (null), never $0.",
     "_verified": "2026-11-04 from https://developers.openai.com/api/docs/pricing",
     "gpt-6-astra": {"input": 10.00, "output": 50.00, "cache_read": 1.00, "cache_write": 12.50},
     "gpt-6.1-sol": {"input": 2.00, "output": 10.00, "cache_read": 0.10, "cache_write": 2.50},
