@@ -40,6 +40,7 @@ from .collectors.dispatch import DispatchCollector
 from .collectors.dispatch import availability_issue as dispatch_availability_issue
 from .collectors.kimi import KimiCollector
 from .collectors.productivity import ProductivityCollector
+from .collectors.provider_usage import ProviderUsageCollector
 from .collectors.remote import RemoteCollector
 from .collectors.remote import availability_issue as remote_availability_issue
 from .collectors.system import SystemCollector
@@ -344,6 +345,14 @@ def build_app() -> FastAPI:
     )
     kimi_collector.interval_s = config.interval("kimi")
     scheduler.register(kimi_collector)
+
+    provider_usage_collector = ProviderUsageCollector(
+        ctx=app_ctx, store=store, host=local_host,
+        codex_dir=config.sources.get("codex_dir", "~/.codex"),
+        grok_dir=config.sources.get("grok_dir", "~/.grok"),
+    )
+    provider_usage_collector.interval_s = config.interval("provider_usage")
+    scheduler.register(provider_usage_collector)
 
     overlord_dir = config.expand("overlord_dir")
 

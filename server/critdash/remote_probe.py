@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -65,6 +66,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from urllib.parse import unquote
 
 # -- shared helpers -----------------------------------------------------------
 
@@ -1813,6 +1815,209 @@ def collect_kimi(
     }
 
 
+# -- Codex / Grok token usage (mirrors collectors/provider_usage.py) -----------
+# Parsers are copies of collectors/provider_usage.py's (this file cannot import
+# critdash); tests/test_provider_usage.py asserts both give the same events for
+# the same fixtures. Result: hour-granularity buckets, tokens only -- cost is
+# applied centrally from pricing.json (Codex) or stays unknown (Grok). A host
+# with neither directory returns [] silently.
+
+_FRACTION_RE = re.compile(r"(\.\d{1,6})\d*")
+
+
+def _tok(v) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+
+
+def _split_tokens(input_total, cached, cache_write, output) -> dict:
+    cached, cache_write = _tok(cached), _tok(cache_write)
+    return {
+        "input": max(0, _tok(input_total) - cached - cache_write),
+        "output": _tok(output), "cache_read": cached, "cache_write": cache_write,
+    }
+
+
+def _grok_ts(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(_FRACTION_RE.sub(r"\1", value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _cwd_base(cwd) -> str | None:
+    return (os.path.basename(cwd.rstrip("/")) or None) if isinstance(cwd, str) else None  # "/" -> None
+
+
+def parse_codex_usage(data: bytes) -> list[dict]:
+    state = {"session_id": None, "project": None, "model": None, "turn_models": {}}
+    out: list[dict] = []
+    for raw in data.split(b"\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            doc = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(doc, dict) or not isinstance(doc.get("payload"), dict):
+            continue
+        payload = doc["payload"]
+        kind = doc.get("type")
+        if kind == "session_meta":
+            state["session_id"] = payload.get("id") or state["session_id"]
+            state["project"] = _cwd_base(payload.get("cwd")) or state["project"]
+        elif kind == "turn_context":
+            model = payload.get("model")
+            if model:
+                state["model"] = model
+                if payload.get("turn_id"):
+                    state["turn_models"][payload["turn_id"]] = model
+            state["project"] = _cwd_base(payload.get("cwd")) or state["project"]
+        elif kind == "token_usage_record":
+            usage = payload.get("usage")
+            response_id = payload.get("response_id")
+            # real files carry "...SS.mmmZ", but do not rely on it: the hour bucket slices this
+            ts = _grok_ts(doc.get("timestamp"))
+            session_id = payload.get("session_id") or state["session_id"]
+            if not isinstance(usage, dict) or not response_id or not ts or not session_id:
+                continue
+            out.append({
+                "provider": "codex", "session_id": session_id, "event_key": response_id, "ts": ts,
+                "model": state["turn_models"].get(payload.get("turn_id")) or state["model"] or "unknown",
+                "project": state["project"],
+                **_split_tokens(
+                    usage.get("input_tokens"), usage.get("cached_input_tokens"),
+                    usage.get("cache_write_input_tokens"), usage.get("output_tokens"),
+                ),
+            })
+    return out
+
+
+def parse_grok_usage(doc, dirname: str | None = None) -> list[dict]:
+    if not isinstance(doc, dict) or not doc.get("sessionId"):
+        return []
+    project = _cwd_base(unquote(dirname)) if dirname else None
+    out: list[dict] = []
+    for turn in doc.get("turns") or []:
+        if not isinstance(turn, dict):
+            continue
+        ts = _grok_ts(turn.get("endedAt"))
+        models = turn.get("modelUsage")
+        if ts is None or not isinstance(models, dict):
+            continue
+        for model, u in models.items():
+            if not isinstance(u, dict):
+                continue
+            out.append({
+                "provider": "grok", "session_id": doc["sessionId"],
+                "event_key": f"{turn.get('turnNumber')}:{model}", "ts": ts,
+                "model": model, "project": project,
+                **_split_tokens(
+                    u.get("inputTokens"), u.get("cachedReadTokens"),
+                    u.get("cacheCreationTokens"), u.get("outputTokens"),
+                ),
+            })
+    return out
+
+
+def _provider_event_rows(events: list[dict]) -> dict:
+    """{identity-hash: [provider, hour, model, input, output, cache_read,
+    cache_write]} for one file's events, first occurrence of an identity
+    winning. The identity is the server's unique key (provider, session_id,
+    event_key), hashed to 16 hex chars so cached state stays small."""
+    out: dict[str, list] = {}
+    for e in events:
+        ident = hashlib.sha1(
+            _SEP.join((e["provider"], e["session_id"], e["event_key"])).encode()
+        ).hexdigest()[:16]
+        out.setdefault(ident, [
+            e["provider"], e["ts"][:13], e["model"],
+            e["input"], e["output"], e["cache_read"], e["cache_write"],
+        ])
+    return out
+
+
+def collect_provider_usage(codex_dir: str, grok_dir: str, state_file: str | None = None) -> dict:
+    """Returns {"provider_usage_buckets": [...]}. A changed file is re-read
+    whole (cached by inode/size/mtime in the shared state file under
+    "provider_files"); an unchanged one reuses its cached event rows.
+
+    The same response can appear in more than one rollout file (the server
+    counts it once: unique on provider, session, event key), so buckets are
+    summed only AFTER de-duplicating event identities across all files, files
+    taken in path order. That is why each cached entry keeps one short row
+    per event (a 16-hex identity plus the numbers needed to bucket it) and not
+    just aggregates. State size is bounded: one ~100-byte row per event of the
+    files that currently exist; a file that disappears drops out of the saved
+    state on the next probe."""
+    patterns = [
+        ("codex", os.path.join(codex_dir, "sessions", "*", "*", "*", "rollout-*.jsonl")),
+        ("grok", os.path.join(grok_dir, "sessions", "*", "*", "usage.json")),
+    ]
+    files = sorted((path, prov) for prov, pat in patterns for path in glob.glob(pat))
+    if not files:
+        return {"provider_usage_buckets": []}
+
+    state_file = state_file or default_state_path()
+    old = load_state(state_file).get("provider_files", {})
+    new: dict[str, dict] = {}
+    seen: set[str] = set()
+    merged: dict[str, dict] = {}
+    for path, prov in files:
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        cached = old.get(path)
+        if cached and "events" in cached and cached.get("inode") == st.st_ino \
+                and cached.get("size") == st.st_size and cached.get("mtime") == st.st_mtime:
+            entry = cached
+        else:
+            try:
+                if prov == "codex":
+                    with open(path, "rb") as f:
+                        events = parse_codex_usage(f.read())
+                else:
+                    with open(path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    events = parse_grok_usage(doc, os.path.basename(os.path.dirname(os.path.dirname(path))))
+            except (OSError, json.JSONDecodeError):
+                continue
+            entry = {
+                "inode": st.st_ino, "size": st.st_size, "mtime": st.st_mtime,
+                "events": _provider_event_rows(events),
+            }
+        new[path] = entry
+        for ident, (provider, hour, model, inp, out, cread, cwrite) in entry["events"].items():
+            if ident in seen:
+                continue
+            seen.add(ident)
+            agg = merged.setdefault(_SEP.join((provider, hour, model)), {
+                "input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "messages": 0,
+            })
+            agg["input"] += inp
+            agg["output"] += out
+            agg["cache_read"] += cread
+            agg["cache_write"] += cwrite
+            agg["messages"] += 1
+
+    # Deliberate second read (same as the "files" save at ~596 and the
+    # "kimi_files" save in collect_kimi): the state file is shared with those
+    # sections and with any overlapping probe process, and this scan can be
+    # long, so merge onto the file as it is NOW rather than the snapshot read
+    # at the top, which would write back a stale copy of the other keys.
+    save_state(state_file, {**load_state(state_file), "provider_files": new})
+    buckets = []
+    for k, v in merged.items():
+        provider, hour, model = k.split(_SEP)
+        buckets.append({"provider": provider, "hour": hour, "model": model, **v})
+    return {"provider_usage_buckets": buckets}
+
 # -- worktrees (mirrors collectors/worktrees.py) -------------------------------
 
 DEFAULT_PRUNE_DIRS = frozenset({
@@ -2445,6 +2650,7 @@ _EMPTY_ANALYTICS_BUCKETS = {
     "trouble_file_buckets": [], "api_error_buckets": [], "session_buckets": [],
 }
 _EMPTY_KIMI_BUCKETS = {"kimi_usage_buckets": [], "kimi_error_buckets": []}
+_EMPTY_PROVIDER_BUCKETS = {"provider_usage_buckets": []}
 
 
 def build_result(
@@ -2460,6 +2666,7 @@ def build_result(
     analytics_buckets = dict(_EMPTY_ANALYTICS_BUCKETS)
     productivity_buckets: list[dict] = []
     kimi_buckets = dict(_EMPTY_KIMI_BUCKETS)
+    provider_buckets = dict(_EMPTY_PROVIDER_BUCKETS)
 
     try:
         worktrees = collect_worktrees(repo_roots, worker_pool, git_timeout_s, max_depth)
@@ -2514,6 +2721,13 @@ def build_result(
     except Exception:  # noqa: BLE001
         productivity_buckets = []
 
+    try:
+        provider_buckets = collect_provider_usage(
+            os.path.expanduser(codex_dir), os.path.expanduser(grok_dir), state_file,
+        )
+    except Exception:  # noqa: BLE001
+        provider_buckets = dict(_EMPTY_PROVIDER_BUCKETS)
+
     return {
         "host": host_name,
         "generated_at": now_iso(),
@@ -2523,6 +2737,7 @@ def build_result(
         "productivity_buckets": productivity_buckets,
         **analytics_buckets,
         **kimi_buckets,
+        **provider_buckets,
     }
 
 
@@ -2565,6 +2780,7 @@ def main(argv: list[str] | None = None) -> int:
             "agents": [], "worktrees": [], "system": {}, "productivity_buckets": [],
             **_EMPTY_ANALYTICS_BUCKETS,
             **_EMPTY_KIMI_BUCKETS,
+            **_EMPTY_PROVIDER_BUCKETS,
             "error": f"{type(exc).__name__}: {exc}",
         }
 

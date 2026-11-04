@@ -13,11 +13,13 @@ mode == "ssh" (never the local one -- see collectors/remote.py), so the two
 sets never overlap by host and nothing is summed twice.
 
 Kimi cost is always None (null), never 0.0 -- Kimi bills by subscription
-quota, not per token (collectors/kimi.py). A `totals.cost_usd` or a
+quota, not per token (collectors/kimi.py). Grok is the same (tokens only), and
+Codex is None for any model with no price in pricing.json. A series that mixes
+known and unknown cost is None, never the partial sum. A `totals.cost_usd` or a
 group_by=host series' cost_usd is therefore always a CLAUDE-ONLY figure: real
 (possibly 0.0) wherever no Claude spend happened, never null, because "how
 much did Claude cost here" is always a well-defined number -- it is only
-Kimi's OWN per-message cost that is undefined.
+the other providers' OWN cost that can be undefined.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
-from .pricing import compute_cost_usd
+from .pricing import compute_cost_usd, compute_provider_cost_usd
 from .store import Store, dense_bucket_keys
 from .tzutil import DEFAULT_TZ, local_day_start
 
@@ -167,6 +169,29 @@ def _accumulate(
             c["tokens"] += r["tokens"]
             c["messages"] += r["messages"]
 
+    # Codex/Grok (provider_usage_events local, remote_provider_usage_buckets
+    # remote, both token-only; cost derived here from pricing, None if unknown)
+    for remote in (False, True):
+        for r in store.provider_usage_grouped_timeline(since_iso, bucket, tz_name, remote=remote):
+            if r["bucket"] not in bucket_set:
+                continue
+            c = cell(r["provider"], r["host"], r["model"] or "unknown", r["bucket"])
+            c["input"] += r["input"]
+            c["output"] += r["output"]
+            c["cache_read"] += r["cache_read"]
+            c["cache_write"] += r["cache_write"]
+            c["messages"] += r["messages"]
+            c["tokens"] += r["input"] + r["output"] + r["cache_read"] + r["cache_write"]
+            cost = compute_provider_cost_usd(
+                pricing, r["provider"], r["model"],
+                r["input"], r["output"], r["cache_read"], r["cache_write"],
+            )
+            if cost is None or c.get("_unknown"):
+                c["_unknown"] = True
+                c["cost"] = None
+            else:
+                c["cost"] = (c["cost"] or 0.0) + cost
+
     return acc
 
 
@@ -208,7 +233,9 @@ def _group_series(acc, group_by: str) -> dict[str, dict]:
                 c["cache_write"] += v["cache_write"]
                 c["tokens"] += v["tokens"]
                 c["messages"] += v["messages"]
-                if v["cost"] is not None:
+                if v["cost"] is None and v["tokens"]:
+                    c["_unknown"] = True
+                if v["cost"] is not None and not c.get("_unknown"):
                     c["cost"] = (c["cost"] or 0.0) + v["cost"]
     return series_map
 
@@ -217,7 +244,7 @@ def _finalize(series_map: dict[str, dict], bucket_keys: list[str]) -> list[dict]
     out = []
     for skey, s in series_map.items():
         provider = s["provider"]
-        default_cost = None if provider == "kimi" else 0.0
+        default_cost = None if provider not in (None, "claude") else 0.0
         cells = s["cells"]
         tokens, cost_usd, inp, outp, cread, cwrite = [], [], [], [], [], []
         for bkey in bucket_keys:
@@ -231,7 +258,8 @@ def _finalize(series_map: dict[str, dict], bucket_keys: list[str]) -> list[dict]
                 cwrite.append(0)
             else:
                 tokens.append(c["tokens"])
-                cost_usd.append(round(c["cost"], 6) if c["cost"] is not None else None)
+                known = c["cost"] is not None and not c.get("_unknown")
+                cost_usd.append(round(c["cost"], 6) if known else None)
                 inp.append(c["input"])
                 outp.append(c["output"])
                 cread.append(c["cache_read"])
@@ -253,8 +281,11 @@ def _fold_other(folded: list[dict], bucket_keys: list[str]) -> dict:
     cread = [0] * n
     cwrite = [0] * n
     cost_usd: list[float | None] = [None] * n
+    unknown = [False] * n
     for e in folded:
         for i in range(n):
+            if e["cost_usd"][i] is None and e["tokens"][i]:
+                unknown[i] = True
             tokens[i] += e["tokens"][i]
             inp[i] += e["input"][i]
             outp[i] += e["output"][i]
@@ -264,7 +295,9 @@ def _fold_other(folded: list[dict], bucket_keys: list[str]) -> dict:
                 cost_usd[i] = (cost_usd[i] or 0.0) + e["cost_usd"][i]
     return {
         "key": "other", "provider": None, "is_other": True, "folded_series_count": len(folded),
-        "tokens": tokens, "cost_usd": [round(v, 6) if v is not None else None for v in cost_usd],
+        "tokens": tokens, "cost_usd": [
+            round(v, 6) if v is not None and not unknown[i] else None for i, v in enumerate(cost_usd)
+        ],
         "input": inp, "output": outp, "cache_read": cread, "cache_write": cwrite,
     }
 
@@ -306,6 +339,12 @@ def _first_seen_map(store: Store) -> dict[tuple[str, str, str], str]:
         ts = r["first_ts"]
         ts = ts + "T00:00:00Z" if len(ts) == 10 else ts
         note(("kimi", r["host"], r["model"] or "unknown"), ts)
+    for r in store.provider_usage_first_seen():
+        note((r["provider"], r["host"], r["model"] or "unknown"), r["first_ts"])
+    for r in store.remote_provider_usage_first_seen():
+        ts = r["first_ts"]
+        ts = ts + ":00:00Z" if len(ts) == 13 else ts
+        note((r["provider"], r["host"], r["model"] or "unknown"), ts)
     return fs
 
 
@@ -382,11 +421,11 @@ def build_grouped_history(
     total_tokens = 0
     total_cost = 0.0
     total_messages = 0
-    for by_bucket in acc.values():
+    for (provider, _host, _model), by_bucket in acc.items():
         for v in by_bucket.values():
             total_tokens += v["tokens"]
             total_messages += v["messages"]
-            if v["cost"] is not None:
+            if provider == "claude" and v["cost"] is not None:
                 total_cost += v["cost"]
 
     series_map = _group_series(acc, group_by)
