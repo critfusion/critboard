@@ -501,7 +501,7 @@ def build_app() -> FastAPI:
                         await asyncio.to_thread(update_mod.apply_update, config, config.dashboard_root)
                     except update_mod.UpdateError as exc:
                         logger.warning("periodic auto-apply refused: %s: %s", exc.reason, exc.message)
-            except Exception:  # noqa: BLE001 - one bad tick must not kill the loop
+            except Exception:  # one bad tick must not kill the loop
                 logger.exception("periodic update check failed")
             interval = float(
                 config.sources.get("update_check_interval_s", update_mod.DEFAULT_UPDATE_CHECK_INTERVAL_S)
@@ -752,7 +752,7 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"bead not found: {bead_id}") from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - never 500 a traceback for a subprocess hiccup
+        except Exception as exc:  # never 500 a traceback for a subprocess hiccup
             raise HTTPException(status_code=502, detail=f"bd show failed: {exc}") from exc
 
         _bead_detail_cache[bead_id] = (now + _BEAD_DETAIL_TTL_S, detail, 200)
@@ -903,7 +903,7 @@ def build_app() -> FastAPI:
         # away, instead of waiting for the beads collector's own 30s tick.
         try:
             await scheduler.run_once("beads")
-        except Exception:  # noqa: BLE001 - the write already succeeded; a
+        except Exception:  # the write already succeeded; a
             # failed/inactive beads collector must not turn a successful
             # bd write into a 500. The card still updates on the next tick.
             logger.warning("bead reply: post-write beads re-collect failed", exc_info=True)

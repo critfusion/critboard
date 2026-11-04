@@ -447,7 +447,7 @@ class BookStackAdapter:
                     parse_record, page, base_url=base, book_slug=slug, now=now, stale_days=stale_days)
                 rec["id"] = page_id  # the listing's int, not whatever the page body claims
                 return rec
-            except Exception:  # noqa: BLE001 - one odd page must not take the view down
+            except Exception:  # one odd page must not take the view down
                 logger.warning("infrastructure page %s could not be parsed", page_id)
                 return degraded_record(page_id, page.get("name"))
 

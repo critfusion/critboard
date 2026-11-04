@@ -1,5 +1,7 @@
 import json
+import threading
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -685,9 +687,6 @@ def test_kimi_data_present_does_not_change_claude_totals(tmp_store):
 # -- subagent transcripts, local-midnight "today" (q733.12) -------------------
 # Synthetic fixtures; every "now" is injected, nothing reads the wall clock.
 
-import threading  # noqa: E402
-from types import SimpleNamespace  # noqa: E402
-
 PARENT = "11111111-aaaa-bbbb-cccc-000000000001"
 PROJ_DIR = "-home-user-work-demo"
 
@@ -725,7 +724,7 @@ def _usage_collector(tmp_store, glob_, ctx=None, now=None):
 
 
 def _rows(store, where="1=1"):
-    return store._conn.execute(f"SELECT * FROM usage_events WHERE {where} ORDER BY message_id").fetchall()  # noqa: S608
+    return store._conn.execute(f"SELECT * FROM usage_events WHERE {where} ORDER BY message_id").fetchall()
 
 
 @pytest.mark.asyncio

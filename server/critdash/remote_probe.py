@@ -2463,7 +2463,7 @@ def build_result(
 
     try:
         worktrees = collect_worktrees(repo_roots, worker_pool, git_timeout_s, max_depth)
-    except Exception:  # noqa: BLE001 -- one broken section must not blank the others
+    except Exception:  # one broken section must not blank the others
         worktrees = []
 
     kimi_agents: list[dict] = []
@@ -2471,7 +2471,7 @@ def build_result(
         kimi_result = collect_kimi(os.path.expanduser(kimi_dir), worktrees, session_window_s, state_file)
         kimi_agents = kimi_result.pop("agents")
         kimi_buckets = kimi_result
-    except Exception:  # noqa: BLE001
+    except Exception:
         kimi_agents = []
         kimi_buckets = dict(_EMPTY_KIMI_BUCKETS)
 
@@ -2493,7 +2493,7 @@ def build_result(
             os.path.expanduser(codex_dir), os.path.expanduser(grok_dir), os.path.expanduser(cursor_dir),
         )
         join_agents_to_worktrees(worktrees, agents)
-    except Exception:  # noqa: BLE001
+    except Exception:
         agents = []
 
     for wt in worktrees:
@@ -2501,17 +2501,17 @@ def build_result(
 
     try:
         system = collect_system(disk_mounts)
-    except Exception:  # noqa: BLE001
+    except Exception:
         system = {}
 
     try:
         analytics_buckets = collect_usage_and_analytics(projects_glob, state_file)
-    except Exception:  # noqa: BLE001
+    except Exception:
         analytics_buckets = dict(_EMPTY_ANALYTICS_BUCKETS)
 
     try:
         productivity_buckets = collect_productivity(worktrees, worker_pool, git_timeout_s, productivity_since)
-    except Exception:  # noqa: BLE001
+    except Exception:
         productivity_buckets = []
 
     return {
@@ -2559,7 +2559,7 @@ def main(argv: list[str] | None = None) -> int:
             args.state_file, args.productivity_since, args.session_window, args.kimi_dir,
             args.codex_dir, args.grok_dir, args.cursor_dir,
         )
-    except Exception as exc:  # noqa: BLE001 -- always print valid JSON, never a traceback
+    except Exception as exc:  # always print valid JSON, never a traceback
         result = {
             "host": args.host, "generated_at": now_iso(),
             "agents": [], "worktrees": [], "system": {}, "productivity_buckets": [],

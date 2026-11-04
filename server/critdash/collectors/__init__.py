@@ -173,7 +173,7 @@ class Scheduler:
             # fresh install, not a problem worth a warning-level log line.
             log = logger.info if exc.optional else logger.warning
             log("collector %s: %s", collector.name, st.health.error)
-        except Exception as exc:  # noqa: BLE001 - collectors must never kill the scheduler
+        except Exception as exc:  # collectors must never kill the scheduler
             duration_ms = (time.monotonic() - start) * 1000.0
             st.health.ok = False
             st.health.error = f"{type(exc).__name__}: {exc}"
