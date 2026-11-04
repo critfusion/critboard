@@ -160,6 +160,9 @@ def parse_grok_usage(doc, dirname: str | None = None) -> list[dict]:
                 {
                     "provider": "grok",
                     "session_id": doc["sessionId"],
+                    # Contract: a finished turn is append-only -- usage.json only
+                    # ever gains turns, never rewrites one. Rows are inserted
+                    # OR IGNOREd on this key, so an edited turn would NOT update.
                     "event_key": f"{turn.get('turnNumber')}:{model}",
                     "ts": ts,
                     "model": model,

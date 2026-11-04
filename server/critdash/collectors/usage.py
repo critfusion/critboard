@@ -312,22 +312,36 @@ def provider_cost_usd(pricing: dict, provider: str, rows) -> float | None:
 
 def _provider_session_map(store, pricing: dict, since_iso: str, host: str) -> dict[str, dict]:
     """ctx.usage_by_session entries for Codex/Grok sessions (today). Same keys
-    the Claude entries carry; cost_today_usd is None where unknown."""
-    by_session: dict[str, list] = {}
+    the Claude entries carry; cost_today_usd is None where unknown. Rows are
+    grouped by (provider, session) and each group is priced with its own
+    provider's rates. Cards look sessions up by id alone, so two providers
+    sharing an id (not expected: ids are UUIDs) are merged with cost None --
+    one card cannot honestly carry two providers' prices."""
+    groups: dict[tuple[str, str], list] = {}
     for r in store.provider_usage_grouped(("provider", "session_id", "model"), since_iso, host=host):
-        by_session.setdefault(r["session_id"], []).append(r)
+        groups.setdefault((r["provider"], r["session_id"]), []).append(r)
     out: dict[str, dict] = {}
-    for sid, rows in by_session.items():
+    for (provider, sid), rows in groups.items():
         cats = {k: sum(r[k] for r in rows) for k in ("input", "output", "cache_read", "cache_write")}
         newest = max(rows, key=lambda r: r["last_ts"])
-        out[sid] = {
+        entry = {
             "last_activity": newest["last_ts"],
             "last_model": newest["model"],
             "tokens_today": {**cats, "total": sum(cats.values())},
-            "cost_today_usd": provider_cost_usd(pricing, rows[0]["provider"], rows),
+            "cost_today_usd": provider_cost_usd(pricing, provider, rows),
             "msg_count_today": sum(r["messages"] for r in rows),
             "subagents_active": 0,
         }
+        prev = out.get(sid)
+        if prev is not None:
+            for k in cats:
+                entry["tokens_today"][k] += prev["tokens_today"][k]
+            entry["tokens_today"]["total"] += prev["tokens_today"]["total"]
+            entry["msg_count_today"] += prev["msg_count_today"]
+            entry["cost_today_usd"] = None
+            if prev["last_activity"] > entry["last_activity"]:
+                entry["last_activity"], entry["last_model"] = prev["last_activity"], prev["last_model"]
+        out[sid] = entry
     return out
 
 

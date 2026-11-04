@@ -22,7 +22,7 @@ from critdash.collectors.provider_usage import (
     parse_codex_lines,
     parse_grok_usage,
 )
-from critdash.collectors.usage import UsageCollector
+from critdash.collectors.usage import UsageCollector, _provider_session_map
 from critdash.ctx import AppContext
 from critdash.history import build_grouped_history, parse_window
 from critdash.pricing import compute_provider_cost_usd
@@ -422,6 +422,27 @@ def test_session_map_carries_codex_and_grok_sessions(tmp_store, tmp_path):
     grok = ctx.usage_by_session["grok-sess-1"]
     assert grok["tokens_today"]["total"] == 1050  # input 400 + cache 600 + output 50
     assert grok["cost_today_usd"] is None
+
+
+def test_session_map_prices_each_provider_with_its_own_rates_on_id_collision(tmp_store, tmp_path):
+    same = "shared-session-id"
+    _write_codex(tmp_path / "codex", text=_codex_records(session=same, n=1))
+    # grok model named like a priced codex model: codex rates WOULD price it if groups mixed
+    grok_models = {"gpt-test": {"inputTokens": 1000, "outputTokens": 50, "cachedReadTokens": 600}}
+    _write_grok(tmp_path / "grok", doc=_grok_doc(session=same, ended=_now_ts(), models=grok_models), session=same)
+    _collector(tmp_store, tmp_path)._ingest()
+    since = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entry = _provider_session_map(tmp_store, PRICING, since, "localhost")[same]
+    # codex 1050 + grok 1050 tokens; the grok group must not be priced at codex rates
+    assert entry["tokens_today"]["total"] == 2 * 1050
+    assert entry["cost_today_usd"] is None
+    # a lone codex session stays priced, so the None above comes from the merge, not a lost group
+    other = "codex-only"
+    _write_codex(
+        tmp_path / "codex", name="rollout-x-" + other + ".jsonl", text=_codex_records(session=other, n=1)
+    )
+    _collector(tmp_store, tmp_path)._ingest()
+    assert _provider_session_map(tmp_store, PRICING, since, "localhost")[other]["cost_today_usd"] is not None
 
 
 # -- agent cards -----------------------------------------------------------------
