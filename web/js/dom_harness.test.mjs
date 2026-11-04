@@ -35,7 +35,23 @@ async function test(name, fn) {
   }
 }
 
-const browser = await chromium.launch();
+// Exit 77 = skip: the pytest wrapper turns it into a skip. Needs Node >= 18
+// (global fetch); the wrapper also skips below that.
+if (Number(process.versions.node.split(".")[0]) < 18) {
+  console.error("skip: Node >= 18 required");
+  process.exit(77);
+}
+
+let browser;
+try {
+  browser = await chromium.launch();
+} catch (err) {
+  if (/Executable doesn't exist|playwright install/i.test(String(err))) {
+    console.error(`skip: ${String(err).split("\n")[0]}`);
+    process.exit(77);
+  }
+  throw err;
+}
 try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const failed = [];

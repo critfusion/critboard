@@ -50,9 +50,8 @@ or `/index.html?fixture=1`. The server answers `config/layout.json` and
 **Browser test.** `web/js/dom_harness.test.mjs` drives `index.html?fixture=1`
 in headless Chromium: grid render from the served layout, and reload/update
 banner mutual exclusion. `server/tests/test_dom_harness.py` starts an
-isolated server and runs it, so `make test` covers it. It needs `node` and
-the node `playwright` package (not a repo dependency; a global install found
-through `NODE_PATH` works) and skips when either is missing.
+isolated server and runs it, so `make test` covers it. It needs Node 18 or newer (global `fetch`) and the node `playwright` package with its Chromium (not a repo dependency; a global install found
+through `NODE_PATH` works), and skips when any is missing.
 
 ## How to change the layout
 

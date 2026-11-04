@@ -30,22 +30,18 @@ TEST_FILE = ROOT / "web" / "js" / "dom_harness.test.mjs"
 def _playwright_resolvable() -> bool:
     if shutil.which("node") is None:
         return False
+    # fetch() in the .mjs needs Node >= 18; below that, skip instead of failing.
     probe = subprocess.run(
-        ["node", "-e", "require.resolve('playwright')"],
+        ["node", "-e", "if (+process.versions.node.split('.')[0] < 18) process.exit(1);"
+         "require.resolve('playwright')"],
         capture_output=True, timeout=30, check=False,
     )
     return probe.returncode == 0
 
 
 pytestmark = pytest.mark.skipif(
-    not _playwright_resolvable(), reason="node or the node 'playwright' package is not installed",
+    not _playwright_resolvable(), reason="node >= 18 or the node 'playwright' package is not installed",
 )
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 @pytest.fixture
@@ -61,20 +57,26 @@ def live_server(tmp_path):
         shutil.copy(ROOT / "config" / name, config_dir / name)
     shutil.copy(ROOT / "config" / "layout.example.json", config_dir / "layout.json")
 
-    port = _free_port()
     env = {
         k: v for k, v in os.environ.items()
         if not k.startswith("CRITDASH_")
     }
     env["CRITDASH_CONFIG_DIR"] = str(config_dir)
     env["CRITDASH_DB_PATH"] = str(tmp_path / "test.db")
+    # Bind the port here and hand the listening socket to uvicorn (--fd), so
+    # no other process can take the port between picking it and serving.
+    sock = socket.socket()
+    proc = None
     log = (tmp_path / "server.log").open("w")
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "critdash.main:app", "--host", "127.0.0.1", "--port", str(port)],
-        cwd=ROOT / "server", env=env, stdout=log, stderr=subprocess.STDOUT,
-    )
-    base = f"http://127.0.0.1:{port}"
     try:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(128)
+        base = f"http://127.0.0.1:{sock.getsockname()[1]}"
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "critdash.main:app", "--fd", str(sock.fileno())],
+            cwd=ROOT / "server", env=env, stdout=log, stderr=subprocess.STDOUT,
+            pass_fds=(sock.fileno(),),
+        )
         deadline = time.monotonic() + 30
         while True:
             try:
@@ -88,11 +90,14 @@ def live_server(tmp_path):
                 time.sleep(0.2)
         yield base
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        sock.close()
         log.close()
 
 
@@ -100,5 +105,7 @@ def test_dom_harness_passes(live_server):
     result = subprocess.run(
         ["node", str(TEST_FILE), live_server], capture_output=True, text=True, timeout=120, check=False,
     )
+    if result.returncode == 77:  # mjs: chromium binary not installed
+        pytest.skip("playwright is installed but its Chromium browser is not")
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "6 passed" in result.stdout
