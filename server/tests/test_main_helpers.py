@@ -1153,3 +1153,22 @@ def test_window_to_since_today_honors_timezone(monkeypatch):
     monkeypatch.setattr(main_mod, "datetime", _Frozen)
     assert main_mod._window_to_since("today", "America/New_York") == "2026-10-01T04:00:00Z"
     assert main_mod._window_to_since("today") == "2026-10-02T00:00:00Z"
+
+
+# q733.6: the fixture harness (web/dev.html, index.html?fixture=1) fetches
+# config/layout.json and config/theme.json as relative static paths. Over a
+# plain `python3 -m http.server` those resolve through the web/config ->
+# ../config symlink, but the FastAPI StaticFiles mount refuses to follow a
+# symlink out of web/, so on the real server both returned 404. The server
+# now answers exactly those two paths itself -- and nothing else under
+# /config/, since sources.json holds machine-local paths and hosts.
+@pytest.mark.parametrize("name", ["layout", "theme"])
+def test_fixture_config_paths_serve_same_body_as_api(isolated_app, name):
+    resp = isolated_app.get(f"/config/{name}.json")
+    assert resp.status_code == 200
+    assert resp.json() == isolated_app.get(f"/api/config/{name}").json()
+
+
+@pytest.mark.parametrize("name", ["sources.json", "pricing.json", "sources.example.json"])
+def test_fixture_config_paths_do_not_expose_other_config_files(isolated_app, name):
+    assert isolated_app.get(f"/config/{name}").status_code == 404

@@ -42,6 +42,18 @@ Then open one of:
 Fixture mode is on when `window.__DASHBOARD_FIXTURE__ === true` (set by
 `dev.html`) or the URL has a `?fixture` param.
 
+Fixture mode also works against the real server: `http://<host>:9999/dev.html`
+or `/index.html?fixture=1`. The server answers `config/layout.json` and
+`config/theme.json` itself, because its static mount does not follow the
+`web/config` symlink. No other file under `config/` is served.
+
+**Browser test.** `web/js/dom_harness.test.mjs` drives `index.html?fixture=1`
+in headless Chromium: grid render from the served layout, and reload/update
+banner mutual exclusion. `server/tests/test_dom_harness.py` starts an
+isolated server and runs it, so `make test` covers it. It needs `node` and
+the node `playwright` package (not a repo dependency; a global install found
+through `NODE_PATH` works) and skips when either is missing.
+
 ## How to change the layout
 
 Layout is data, not code. Edit `config/layout.json`, save, refresh the page.
