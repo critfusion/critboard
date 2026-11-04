@@ -356,7 +356,8 @@ def test_shipped_codex_prices_resolve_each_local_model_to_its_own_row():
     }
     # cache_write is the 30-minute write rate, 1.25x input
     for model in expected:
-        assert shipped["codex_models"][model]["cache_write"] == pytest.approx(expected[model][0] * 1.25), model
+        row = shipped["codex_models"][model]
+        assert row["cache_write"] == pytest.approx(expected[model][0] * 1.25), model
     for model, (inp, cached, out) in expected.items():
         cost = compute_provider_cost_usd(
             shipped, "codex", model + "-2026-11-01", *(1_000_000,) * 4
