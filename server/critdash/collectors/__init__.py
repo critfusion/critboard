@@ -14,8 +14,9 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
+
+from ..state import now_iso  # one owner; agents/beads/remote/worktrees import it from here
 
 logger = logging.getLogger("critdash.collectors")
 
@@ -32,10 +33,6 @@ logger = logging.getLogger("critdash.collectors")
 #                          thing it talks to over the network isn't
 #                          responding.
 REASON_CODES = ("dependency_missing", "config_missing", "command_failed", "unreachable")
-
-
-def now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 class CollectorIssue(Exception):

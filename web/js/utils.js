@@ -152,6 +152,12 @@ export function applyTheme(theme) {
 // localStorage helpers -- wrapped in try/catch so a private window or
 // blocked storage degrades to "nothing persisted" instead of breaking
 // rendering. Used by table widgets to remember per-panel sort/filter state.
+// One key shape for every widget's persisted state: critdash.<kind>.<panelId>.
+// Keep it stable -- a changed key drops every user's saved settings.
+export function panelStorageKey(kind, panelId) {
+  return `critdash.${kind}.${panelId}`;
+}
+
 export function loadJSON(key, fallback) {
   try {
     const raw = window.localStorage.getItem(key);

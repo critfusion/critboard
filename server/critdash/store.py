@@ -453,6 +453,17 @@ class Store:
             self._conn.commit()
             return cur.rowcount
 
+    def _replace_rows(self, sql: str, rows: Iterable[dict]) -> int:
+        """Run one replace-semantics upsert over `rows` and commit. Returns the
+        number of rows sent. Shared by every upsert_remote_* method."""
+        rows = list(rows)
+        if not rows:
+            return 0
+        with self._lock:
+            self._conn.executemany(sql, rows)
+            self._conn.commit()
+        return len(rows)
+
     # -- remote usage buckets -------------------------------------------------
     def upsert_remote_usage_buckets(self, rows: Iterable[dict]) -> int:
         """Replace-semantics upsert keyed by (host, hour, model, project).
@@ -461,26 +472,20 @@ class Store:
         file-level cache), so a fresh call's numbers are authoritative and
         should overwrite -- not accumulate on top of -- whatever was stored
         for that key before."""
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_usage_buckets
-                   (host, hour, model, project, input, output, cache_read,
-                    cache_write_5m, cache_write_1h, messages)
-                   VALUES (:host, :hour, :model, :project, :input, :output, :cache_read,
-                           :cache_write_5m, :cache_write_1h, :messages)
-                   ON CONFLICT(host, hour, model, project) DO UPDATE SET
-                       input=excluded.input, output=excluded.output,
-                       cache_read=excluded.cache_read,
-                       cache_write_5m=excluded.cache_write_5m,
-                       cache_write_1h=excluded.cache_write_1h,
-                       messages=excluded.messages""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_usage_buckets
+               (host, hour, model, project, input, output, cache_read,
+                cache_write_5m, cache_write_1h, messages)
+               VALUES (:host, :hour, :model, :project, :input, :output, :cache_read,
+                       :cache_write_5m, :cache_write_1h, :messages)
+               ON CONFLICT(host, hour, model, project) DO UPDATE SET
+                   input=excluded.input, output=excluded.output,
+                   cache_read=excluded.cache_read,
+                   cache_write_5m=excluded.cache_write_5m,
+                   cache_write_1h=excluded.cache_write_1h,
+                   messages=excluded.messages""",
+            rows,
+        )
 
     _REMOTE_GROUP_COLS = {"host", "hour", "model", "project"}
 
@@ -1011,119 +1016,77 @@ class Store:
     }
 
     def upsert_remote_tool_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_tool_buckets (host, day, tool, calls, errors)
-                   VALUES (:host, :day, :tool, :calls, :errors)
-                   ON CONFLICT(host, day, tool) DO UPDATE SET
-                       calls=excluded.calls, errors=excluded.errors""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_tool_buckets (host, day, tool, calls, errors)
+               VALUES (:host, :day, :tool, :calls, :errors)
+               ON CONFLICT(host, day, tool) DO UPDATE SET
+                   calls=excluded.calls, errors=excluded.errors""",
+            rows,
+        )
 
     def upsert_remote_error_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_error_buckets (host, day, kind, tool, count, last_seen)
-                   VALUES (:host, :day, :kind, :tool, :count, :last_seen)
-                   ON CONFLICT(host, day, kind, tool) DO UPDATE SET
-                       count=excluded.count, last_seen=excluded.last_seen""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_error_buckets (host, day, kind, tool, count, last_seen)
+               VALUES (:host, :day, :kind, :tool, :count, :last_seen)
+               ON CONFLICT(host, day, kind, tool) DO UPDATE SET
+                   count=excluded.count, last_seen=excluded.last_seen""",
+            rows,
+        )
 
     def upsert_remote_error_examples(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_error_examples (host, kind, example, last_seen)
-                   VALUES (:host, :kind, :example, :last_seen)
-                   ON CONFLICT(host, kind) DO UPDATE SET
-                       example=excluded.example, last_seen=excluded.last_seen
-                   WHERE excluded.last_seen >= remote_error_examples.last_seen""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_error_examples (host, kind, example, last_seen)
+               VALUES (:host, :kind, :example, :last_seen)
+               ON CONFLICT(host, kind) DO UPDATE SET
+                   example=excluded.example, last_seen=excluded.last_seen
+               WHERE excluded.last_seen >= remote_error_examples.last_seen""",
+            rows,
+        )
 
     def upsert_remote_trouble_file_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_trouble_file_buckets (host, day, path, tool, errors)
-                   VALUES (:host, :day, :path, :tool, :errors)
-                   ON CONFLICT(host, day, path, tool) DO UPDATE SET errors=excluded.errors""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_trouble_file_buckets (host, day, path, tool, errors)
+               VALUES (:host, :day, :path, :tool, :errors)
+               ON CONFLICT(host, day, path, tool) DO UPDATE SET errors=excluded.errors""",
+            rows,
+        )
 
     def upsert_remote_api_error_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_api_error_buckets (host, day, kind, count, last_seen)
-                   VALUES (:host, :day, :kind, :count, :last_seen)
-                   ON CONFLICT(host, day, kind) DO UPDATE SET
-                       count=excluded.count, last_seen=excluded.last_seen""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_api_error_buckets (host, day, kind, count, last_seen)
+               VALUES (:host, :day, :kind, :count, :last_seen)
+               ON CONFLICT(host, day, kind) DO UPDATE SET
+                   count=excluded.count, last_seen=excluded.last_seen""",
+            rows,
+        )
 
     def upsert_remote_session_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_session_buckets
-                   (host, day, session_id, is_sidechain, model, project, input, output,
-                    cache_read, cache_write_5m, cache_write_1h, messages)
-                   VALUES (:host, :day, :session_id, :is_sidechain, :model, :project, :input, :output,
-                           :cache_read, :cache_write_5m, :cache_write_1h, :messages)
-                   ON CONFLICT(host, day, session_id, is_sidechain, model) DO UPDATE SET
-                       project=excluded.project,
-                       input=excluded.input, output=excluded.output,
-                       cache_read=excluded.cache_read,
-                       cache_write_5m=excluded.cache_write_5m,
-                       cache_write_1h=excluded.cache_write_1h,
-                       messages=excluded.messages""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_session_buckets
+               (host, day, session_id, is_sidechain, model, project, input, output,
+                cache_read, cache_write_5m, cache_write_1h, messages)
+               VALUES (:host, :day, :session_id, :is_sidechain, :model, :project, :input, :output,
+                       :cache_read, :cache_write_5m, :cache_write_1h, :messages)
+               ON CONFLICT(host, day, session_id, is_sidechain, model) DO UPDATE SET
+                   project=excluded.project,
+                   input=excluded.input, output=excluded.output,
+                   cache_read=excluded.cache_read,
+                   cache_write_5m=excluded.cache_write_5m,
+                   cache_write_1h=excluded.cache_write_1h,
+                   messages=excluded.messages""",
+            rows,
+        )
 
     def upsert_remote_productivity_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_productivity_buckets
-                   (host, day, repo, commits, lines_added, lines_removed, files_changed)
-                   VALUES (:host, :day, :repo, :commits, :lines_added, :lines_removed, :files_changed)
-                   ON CONFLICT(host, day, repo) DO UPDATE SET
-                       commits=excluded.commits, lines_added=excluded.lines_added,
-                       lines_removed=excluded.lines_removed, files_changed=excluded.files_changed""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_productivity_buckets
+               (host, day, repo, commits, lines_added, lines_removed, files_changed)
+               VALUES (:host, :day, :repo, :commits, :lines_added, :lines_removed, :files_changed)
+               ON CONFLICT(host, day, repo) DO UPDATE SET
+                   commits=excluded.commits, lines_added=excluded.lines_added,
+                   lines_removed=excluded.lines_removed, files_changed=excluded.files_changed""",
+            rows,
+        )
 
     def remote_tool_by_tool(self, since_day: str) -> list[sqlite3.Row]:
         with self._lock:
@@ -1323,34 +1286,22 @@ class Store:
 
     # -- Kimi remote bucket upserts + rollup queries --------------------------
     def upsert_remote_kimi_usage_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_kimi_usage_buckets (host, day, model, tokens, turns)
-                   VALUES (:host, :day, :model, :tokens, :turns)
-                   ON CONFLICT(host, day, model) DO UPDATE SET
-                       tokens=excluded.tokens, turns=excluded.turns""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_kimi_usage_buckets (host, day, model, tokens, turns)
+               VALUES (:host, :day, :model, :tokens, :turns)
+               ON CONFLICT(host, day, model) DO UPDATE SET
+                   tokens=excluded.tokens, turns=excluded.turns""",
+            rows,
+        )
 
     def upsert_remote_kimi_error_buckets(self, rows: Iterable[dict]) -> int:
-        rows = list(rows)
-        if not rows:
-            return 0
-        with self._lock:
-            self._conn.executemany(
-                """INSERT INTO remote_kimi_error_buckets (host, day, kind, count, last_seen)
-                   VALUES (:host, :day, :kind, :count, :last_seen)
-                   ON CONFLICT(host, day, kind) DO UPDATE SET
-                       count=excluded.count, last_seen=excluded.last_seen""",
-                rows,
-            )
-            self._conn.commit()
-            return len(rows)
+        return self._replace_rows(
+            """INSERT INTO remote_kimi_error_buckets (host, day, kind, count, last_seen)
+               VALUES (:host, :day, :kind, :count, :last_seen)
+               ON CONFLICT(host, day, kind) DO UPDATE SET
+                   count=excluded.count, last_seen=excluded.last_seen""",
+            rows,
+        )
 
     def remote_kimi_usage_totals(self, since_iso: str | None = None) -> dict:
         where = "WHERE day >= ?" if since_iso else ""

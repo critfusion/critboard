@@ -4,6 +4,7 @@ import {
   priorityColorVar,
   loadJSON,
   saveJSON,
+  panelStorageKey,
   mobileLimit,
   renderWithShowAll,
   sourceIssueNotice,
@@ -52,10 +53,6 @@ const COLUMNS = [
 ];
 
 const SEARCH_FIELDS = ["id", "title", "status", "assignee", "repo"];
-
-function storageKey(panelId) {
-  return `critdash.table.${panelId}`;
-}
 
 function defaultStateFor(options) {
   const legacy = options?.sort;
@@ -460,7 +457,7 @@ function fullBuild(container, ctx) {
   container.innerHTML = "";
 
   const panelId = ctx.panel.id;
-  const persisted = loadJSON(storageKey(panelId), null);
+  const persisted = loadJSON(panelStorageKey("table", panelId), null);
   const base = defaultStateFor(ctx.options);
   const tstate = persisted && typeof persisted === "object" ? { ...base, ...persisted } : { ...base };
   if (!Array.isArray(tstate.statusFilters)) tstate.statusFilters = [];
@@ -484,7 +481,7 @@ function fullBuild(container, ctx) {
 
   const humanLabels = ctx.layout?.human_labels || DEFAULT_HUMAN_LABELS;
   const isMobile = ctx.breakpoint === "mobile";
-  const persist = () => saveJSON(storageKey(panelId), tstate);
+  const persist = () => saveJSON(panelStorageKey("table", panelId), tstate);
 
   const onChange = () => {
     persist();

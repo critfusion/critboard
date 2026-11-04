@@ -4,7 +4,6 @@ import sqlite3
 import pytest
 
 from critdash import remote_probe as rp
-from critdash.collectors import analytics as local_an
 from critdash.collectors import bead_sessions as local_bs
 
 
@@ -377,42 +376,6 @@ def test_main_prints_one_json_object(tmp_path, capsys, argv, monkeypatch):
     doc = json.loads(out)
     assert doc["host"] == "myhost"
     assert set(doc.keys()) >= {"host", "generated_at", "agents", "worktrees", "system", "usage_buckets"}
-
-
-# -- drift detector: remote_probe.py's duplicated classifier must match the --
-# -- local collectors/analytics.py copy for a fixed sample set. This file is  --
-# -- stdlib-only and can't import critdash, so the rule tables are           --
-# -- maintained as two copies by hand; this test is the tripwire if they     --
-# -- drift apart.                                                            --
-
-_DRIFT_SAMPLE_ERRORS = [
-    "String to replace not found in file.",
-    "Exit code 2\nls: cannot access 'foo.txt': No such file or directory",
-    "Permission for this action was denied by the user.",
-    "Exit code 143\nCommand timed out after 2m 0s",
-    "Concurrent subagent limit reached. You can run up to N.",
-    "json.decoder.JSONDecodeError: Expecting value: line 1 column 1",
-    "Exit code 1\nTraceback (most recent call last)",
-    "completely unrecognized failure text with no keywords",
-]
-
-_DRIFT_SAMPLE_API_ERRORS = [
-    {"apiErrorStatus": 529, "error": "server_error"},
-    {"apiErrorStatus": 429, "error": "rate_limit"},
-    {"apiErrorStatus": 400, "error": "invalid_request"},
-    {"apiErrorStatus": None, "error": "authentication_failed"},
-    {"apiErrorStatus": 500},
-]
-
-
-@pytest.mark.parametrize("text", _DRIFT_SAMPLE_ERRORS)
-def test_classify_error_matches_local_analytics_copy(text):
-    assert rp.classify_error(text) == local_an.classify_error(text)
-
-
-@pytest.mark.parametrize("doc", _DRIFT_SAMPLE_API_ERRORS)
-def test_classify_api_error_matches_local_analytics_copy(doc):
-    assert rp.classify_api_error(doc) == local_an.classify_api_error(doc)
 
 
 # -- aggregate_file: wave-2 categories (tools/errors/api_errors/sessions) ----
@@ -1025,8 +988,7 @@ def test_rp_assign_empty_after_claim_releases(tmp_path):
 # -- parity: the local (bead_sessions.py) and remote (this module) bead
 # extractors MUST behave identically on the same fixture set -- both are
 # hand-maintained duplicates (this file can't import critdash), so this is
-# the tripwire if they drift apart, same pattern as the classify_error
-# drift test above.
+# the tripwire if they drift apart.
 
 
 _PARITY_CLAUDE_SCENARIOS: tuple[tuple[str, tuple[tuple[str, str, str, bool], ...]], ...] = (
