@@ -643,7 +643,7 @@ def _restart_via_pidfile(config) -> bool:
     pidfile = _pidfile_path(config)
     logfile = server_dir / "data" / "critdash.log"
     try:
-        subprocess.Popen(  # noqa: S603 -- fixed argv, args are our own config values, no shell
+        subprocess.Popen(  # fixed argv, args are our own config values, no shell
             [
                 sys.executable, "-c", _SELF_RESTART_HELPER_SRC,
                 str(os.getpid()), str(uvicorn_bin), str(server_dir), host, port,
@@ -679,7 +679,7 @@ def _restart(config) -> tuple[bool, str, str]:
     if under_systemd and unit:
         if shutil.which("systemctl"):
             try:
-                subprocess.Popen(  # noqa: S603 -- fixed argv, no shell, no caller-supplied input
+                subprocess.Popen(  # fixed argv, no shell, no caller-supplied input
                     ["systemctl", "--user", "restart", unit],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
@@ -773,7 +773,7 @@ def apply_update(config, dashboard_root: Path) -> dict:
         uv_bin = shutil.which("uv")
         venv_python = str(server_dir / ".venv" / "bin" / "python")
         cmd = [uv_bin, "sync"] if uv_bin else [venv_python, "-m", "pip", "install", "-e", "."]
-        sync = subprocess.run(  # noqa: S603 -- fixed argv built from a resolved binary path, no shell
+        sync = subprocess.run(  # fixed argv built from a resolved binary path, no shell
             cmd, cwd=server_dir, capture_output=True, text=True, timeout=REINSTALL_TIMEOUT_S, check=False,
         )
         reinstalled = sync.returncode == 0

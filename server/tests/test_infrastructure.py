@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -18,11 +17,13 @@ from test_knowledge import BASE, TOKEN, _enabled, _make_client
 from critdash import knowledge as knowledge_mod
 from critdash.infrastructure import (
     compute_status,
+    parse_facts,
     parse_provenance_table,
     parse_record,
     parse_tags,
-    parse_facts,
     parse_when,
+)
+from critdash.infrastructure import (
     merge_status as _merge_status,
 )
 
@@ -85,7 +86,10 @@ def test_empty_markdown_and_none_are_all_unknown():
 
 
 def test_malformed_table_keeps_good_rows_and_unknowns_the_rest():
-    md = "| Field | Value |\n| --- | --- |\n| Source repo | example-org/repo |\n| lonely cell\n| Status | \n| Class |  TBD |\n"
+    md = (
+        "| Field | Value |\n| --- | --- |\n| Source repo | example-org/repo |\n"
+        "| lonely cell\n| Status | \n| Class |  TBD |\n"
+    )
     out = parse_provenance_table(md)
     assert out["source_repo"] == "example-org/repo"
     assert out["status"] == "unknown" and out["class"] == "unknown" and out["live_check"] == "unknown"
@@ -231,7 +235,11 @@ def test_record_carries_the_notes_in_source_and_omits_them_when_absent():
 def test_facts_come_from_any_field_value_table_and_default_to_unknown():
     md = TABLE + "\n## Facts\n\n| Field | Value |\n|---|---|\n| Canonical repo | `example-org/proj-a` |\n" \
         "| Dev/prod boundary | dev on branches |\n| Canonical location | |\n"
-    assert parse_facts(md) == {"repo": "example-org/proj-a", "location": "unknown", "boundary": "dev on branches"}
+    assert parse_facts(md) == {
+        "repo": "example-org/proj-a",
+        "location": "unknown",
+        "boundary": "dev on branches",
+    }
     assert parse_facts(TABLE) == {"repo": "unknown", "location": "unknown", "boundary": "unknown"}
     assert parse_facts(None) == {"repo": "unknown", "location": "unknown", "boundary": "unknown"}
 
@@ -254,7 +262,8 @@ def test_tags_repeat_and_scalars():
     tags = parse_tags(_page()["tags"])
     assert tags["kind"] == "host" and tags["owner"] == "team-a" and tags["environment"] == "prod"
     assert tags["runbooks"] == [
-        "https://wiki.example.com/books/infrastructure/page/host-a-runbook", "/books/infrastructure/page/restore",
+        "https://wiki.example.com/books/infrastructure/page/host-a-runbook",
+        "/books/infrastructure/page/restore",
     ]
     assert tags["backups"] == ["nightly snapshot"]
     assert tags["related"] == ["service-x", "example-org/repo"]
@@ -275,7 +284,9 @@ def test_non_list_tags_are_no_tags():
 
 def test_tag_values_and_tag_count_are_bounded():
     long = "x" * 900
-    tags = parse_tags([{"name": "purpose", "value": long}] + [{"name": "related", "value": f"r{i}"} for i in range(80)])
+    tags = parse_tags(
+        [{"name": "purpose", "value": long}] + [{"name": "related", "value": f"r{i}"} for i in range(80)]
+    )
     assert len(tags["purpose"]) == 500
     assert len(tags["related"]) == 49  # only the first 50 tags of the page are read
     late = parse_tags([{"name": "x", "value": "1"}] * 50 + [{"name": "owner", "value": "late"}])
@@ -393,17 +404,28 @@ def test_conflicting_table_and_tag_status_worse_wins_with_a_visible_note(table, 
 
 
 def test_repeated_status_tags_merge_worse_wins_with_a_conflict_note():
-    r = _record(markdown="no table", tags=[{"name": "status", "value": "current"}, {"name": "status", "value": "contradicted"}])
+    r = _record(
+        markdown="no table",
+        tags=[{"name": "status", "value": "current"}, {"name": "status", "value": "contradicted"}],
+    )
     assert r["status"] == "contradicted"
     assert r["status_conflict"] == "status conflict: tag current, tag contradicted"
-    r = _record(tags=[{"name": "status", "value": "stale"}, {"name": "status", "value": "needs-verification"}])
+    r = _record(
+        tags=[{"name": "status", "value": "stale"}, {"name": "status", "value": "needs-verification"}]
+    )
     assert r["status"] == "stale" and "table current" in r["status_conflict"]
     assert "tag stale" in r["status_conflict"] and "tag needs-verification" in r["status_conflict"]
 
 
 def test_repeated_identical_or_unreadable_status_tags_are_no_conflict():
-    r = _record(markdown="no table", tags=[{"name": "status", "value": "stale"}, {"name": "status", "value": "Stale"},
-                                          {"name": "status", "value": "sparkly"}])
+    r = _record(
+        markdown="no table",
+        tags=[
+            {"name": "status", "value": "stale"},
+            {"name": "status", "value": "Stale"},
+            {"name": "status", "value": "sparkly"},
+        ],
+    )
     assert r["status"] == "stale" and r["status_conflict"] is None
     assert merge_status("unknown", "current", "contradicted")[0] == "contradicted"
 
@@ -434,7 +456,9 @@ def test_parse_separates_declared_unknown_from_absent_and_junk():
 
 
 def test_conflict_note_reaches_the_record_and_current_is_not_shown_when_a_tag_disagrees():
-    r = _record(tags=[{"name": "status", "value": "needs-verification"}])  # table says current, Live check fresh
+    r = _record(
+        tags=[{"name": "status", "value": "needs-verification"}]
+    )  # table says current, Live check fresh
     assert r["status"] == "needs-verification"
     assert r["status_conflict"] == "status conflict: table current, tag needs-verification"
 
@@ -455,15 +479,32 @@ def test_record_fields():
 
 def test_bare_page_is_all_explicit_unknown():
     r = parse_record({"id": 1}, base_url=BASE, book_slug="infrastructure", now=NOW, stale_days=90)
-    for key in ("kind", "owner", "environment", "purpose", "updated_at", "updated_by", "last_verified", "status"):
+    for key in (
+        "kind",
+        "owner",
+        "environment",
+        "purpose",
+        "updated_at",
+        "updated_by",
+        "last_verified",
+        "status",
+    ):
         assert r[key] == "unknown", key
     assert r["url"] is None and r["runbooks"] == [] and r["backups"] == [] and r["related"] == []
     assert set(r["source"][k] for k in ("repo", "path", "git_sha", "class", "live_check")) == {"unknown"}
 
 
 def test_only_http_urls_and_wiki_paths_become_links():
-    tags = [{"name": "runbook", "value": v} for v in (
-        "javascript:alert(1)", "//evil.example.net/x", "data:text/html,x", "ftp://x.example.net/a", "plain words")]
+    tags = [
+        {"name": "runbook", "value": v}
+        for v in (
+            "javascript:alert(1)",
+            "//evil.example.net/x",
+            "data:text/html,x",
+            "ftp://x.example.net/a",
+            "plain words",
+        )
+    ]
     r = _record(tags=tags)
     assert [x["href"] for x in r["runbooks"]] == [None] * 5
     assert _record(markdown=TABLE.replace("example-org/repo", "https://git.example.com/example-org/repo"))[
@@ -523,7 +564,9 @@ class FakeWiki:
             if self.fail_page == pid:
                 return httpx.Response(500, json={})
             if self.big_page == pid:
-                return httpx.Response(200, content=b'{"markdown": "' + b"x" * (knowledge_mod.MAX_PAGE_BYTES + 10) + b'"}')
+                return httpx.Response(
+                    200, content=b'{"markdown": "' + b"x" * (knowledge_mod.MAX_PAGE_BYTES + 10) + b'"}'
+                )
             return httpx.Response(200, json=self.pages[pid])
         return httpx.Response(404, json={})
 
@@ -555,7 +598,11 @@ def test_infrastructure_lists_records_with_status_and_no_secrets(infra, wiki):
     body = resp.json()
     assert body["ok"] is True and body["truncated"] is False and body["total"] == 3
     assert [r["title"] for r in body["records"]] == ["host-1", "host-2", "host-3"]
-    assert body["book"] == {"name": "Infrastructure", "slug": "infrastructure", "url": f"{BASE}/books/infrastructure"}
+    assert body["book"] == {
+        "name": "Infrastructure",
+        "slug": "infrastructure",
+        "url": f"{BASE}/books/infrastructure",
+    }
     assert body["stale_after_days"] == 90 and body["fetched_at"]
     assert body["status"]["ok"] is True and body["status"]["last_success"]
     assert "token" not in resp.text.lower() and TOKEN.split(":")[1] not in resp.text
@@ -575,7 +622,8 @@ def test_records_are_sorted_by_kind_then_title(infra, wiki):
 def test_custom_book_slug_and_stale_after_days_are_used(tmp_path, monkeypatch, wiki):
     wiki.book = {"id": 9, "name": "Ops", "slug": "ops-book"}
     client, _ = _make_client(
-        tmp_path, monkeypatch, lambda tf: _infra_modules(tf, {"book_slug": "ops-book", "stale_after_days": 5}))
+        tmp_path, monkeypatch, lambda tf: _infra_modules(tf, {"book_slug": "ops-book", "stale_after_days": 5})
+    )
     client.app.state.knowledge._transport = httpx.MockTransport(wiki)
     body = client.get("/api/infrastructure").json()
     assert body["ok"] is True and body["book"]["slug"] == "ops-book" and body["stale_after_days"] == 5
@@ -631,7 +679,9 @@ def test_outage_reports_down_since_and_last_success_and_no_records(infra, wiki):
     assert resp.status_code == 502 and body["ok"] is False and "records" not in body
     assert body["error"]["code"] == "unreachable"
     st = body["status"]
-    assert st["ok"] is False and st["down_since"] and st["last_success"] and st["error"]["code"] == "unreachable"
+    assert (
+        st["ok"] is False and st["down_since"] and st["last_success"] and st["error"]["code"] == "unreachable"
+    )
     wiki.mode = "ok"
     assert infra.get("/api/infrastructure").json()["status"]["down_since"] is None
 
@@ -780,11 +830,20 @@ def test_knowledge_flag_alone_does_not_open_infrastructure(tmp_path, monkeypatch
     assert client.get("/api/infrastructure").status_code == 404
 
 
-@pytest.mark.parametrize("mods", [
-    lambda tf: {"infrastructure": {"enabled": True}},
-    lambda tf: {"infrastructure": {"enabled": True}, "knowledge": {"enabled": False, "bookstack": {"base_url": BASE, "token_file": tf}}},
-    lambda tf: {"infrastructure": {"enabled": True}, "knowledge": {"enabled": True, "allowed_hosts": ["testserver"]}},
-])
+@pytest.mark.parametrize(
+    "mods",
+    [
+        lambda tf: {"infrastructure": {"enabled": True}},
+        lambda tf: {
+            "infrastructure": {"enabled": True},
+            "knowledge": {"enabled": False, "bookstack": {"base_url": BASE, "token_file": tf}},
+        },
+        lambda tf: {
+            "infrastructure": {"enabled": True},
+            "knowledge": {"enabled": True, "allowed_hosts": ["testserver"]},
+        },
+    ],
+)
 def test_knowledge_not_configured_reports_not_configured(tmp_path, monkeypatch, mods):
     client, _ = _make_client(tmp_path, monkeypatch, mods)
     resp = client.get("/api/infrastructure", headers={"Host": "localhost"})
@@ -817,7 +876,11 @@ def test_same_origin_request_is_allowed(infra):
 def test_example_config_ships_infrastructure_off_with_defaults():
     from critdash import config as config_mod
     example = json.loads((config_mod.DASHBOARD_ROOT / "config" / "sources.example.json").read_text())
-    assert example["modules"]["infrastructure"] == {"enabled": False, "book_slug": "infrastructure", "stale_after_days": 90}
+    assert example["modules"]["infrastructure"] == {
+        "enabled": False,
+        "book_slug": "infrastructure",
+        "stale_after_days": 90,
+    }
     assert config_mod.DEFAULT_SOURCES["modules"]["infrastructure"] == example["modules"]["infrastructure"]
 
 
@@ -862,21 +925,27 @@ def test_status_controls_via_the_route(infra, wiki, table, tags, status):
 
 def test_contradicted_record_stays_contradicted_via_the_route_even_when_old(infra, wiki):
     for check in ((datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d"), "2020-01-01"):
-        wiki.pages[1]["markdown"] = f"| Field | Value |\n|---|---|\n| Live check | {check} |\n| Status | contradicted |\n"
+        wiki.pages[1]["markdown"] = (
+            f"| Field | Value |\n|---|---|\n| Live check | {check} |\n| Status | contradicted |\n"
+        )
         wiki.pages[1]["tags"] = []
         r = next(r for r in infra.get("/api/infrastructure").json()["records"] if r["id"] == 1)
         assert r["status"] == "contradicted" and r["status_reason"] is None
 
 
 def test_stale_record_says_why_and_a_stale_tag_conflict_is_visible_via_the_route(infra, wiki):
-    wiki.pages[1]["markdown"] = "| Field | Value |\n|---|---|\n| Live check | 2020-01-01 |\n| Status | current |\n"
+    wiki.pages[1]["markdown"] = (
+        "| Field | Value |\n|---|---|\n| Live check | 2020-01-01 |\n| Status | current |\n"
+    )
     wiki.pages[1]["tags"] = [{"name": "status", "value": "stale"}]
     r = next(r for r in infra.get("/api/infrastructure").json()["records"] if r["id"] == 1)
     assert r["status"] == "stale" and "older than 90 days" in r["status_reason"]
     assert r["status_conflict"] == "status conflict: table current, tag stale"
 
 
-@pytest.mark.parametrize("table,tags", [("unknown (declared)", ["current"]), (None, ["unknown (declared)", "current"])])
+@pytest.mark.parametrize(
+    "table,tags", [("unknown (declared)", ["current"]), (None, ["unknown (declared)", "current"])]
+)
 def test_a_status_spelled_like_the_old_sentinel_is_just_unreadable(table, tags):
     md = TABLE if table is None else TABLE.replace("| Status | current |", f"| Status | {table} |")
     r = _record(markdown=md, tags=[{"name": "status", "value": t} for t in tags])

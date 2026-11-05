@@ -96,7 +96,9 @@ def _wiki():
         _page(22, "shared-rule", "Shared rule", [("scope", "all")]),
         _page(23, "untagged", "Untagged page"),
     ])
-    w.add_book(POLICY, 6, [_page(30, "review-rule", "Review rule"), _page(31, "approve-rule", "Approve rule")])
+    w.add_book(
+        POLICY, 6, [_page(30, "review-rule", "Review rule"), _page(31, "approve-rule", "Approve rule")]
+    )
     return w
 
 
@@ -176,7 +178,9 @@ def test_the_gate_runs_before_slug_validation(cc):
     assert _get(cc, "BAD SLUG", headers={"host": "rebind.example.com"}).status_code == 403
 
 
-@pytest.mark.parametrize("bad", ["", "Proj-A", "-a", ".a", "_a", "a b", "a/b", "../x", "a" * 65, "a\n", "a%00", "é"])
+@pytest.mark.parametrize(
+    "bad", ["", "Proj-A", "-a", ".a", "_a", "a b", "a/b", "../x", "a" * 65, "a\n", "a%00", "é"]
+)
 def test_bad_project_slug_is_400(cc, bad):
     resp = _get(cc, bad)
     assert resp.status_code == 400
@@ -215,15 +219,30 @@ def test_full_response_shape_and_sources(cc):
 def test_entrypoint_fields(cc):
     e = _get(cc).json()["entrypoint"]
     assert (e["state"], e["match"], e["id"], e["title"]) == ("ok", "slug_prefix", 10, "Proj A entry")
-    assert e["url"] == f"{BASE}/books/{PROJECTS}/page/proj-a-entry" and e["updated_at"] == "2026-10-12T10:00:00.000000Z"
-    assert e["provenance"] == {"repo": "example-org/proj-a", "repo_note": "main", "path": "projects/proj-a.md",
-                               "git_sha": "0123abc", "git_sha_note": "blob 4567def", "status": "current"}
+    assert (
+        e["url"] == f"{BASE}/books/{PROJECTS}/page/proj-a-entry"
+        and e["updated_at"] == "2026-10-12T10:00:00.000000Z"
+    )
+    assert e["provenance"] == {
+        "repo": "example-org/proj-a",
+        "repo_note": "main",
+        "path": "projects/proj-a.md",
+        "git_sha": "0123abc",
+        "git_sha_note": "blob 4567def",
+        "status": "current",
+    }
     assert e["canonical_repo"] == "example-org/proj-a" and e["canonical_location"] == "~/work/proj-a"
     assert e["dev_prod_boundary"].startswith("Dev edits happen on branches")
 
 
-@pytest.mark.parametrize("cell,want", [("example-org/new-repo", "example-org/new-repo"),
-                                       ("example-org/new-repo ()", "example-org/new-repo"), ("unknown", "unknown")])
+@pytest.mark.parametrize(
+    "cell,want",
+    [
+        ("example-org/new-repo", "example-org/new-repo"),
+        ("example-org/new-repo ()", "example-org/new-repo"),
+        ("unknown", "unknown"),
+    ],
+)
 def test_replaced_repo_row_does_not_publish_the_earlier_repos_note(cc, wiki, cell, want):
     wiki.pages[10]["markdown"] = (PROV + FACTS).replace(
         "| Source path |", f"| Source repo | {cell} |\n| Source path |", 1)
@@ -282,7 +301,10 @@ def test_runbooks_keep_project_and_scope_all_tags_only(cc):
     assert sorted(i["title"] for i in r["items"]) == ["Restore A", "Shared rule"]
     assert "runbooks_note" not in r
     assert set(r["items"][0]) == {"id", "title", "url", "updated_at", "matched"}
-    assert {i["title"]: i["matched"] for i in r["items"]} == {"Restore A": "proj-a", "Shared rule": "scope:all"}
+    assert {i["title"]: i["matched"] for i in r["items"]} == {
+        "Restore A": "proj-a",
+        "Shared rule": "scope:all",
+    }
 
 
 def test_untagged_runbooks_give_an_empty_list_and_a_note(tmp_path, monkeypatch):
@@ -358,7 +380,9 @@ def test_ownership_is_in_progress_beads_with_the_slug_label(cc):
 
 
 def test_ownership_is_capped_at_20_and_says_so(cc):
-    cc.app.state.snap.snapshot["beads"]["items"] = [_bead(id=f"b{i:02d}", labels=["proj-a"]) for i in range(25)]
+    cc.app.state.snap.snapshot["beads"]["items"] = [
+        _bead(id=f"b{i:02d}", labels=["proj-a"]) for i in range(25)
+    ]
     o = _get(cc).json()["ownership"]
     assert len(o["items"]) == 20 and o["truncated"] is True and o["total"] == 25
 
@@ -375,8 +399,15 @@ def test_stale_beads_are_named_in_degraded(cc):
 def test_availability_is_freshness_only(cc):
     store = cc.app.state.store
     store.set_quota_cache("openrouter", _entry(provider="openrouter", checked_at="2020-01-01T00:00:00Z"))
-    store.set_quota_cache("kimi", _entry(provider="kimi", checked_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                           remaining=5.0, error="key rejected"))
+    store.set_quota_cache(
+        "kimi",
+        _entry(
+            provider="kimi",
+            checked_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            remaining=5.0,
+            error="key rejected",
+        ),
+    )
     a = _get(cc).json()["availability"]
     rows = {r["provider"]: r for r in a["rows"]}
     assert {tuple(sorted(r)) for r in rows.values()} == {
@@ -392,7 +423,9 @@ def test_availability_is_freshness_only(cc):
 def test_revision_block(cc):
     rev = _get(cc).json()["revision"]
     assert rev["critboard"] == COMMIT
-    assert rev["fetched_at"].endswith("Z") and datetime.fromisoformat(rev["fetched_at"].replace("Z", "+00:00"))
+    assert rev["fetched_at"].endswith("Z") and datetime.fromisoformat(
+        rev["fetched_at"].replace("Z", "+00:00")
+    )
     assert sorted(p["id"] for p in rev["pages"]) == [10, 20, 22, 30, 31]
     assert all(p["updated_at"] == "2026-10-12T10:00:00.000000Z" for p in rev["pages"])
 
@@ -406,9 +439,21 @@ def test_revision_commit_is_unknown_when_nothing_states_it(cc):
 # ---------------- size cap and drop order ----------------
 
 def _records(prefix, n, tags_key=None):
-    return [{"id": 100 + i, "title": f"{prefix} {i} " + "t" * 150, "slug": f"{prefix}-{i}", "status": "current",
-             "url": f"{BASE}/books/b/page/{prefix}-{i}", "updated_at": "2026-10-12T10:00:00Z",
-             "projects": ["proj-a"], "scopes": [], "source": {}, "canonical": {}} for i in range(n)]
+    return [
+        {
+            "id": 100 + i,
+            "title": f"{prefix} {i} " + "t" * 150,
+            "slug": f"{prefix}-{i}",
+            "status": "current",
+            "url": f"{BASE}/books/b/page/{prefix}-{i}",
+            "updated_at": "2026-10-12T10:00:00Z",
+            "projects": ["proj-a"],
+            "scopes": [],
+            "source": {},
+            "canonical": {},
+        }
+        for i in range(n)
+    ]
 
 
 def _build(limit, runbook_n=20, standard_n=20, bead_n=20):
@@ -462,7 +507,9 @@ def test_dropped_lists_leave_the_revision_block(cc):
 
 def test_endpoint_never_exceeds_max_bytes(tmp_path, monkeypatch):
     w = _wiki()
-    w.add_book(RUNBOOKS, 7, [_page(200 + i, f"rb-{i}", "R" * 190 + str(i), [("scope", "all")]) for i in range(25)])
+    w.add_book(
+        RUNBOOKS, 7, [_page(200 + i, f"rb-{i}", "R" * 190 + str(i), [("scope", "all")]) for i in range(25)]
+    )
     w.add_book(POLICY, 6, [_page(300 + i, f"st-{i}", "S" * 190 + str(i)) for i in range(25)])
     big = _get(_client(tmp_path, monkeypatch, w, {"max_bytes": 262144}))
     assert len(big.content) > 8192 and not any(d.startswith("dropped:") for d in big.json()["degraded"])
@@ -487,11 +534,21 @@ def _worst(long, limit, n_beads=25, also=None):
            "source": {"repo": long, "path": long, "git_sha": long, "path_note": long, "git_sha_note": long},
            "canonical": {"repo": long, "location": long, "boundary": long}}
     return ctx.build(
-        "proj-a", also=also, projects=("ok", {"records": [rec]}), runbook_result=("ok", {"records": [rec] * 20}),
-        policy=("ok", {"records": [rec] * 20}), books=(PROJECTS, RUNBOOKS, POLICY),
-        snapshot={"beads": {"items": [_bead(id=long, title=long, assignee=long, labels=["proj-a"])] * n_beads}},
-        quota_response={"providers": [_entry(provider=long)] * 30}, wf_cfg={}, commit=COMMIT, now=NOW,
-        limit=limit)
+        "proj-a",
+        also=also,
+        projects=("ok", {"records": [rec]}),
+        runbook_result=("ok", {"records": [rec] * 20}),
+        policy=("ok", {"records": [rec] * 20}),
+        books=(PROJECTS, RUNBOOKS, POLICY),
+        snapshot={
+            "beads": {"items": [_bead(id=long, title=long, assignee=long, labels=["proj-a"])] * n_beads}
+        },
+        quota_response={"providers": [_entry(provider=long)] * 30},
+        wf_cfg={},
+        commit=COMMIT,
+        now=NOW,
+        limit=limit,
+    )
 
 
 WORST_CHARS = ["x", "\u6f22", "\U0001f600", "\x01", '"', "\\", "\u00e9"]
@@ -528,7 +585,9 @@ def test_when_even_the_entrypoint_cannot_fit_a_stub_is_served():
 def test_endpoint_serves_the_stub_never_more_than_max_bytes(tmp_path, monkeypatch):
     w = _wiki()
     long = "\U0001f600" * 900
-    w.add_book(PROJECTS, 4, [_page(10, "proj-a-entry", long, markdown=PROV + FACTS.replace("~/work/proj-a", long))])
+    w.add_book(
+        PROJECTS, 4, [_page(10, "proj-a-entry", long, markdown=PROV + FACTS.replace("~/work/proj-a", long))]
+    )
     cc = _client(tmp_path, monkeypatch, w, {"max_bytes": 8192})
     cc.app.state.snap.snapshot["beads"]["items"] = [_bead(id=long, title=long, labels=["proj-a"])] * 25
     resp = _get(cc)
@@ -565,7 +624,9 @@ def test_complete_books_have_neither_truncated_reason(cc):
 
 def test_a_match_in_a_truncated_projects_book_still_flags_it(tmp_path, monkeypatch):
     w = _wiki()
-    pages = [_page(10, "proj-a-entry", "Aaa entry")] + [_page(1000 + i, f"f-{i}", f"Filler {i:03d}") for i in range(60)]
+    pages = [_page(10, "proj-a-entry", "Aaa entry")] + [
+        _page(1000 + i, f"f-{i}", f"Filler {i:03d}") for i in range(60)
+    ]
     w.add_book(PROJECTS, 4, pages)
     body = _get(_client(tmp_path, monkeypatch, w)).json()
     assert body["entrypoint"]["state"] == "ok" and "projects_truncated" in body["degraded"]
@@ -592,7 +653,15 @@ def test_render_never_raises_on_a_surrogate_in_any_value():
 # ---------------- smaller fixes ----------------
 
 def test_a_missing_url_is_unknown_not_null():
-    rec = {"id": 5, "title": "t", "slug": "proj-a-x", "url": None, "updated_at": "u", "projects": [], "scopes": []}
+    rec = {
+        "id": 5,
+        "title": "t",
+        "slug": "proj-a-x",
+        "url": None,
+        "updated_at": "u",
+        "projects": [],
+        "scopes": [],
+    }
     e = ctx.entrypoint("proj-a", ("ok", {"records": [rec]}), PROJECTS)
     assert e["url"] == "unknown"
 
@@ -632,7 +701,9 @@ def test_ttl_cache_unit():
     assert c.get("z", 0.0) is None
 
 
-@pytest.mark.parametrize("value,expect", [(None, 60), (0, 0), (30, 30), (True, 60), ("5", 60), (-1, 60), (10**9, 3600)])
+@pytest.mark.parametrize(
+    "value,expect", [(None, 60), (0, 0), (30, 30), (True, 60), ("5", 60), (-1, 60), (10**9, 3600)]
+)
 def test_cache_ttl_config(value, expect):
     assert ctx.cache_ttl_s({} if value is None else {"cache_ttl_s": value}) == expect
 
@@ -693,7 +764,13 @@ def _keys(obj, found=None):
 def test_no_forbidden_key_or_value_in_a_full_response(cc):
     cc.app.state.snap.snapshot["agents"] = [_agent(id="sess-secret-1", cost_today_usd=9.99, host="host-a")]
     cc.app.state.snap.snapshot["beads"]["items"] = [
-        _bead(labels=["proj-a", "waiting-review"], session="sess-secret-2", cost=3.5, memory_file="/home/user/m.md")]
+        _bead(
+            labels=["proj-a", "waiting-review"],
+            session="sess-secret-2",
+            cost=3.5,
+            memory_file="/home/user/m.md",
+        )
+    ]
     cc.app.state.store.set_quota_cache("kimi", _entry(provider="kimi", remaining=4.0))
     resp = _get(cc)
     keys = _keys(resp.json())
@@ -705,8 +782,17 @@ def test_no_forbidden_key_or_value_in_a_full_response(cc):
 
 def test_the_forbidden_key_filter_stops_a_leaking_projection(cc, monkeypatch):
     real = ctx._ownership_item
-    monkeypatch.setattr(ctx, "_ownership_item", lambda a: {
-        **real(a), "sessions": ["sess-secret-1"], "cost": 1.0, "Token": "t", "nested": {"auth": "a", "ok": 1}})
+    monkeypatch.setattr(
+        ctx,
+        "_ownership_item",
+        lambda a: {
+            **real(a),
+            "sessions": ["sess-secret-1"],
+            "cost": 1.0,
+            "Token": "t",
+            "nested": {"auth": "a", "ok": 1},
+        },
+    )
     resp = _get(cc)
     assert resp.status_code == 200
     item = resp.json()["ownership"]["items"][0]
@@ -716,7 +802,12 @@ def test_the_forbidden_key_filter_stops_a_leaking_projection(cc, monkeypatch):
 
 
 def test_scrub_removes_forbidden_keys_at_any_depth_and_keeps_the_rest():
-    src = {"a": 1, "Cost": 2, "l": [{"token": 1, "k": 2}], "d": {"auth_path": "/x", "v": {"values": 1, "w": 3}}}
+    src = {
+        "a": 1,
+        "Cost": 2,
+        "l": [{"token": 1, "k": 2}],
+        "d": {"auth_path": "/x", "v": {"values": 1, "w": 3}},
+    }
     assert ctx.scrub(src) == {"a": 1, "l": [{"k": 2}], "d": {"v": {"w": 3}}}
 
 
@@ -726,7 +817,9 @@ def test_availability_projection_has_no_values_even_when_given_some():
 
 
 def test_a_knowledge_error_carries_only_its_code_into_the_response():
-    body = ctx.entrypoint("proj-a", ("error", KnowledgeError("auth_failed", "secret detail", 403).code), PROJECTS)
+    body = ctx.entrypoint(
+        "proj-a", ("error", KnowledgeError("auth_failed", "secret detail", 403).code), PROJECTS
+    )
     assert body == {"source": f"bookstack:{PROJECTS}", "state": "unavailable", "error": "auth_failed"}
 
 
@@ -889,7 +982,10 @@ def test_token_and_its_hash_never_appear_in_responses_or_logs(tmp_path, monkeypa
     c, d = _warm_with_token_a(tmp_path, monkeypatch, wiki)
     resp = _get(c)
     secret = TOKEN.split(":")[1]
-    digests = [hashlib.sha256(TOKEN.encode()).hexdigest(), hashlib.sha256((TOKEN + "\n").encode()).hexdigest()]
+    digests = [
+        hashlib.sha256(TOKEN.encode()).hexdigest(),
+        hashlib.sha256((TOKEN + "\n").encode()).hexdigest(),
+    ]
     for text in (resp.text, caplog.text):
         assert secret not in text and not any(dg in text or dg[:16] in text for dg in digests)
 
@@ -938,7 +1034,9 @@ def test_bind_clears_the_cache_only_when_the_scope_changes():
 
 def test_rotating_the_token_leaves_only_the_current_entries(tmp_path, monkeypatch, wiki):
     c, d = _client_and_dir(tmp_path, monkeypatch, wiki)
-    path = pathlib.Path(json.loads((d / "sources.json").read_text())["modules"]["knowledge"]["bookstack"]["token_file"])
+    path = pathlib.Path(
+        json.loads((d / "sources.json").read_text())["modules"]["knowledge"]["bookstack"]["token_file"]
+    )
     for i in range(12):
         token = f"id-{i}:secret-{i}"
         wiki.require = f"Token {token}"
@@ -992,9 +1090,15 @@ def _entry_book(tmp_path, monkeypatch, pages):
     return _client(tmp_path, monkeypatch, w)
 
 
-def test_match_precedence_primary_tag_then_alias_tag_then_primary_prefix_then_alias_prefix(tmp_path, monkeypatch):
-    pages = [_page(1, "proj-b-pre", "Alias prefix"), _page(2, "proj-a-pre", "Primary prefix"),
-             _page(3, "t-b", "Alias tag", [("project", "proj-b")]), _page(4, "t-a", "Primary tag", [("project", "proj-a")])]
+def test_match_precedence_primary_tag_then_alias_tag_then_primary_prefix_then_alias_prefix(
+    tmp_path, monkeypatch
+):
+    pages = [
+        _page(1, "proj-b-pre", "Alias prefix"),
+        _page(2, "proj-a-pre", "Primary prefix"),
+        _page(3, "t-b", "Alias tag", [("project", "proj-b")]),
+        _page(4, "t-a", "Primary tag", [("project", "proj-a")]),
+    ]
     expect = [("Primary tag", "tag", "proj-a"), ("Alias tag", "tag", "proj-b"),
               ("Primary prefix", "slug_prefix", "proj-a"), ("Alias prefix", "slug_prefix", "proj-b")]
     for drop in range(4):
@@ -1025,7 +1129,11 @@ def test_runbooks_match_tags_for_every_label(cc):
 
 def test_the_size_cap_holds_with_labels(tmp_path, monkeypatch):
     w = _wiki()
-    w.add_book(RUNBOOKS, 7, [_page(200 + i, f"rb-{i}", "R" * 190 + str(i), [("project", f"l{i % 6}")]) for i in range(40)])
+    w.add_book(
+        RUNBOOKS,
+        7,
+        [_page(200 + i, f"rb-{i}", "R" * 190 + str(i), [("project", f"l{i % 6}")]) for i in range(40)],
+    )
     c = _client(tmp_path, monkeypatch, w, {"max_bytes": 8192})
     c.app.state.snap.snapshot["beads"]["items"] = [
         _bead(id=f"b{i:03d}", title="T" * 190, labels=[f"l{i % 6}"]) for i in range(60)]
@@ -1039,7 +1147,10 @@ def test_the_size_cap_holds_with_labels(tmp_path, monkeypatch):
 @pytest.mark.parametrize("odd", [{"a": 1}, ["x"], 5, None, True, 1.5])
 def test_a_non_string_bead_label_does_not_break_ownership(cc, odd):
     cc.app.state.snap.snapshot["beads"]["items"] = [
-        _bead(id="odd", labels=["proj-a", odd]), _bead(id="only-odd", labels=[odd]), _bead(id="ok", labels=["proj-a"])]
+        _bead(id="odd", labels=["proj-a", odd]),
+        _bead(id="only-odd", labels=[odd]),
+        _bead(id="ok", labels=["proj-a"]),
+    ]
     resp = _get(cc, also="proj-b")
     assert resp.status_code == 200
     assert sorted(i["id"] for i in resp.json()["ownership"]["items"]) == ["odd", "ok"]
@@ -1047,7 +1158,10 @@ def test_a_non_string_bead_label_does_not_break_ownership(cc, odd):
 
 @pytest.mark.parametrize("labels", ["proj-a", {"proj-a": 1}, 7, None])
 def test_a_bead_whose_labels_is_not_a_list_is_skipped(cc, labels):
-    cc.app.state.snap.snapshot["beads"]["items"] = [_bead(id="weird", labels=labels), _bead(id="ok", labels=["proj-a"])]
+    cc.app.state.snap.snapshot["beads"]["items"] = [
+        _bead(id="weird", labels=labels),
+        _bead(id="ok", labels=["proj-a"]),
+    ]
     resp = _get(cc)
     assert resp.status_code == 200 and [i["id"] for i in resp.json()["ownership"]["items"]] == ["ok"]
 

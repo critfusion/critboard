@@ -93,7 +93,8 @@ def write_fake_bd_with_sync_remote(path, workspace_path, remote=""):
         "  exit 0\n"
         "fi\n"
         'if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "sync.remote" ]; then\n'
-        f'  echo \'{{"key": "sync.remote", "location": "config.yaml", "schema_version": 1, "value": "{remote}"}}\'\n'
+        f'  echo \'{{"key": "sync.remote", "location": "config.yaml", '
+        f'"schema_version": 1, "value": "{remote}"}}\'\n'
         "  exit 0\n"
         "fi\n"
         'echo "fake bd: unexpected args: $@" >&2\n'

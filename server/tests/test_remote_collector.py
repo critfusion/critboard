@@ -29,7 +29,7 @@ class FakeProc:
         self._hang = hang
         self.killed = False
 
-    async def communicate(self, input=None):  # noqa: A002
+    async def communicate(self, input=None):
         if self._hang:
             import asyncio
             await asyncio.sleep(999)

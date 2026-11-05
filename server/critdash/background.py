@@ -113,7 +113,7 @@ def background_loops(
                         await asyncio.to_thread(update_mod.apply_update, config, config.dashboard_root)
                     except update_mod.UpdateError as exc:
                         logger.warning("periodic auto-apply refused: %s: %s", exc.reason, exc.message)
-            except Exception:  # noqa: BLE001 - one bad tick must not kill the loop
+            except Exception:  # one bad tick must not kill the loop
                 logger.exception("periodic update check failed")
             interval = float(
                 config.sources.get("update_check_interval_s", update_mod.DEFAULT_UPDATE_CHECK_INTERVAL_S)

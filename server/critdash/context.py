@@ -143,8 +143,10 @@ def entrypoint(project, result, book_slug: str) -> dict:
         return _failed(source, state, result[1])
     records = [r for r in payload.get("records") or [] if isinstance(r, dict)]
     hit = match = matched = None
-    for rule, test in (("tag", _has_tag),
-                       ("slug_prefix", lambda r, x: isinstance(r.get("slug"), str) and r["slug"].startswith(x + "-"))):
+    for rule, test in (
+        ("tag", _has_tag),
+        ("slug_prefix", lambda r, x: isinstance(r.get("slug"), str) and r["slug"].startswith(x + "-")),
+    ):
         for label in labels:
             hit = next((r for r in records if test(r, label)), None)
             if hit:
@@ -199,7 +201,12 @@ def runbooks(project, result, book_slug: str) -> dict:
         if label or "all" in [t.lower() for t in r.get("scopes") or []]:
             hits.append({**_page_ref(r), "matched": label or "scope:all"})
     cut = bool(payload.get("truncated"))
-    out = {"source": source, "state": "ok", "items": hits[:MAX_LIST], "truncated": len(hits) > MAX_LIST or cut}
+    out = {
+        "source": source,
+        "state": "ok",
+        "items": hits[:MAX_LIST],
+        "truncated": len(hits) > MAX_LIST or cut,
+    }
     if not hits and not cut:
         out["runbooks_note"] = "untagged"
     return out
@@ -285,8 +292,21 @@ def _degraded(sections: dict, stale_beads: bool, cut: dict) -> list[str]:
     return out
 
 
-def build(project: str, *, also: list[str] | None = None, projects, runbook_result, policy, books: tuple[str, str, str], snapshot: dict,
-          quota_response: dict, wf_cfg: dict, commit: str | None, now: datetime, limit: int) -> dict:
+def build(
+    project: str,
+    *,
+    also: list[str] | None = None,
+    projects,
+    runbook_result,
+    policy,
+    books: tuple[str, str, str],
+    snapshot: dict,
+    quota_response: dict,
+    wf_cfg: dict,
+    commit: str | None,
+    now: datetime,
+    limit: int,
+) -> dict:
     """The /api/context body. `projects`, `runbook_result` and `policy` are
     ('ok', book payload) or ('error', KnowledgeError code). `books` is
     (projects, runbooks, policy) book slugs."""
@@ -324,9 +344,14 @@ def build(project: str, *, also: list[str] | None = None, projects, runbook_resu
     if len(render(body)) > limit:
         # Last resort, so the cap always holds: the entrypoint cannot fit.
         body = {
-            "ok": True, "project": project, "labels": labels, "state": "over_cap",
+            "ok": True,
+            "project": project,
+            "labels": labels,
+            "state": "over_cap",
             "revision": {"critboard": _s(commit, 64), "pages": [], "fetched_at": now_iso},
-            "degraded": base_degraded + [f"dropped:{n}" for n in DROP_ORDER] + ["entrypoint_dropped", "over_cap"],
+            "degraded": base_degraded
+            + [f"dropped:{n}" for n in DROP_ORDER]
+            + ["entrypoint_dropped", "over_cap"],
         }
     return body
 

@@ -161,10 +161,17 @@ def register(app: FastAPI, d: Deps) -> None:
         except KnowledgeError as err:
             policy = workflow.policy_unavailable(err.code, err.message)
         stale_after_s = config.sources.get("quota_stale_after_s", 3600)
-        body = workflow.build(snap.snapshot, quota.build_quota_response(store.get_quota_cache(), stale_after_s),
-                              cfg, policy, now)
-        return JSONResponse({"ok": True, **body, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
-                            headers={"Cache-Control": "no-store"})
+        body = workflow.build(
+            snap.snapshot,
+            quota.build_quota_response(store.get_quota_cache(), stale_after_s),
+            cfg,
+            policy,
+            now,
+        )
+        return JSONResponse(
+            {"ok": True, **body, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
+            headers={"Cache-Control": "no-store"},
+        )
 
     _register_context(app, d, knowledge, served, _knowledge_gate)
 
@@ -197,9 +204,16 @@ def _register_context(
         aliases = None if repeated else context_mod.parse_also(also)
         if aliases is None:
             return JSONResponse(
-                {"ok": False, "error": {"code": "invalid_also",
-                                        "message": "also: at most 5 comma-separated labels, each a valid project slug"}},
-                status_code=400, headers={"Cache-Control": "no-store"})
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "invalid_also",
+                        "message": "also: at most 5 comma-separated labels, each a valid project slug",
+                    },
+                },
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
         now = datetime.now(UTC)
         cfg = module_config(config.sources, "context") or {}
         wf_cfg = module_config(config.sources, "workflow") or {}
@@ -242,9 +256,19 @@ def _register_context(
             or (await asyncio.to_thread(update_mod.git_identity, config.dashboard_root))["commit"]
         stale_after_s = config.sources.get("quota_stale_after_s", 3600)
         body = context_mod.build(
-            project, also=aliases, projects=projects, runbook_result=runbook_result, policy=policy, books=books,
-            snapshot=snap.snapshot, quota_response=quota.build_quota_response(store.get_quota_cache(), stale_after_s),
-            wf_cfg=wf_cfg, commit=commit, now=now, limit=context_mod.max_bytes(cfg))
+            project,
+            also=aliases,
+            projects=projects,
+            runbook_result=runbook_result,
+            policy=policy,
+            books=books,
+            snapshot=snap.snapshot,
+            quota_response=quota.build_quota_response(store.get_quota_cache(), stale_after_s),
+            wf_cfg=wf_cfg,
+            commit=commit,
+            now=now,
+            limit=context_mod.max_bytes(cfg),
+        )
         served.record(body["revision"]["pages"], project, body["revision"]["fetched_at"])
         return Response(context_mod.render(body), media_type="application/json",
                         headers={"Cache-Control": "no-store"})

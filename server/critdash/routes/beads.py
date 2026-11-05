@@ -59,7 +59,7 @@ def _register_detail(app: FastAPI, d: Deps) -> None:
             raise HTTPException(status_code=404, detail=f"bead not found: {bead_id}") from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - never 500 a traceback for a subprocess hiccup
+        except Exception as exc:  # never 500 a traceback for a subprocess hiccup
             raise HTTPException(status_code=502, detail=f"bd show failed: {exc}") from exc
 
         _bead_detail_cache[bead_id] = (now + _BEAD_DETAIL_TTL_S, detail, 200)
@@ -216,7 +216,7 @@ def _register_reply(app: FastAPI, d: Deps) -> None:
         # away, instead of waiting for the beads collector's own 30s tick.
         try:
             await scheduler.run_once("beads")
-        except Exception:  # noqa: BLE001 - the write already succeeded; a
+        except Exception:  # the write already succeeded; a
             # failed/inactive beads collector must not turn a successful
             # bd write into a 500. The card still updates on the next tick.
             logger.warning("bead reply: post-write beads re-collect failed", exc_info=True)

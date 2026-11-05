@@ -294,14 +294,18 @@ class BookStackAdapter:
                 continue
             book = item.get("book") if isinstance(item.get("book"), dict) else {}
             preview = item.get("preview_html") if isinstance(item.get("preview_html"), dict) else {}
-            results.append({
-                "id": item["id"],
-                "name": str(item.get("name") or ""),
-                "book": str(book.get("name") or ""),
-                "updated_at": item.get("updated_at"),
-                **page_links(base, book.get("slug"), item.get("slug")),
-                "preview": html_to_text(str(preview.get("content") or "")[:PREVIEW_INPUT_MAX_CHARS])[:PREVIEW_CHARS],
-            })
+            results.append(
+                {
+                    "id": item["id"],
+                    "name": str(item.get("name") or ""),
+                    "book": str(book.get("name") or ""),
+                    "updated_at": item.get("updated_at"),
+                    **page_links(base, book.get("slug"), item.get("slug")),
+                    "preview": html_to_text(str(preview.get("content") or "")[:PREVIEW_INPUT_MAX_CHARS])[
+                        :PREVIEW_CHARS
+                    ],
+                }
+            )
         return {"results": results, "total": body.get("total", len(results))}
 
     async def page(self, page_id: int) -> dict:
@@ -447,7 +451,7 @@ class BookStackAdapter:
                     parse_record, page, base_url=base, book_slug=slug, now=now, stale_days=stale_days)
                 rec["id"] = page_id  # the listing's int, not whatever the page body claims
                 return rec
-            except Exception:  # noqa: BLE001 - one odd page must not take the view down
+            except Exception:  # one odd page must not take the view down
                 logger.warning("infrastructure page %s could not be parsed", page_id)
                 return degraded_record(page_id, page.get("name"))
 

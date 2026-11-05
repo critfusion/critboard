@@ -6,7 +6,7 @@ PORT ?= 9999
 BIND ?= 127.0.0.1
 SHELL := /bin/bash
 
-.PHONY: install run test check doctor update
+.PHONY: install run test lint check doctor update
 
 install: ## One-command setup: venv, deps, config/sources.json. See install.sh --help.
 	./install.sh --port $(PORT) --bind $(BIND)
@@ -28,7 +28,17 @@ test: ## Run the backend test suite. Uses server/.venv if it's set up, else fall
 		exit 1; \
 	fi
 
-check: ## Run the public-repo sanitization guard (scripts/check-public.sh).
+lint: ## Run ruff over server/ (rules in server/pyproject.toml). Uses server/.venv if set up, else uv.
+	@if [ -x server/.venv/bin/ruff ]; then \
+		cd server && .venv/bin/ruff check .; \
+	elif command -v uv >/dev/null 2>&1; then \
+		cd server && uv run ruff check .; \
+	else \
+		echo "Makefile: ERROR: Neither venv (server/.venv/bin/ruff missing) nor 'uv' found. Run 'make install' first, or install uv (https://docs.astral.sh/uv/) to lint." >&2; \
+		exit 1; \
+	fi
+
+check: lint ## Run lint, then the public-repo sanitization guard (scripts/check-public.sh).
 	bash scripts/check-public.sh
 
 doctor: ## Report configured vs. detected tool/data paths; exits non-zero on a mismatch. See install.sh --doctor.
