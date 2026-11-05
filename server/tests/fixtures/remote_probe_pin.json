@@ -1,0 +1,1892 @@
+{
+ "aggregate_a": {
+  "usage": {
+   "2026-09-18T10\u001fclaude-opus-5": {
+    "input": 6,
+    "output": 14,
+    "cache_read": 22,
+    "cache_write_5m": 32,
+    "cache_write_1h": 17,
+    "messages": 2
+   },
+   "2026-09-18T11\u001fclaude-sonnet-5": {
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  },
+  "tools": {
+   "2026-09-18\u001fEdit": {
+    "calls": 1,
+    "errors": 1
+   },
+   "2026-09-18\u001fBash": {
+    "calls": 1,
+    "errors": 1
+   },
+   "2026-09-18\u001funknown": {
+    "calls": 1,
+    "errors": 3
+   },
+   "2026-09-19\u001funknown": {
+    "calls": 0,
+    "errors": 1
+   }
+  },
+  "errors": {
+   "2026-09-18\u001fstring_not_found\u001fEdit": {
+    "count": 1,
+    "last_seen": "2026-09-18T10:09:00Z"
+   },
+   "2026-09-18\u001fpermission_denied\u001fBash": {
+    "count": 1,
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   "2026-09-18\u001fother\u001funknown": {
+    "count": 1,
+    "last_seen": "2026-09-18T10:11:00Z"
+   },
+   "2026-09-18\u001fstring_not_found\u001funknown": {
+    "count": 2,
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   "2026-09-19\u001fother\u001funknown": {
+    "count": 1,
+    "last_seen": "2026-09-19T09:00:00Z"
+   }
+  },
+  "error_examples": {
+   "string_not_found": {
+    "example": "String to replace not found, same second.",
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   "permission_denied": {
+    "example": "Permission for this action was denied by the user.",
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   "other": {
+    "example": "Something else broke badly",
+    "last_seen": "2026-09-18T10:11:00Z"
+   }
+  },
+  "trouble_files": {
+   "2026-09-18\u001fa.py\u001fEdit": {
+    "errors": 1
+   }
+  },
+  "api_errors": {
+   "2026-09-18\u001frate_limit": {
+    "count": 2,
+    "last_seen": "2026-09-18T12:30:00Z"
+   },
+   "2026-09-18\u001funknown": {
+    "count": 1,
+    "last_seen": "2026-09-18T12:15:00Z"
+   }
+  },
+  "sessions": {
+   "2026-09-18\u001fsA\u001f0\u001fclaude-opus-5": {
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   "2026-09-18\u001fsA\u001f1\u001fclaude-opus-5": {
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 19,
+    "cache_write_1h": 0,
+    "messages": 1
+   }
+  },
+  "msgs": {
+   "m1": [
+    "2026-09-18T10",
+    "claude-opus-5",
+    "2026-09-18",
+    "sA",
+    "0",
+    3,
+    7,
+    11,
+    13,
+    17
+   ],
+   "m2": [
+    "2026-09-18T10",
+    "claude-opus-5",
+    "2026-09-18",
+    "sA",
+    "1",
+    3,
+    7,
+    11,
+    19,
+    0
+   ],
+   "m5": [
+    "2026-09-18T11",
+    "claude-sonnet-5",
+    "2026-09-18",
+    null,
+    "0",
+    3,
+    7,
+    11,
+    13,
+    17
+   ]
+  }
+ },
+ "aggregate_sub": {
+  "usage": {
+   "2026-09-18T10\u001fclaude-sonnet-5": {
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   "2026-09-18T10\u001fclaude-opus-5": {
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  },
+  "tools": {
+   "2026-09-18\u001fEdit": {
+    "calls": 1,
+    "errors": 1
+   }
+  },
+  "errors": {
+   "2026-09-18\u001fstring_not_found\u001fEdit": {
+    "count": 1,
+    "last_seen": "2026-09-18T10:42:00Z"
+   }
+  },
+  "error_examples": {
+   "string_not_found": {
+    "example": "String to replace not found.",
+    "last_seen": "2026-09-18T10:42:00Z"
+   }
+  },
+  "trouble_files": {
+   "2026-09-18\u001fsub.py\u001fEdit": {
+    "errors": 1
+   }
+  },
+  "api_errors": {
+   "2026-09-18\u001frate_limit": {
+    "count": 1,
+    "last_seen": "2026-09-18T10:43:00Z"
+   }
+  },
+  "sessions": {
+   "2026-09-18\u001fsA\u001f1\u001fclaude-sonnet-5": {
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   "2026-09-18\u001fsA\u001f1\u001fclaude-opus-5": {
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  },
+  "msgs": {
+   "m4": [
+    "2026-09-18T10",
+    "claude-sonnet-5",
+    "2026-09-18",
+    "sA",
+    "1",
+    3,
+    7,
+    11,
+    13,
+    17
+   ],
+   "m2": [
+    "2026-09-18T10",
+    "claude-opus-5",
+    "2026-09-18",
+    "sA",
+    "1",
+    3,
+    7,
+    11,
+    13,
+    17
+   ]
+  }
+ },
+ "aggregate_missing": {
+  "usage": {},
+  "tools": {},
+  "errors": {},
+  "error_examples": {},
+  "trouble_files": {},
+  "api_errors": {},
+  "sessions": {},
+  "msgs": {}
+ },
+ "first": {
+  "usage_buckets": [
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 6,
+    "output": 14,
+    "cache_read": 22,
+    "cache_write_5m": 32,
+    "cache_write_1h": 17,
+    "messages": 2
+   },
+   {
+    "hour": "2026-09-18T11",
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-17T09",
+    "model": "claude-opus-5",
+    "project": "legacy",
+    "input": 1,
+    "output": 2,
+    "cache_read": 3,
+    "cache_write_5m": 4,
+    "cache_write_1h": 5,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-opus-5",
+    "project": "legacy",
+    "input": 10,
+    "output": 20,
+    "cache_read": 30,
+    "cache_write_5m": 40,
+    "cache_write_1h": 50,
+    "messages": 2
+   },
+   {
+    "hour": "2026-09-19T08",
+    "model": "claude-haiku-5",
+    "project": "other",
+    "input": 1,
+    "output": 2,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  ],
+  "tool_buckets": [
+   {
+    "day": "2026-09-18",
+    "tool": "Edit",
+    "calls": 5,
+    "errors": 3
+   },
+   {
+    "day": "2026-09-18",
+    "tool": "Bash",
+    "calls": 1,
+    "errors": 1
+   },
+   {
+    "day": "2026-09-18",
+    "tool": "unknown",
+    "calls": 1,
+    "errors": 4
+   },
+   {
+    "day": "2026-09-19",
+    "tool": "unknown",
+    "calls": 0,
+    "errors": 1
+   },
+   {
+    "day": "2026-09-19",
+    "tool": "Read",
+    "calls": 1,
+    "errors": 1
+   }
+  ],
+  "error_buckets": [
+   {
+    "day": "2026-09-18",
+    "kind": "string_not_found",
+    "tool": "Edit",
+    "count": 3,
+    "last_seen": "2026-09-18T23:00:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "permission_denied",
+    "tool": "Bash",
+    "count": 1,
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "other",
+    "tool": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-18T10:11:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "string_not_found",
+    "tool": "unknown",
+    "count": 3,
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   {
+    "day": "2026-09-19",
+    "kind": "other",
+    "tool": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-19T09:00:00Z"
+   },
+   {
+    "day": "2026-09-19",
+    "kind": "file_not_found",
+    "tool": "Read",
+    "count": 1,
+    "last_seen": "2026-09-19T08:02:00Z"
+   }
+  ],
+  "error_examples": [
+   {
+    "kind": "string_not_found",
+    "example": "String to replace not found tie.",
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   {
+    "kind": "permission_denied",
+    "example": "Permission for this action was denied by the user.",
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   {
+    "kind": "other",
+    "example": "Something else broke badly",
+    "last_seen": "2026-09-18T10:11:00Z"
+   },
+   {
+    "kind": "file_not_found",
+    "example": "File does not exist.",
+    "last_seen": "2026-09-19T08:02:00Z"
+   }
+  ],
+  "trouble_file_buckets": [
+   {
+    "day": "2026-09-18",
+    "path": "a.py",
+    "tool": "Edit",
+    "errors": 3
+   },
+   {
+    "day": "2026-09-19",
+    "path": "/x/b.py",
+    "tool": "Read",
+    "errors": 1
+   }
+  ],
+  "api_error_buckets": [
+   {
+    "day": "2026-09-18",
+    "kind": "rate_limit",
+    "count": 6,
+    "last_seen": "2026-09-18T12:30:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-18T12:15:00Z"
+   }
+  ],
+  "session_buckets": [
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 0,
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 8,
+    "output": 12,
+    "cache_read": 16,
+    "cache_write_5m": 18,
+    "cache_write_1h": 22,
+    "messages": 2
+   },
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 1,
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 19,
+    "cache_write_1h": 0,
+    "messages": 1
+   },
+   {
+    "day": "2026-09-19",
+    "session_id": "sB",
+    "is_sidechain": 0,
+    "model": "claude-haiku-5",
+    "project": "other",
+    "input": 1,
+    "output": 2,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 1,
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  ]
+ },
+ "first_state": {
+  "kimi_files": {
+   "keep": "me"
+  },
+  "files": {
+   "projects/-home-user-repos-demo/s1.jsonl": {
+    "project": "demo",
+    "tools": {
+     "2026-09-18\u001fEdit": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001fBash": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001funknown": {
+      "calls": 1,
+      "errors": 3
+     },
+     "2026-09-19\u001funknown": {
+      "calls": 0,
+      "errors": 1
+     }
+    },
+    "errors": {
+     "2026-09-18\u001fstring_not_found\u001fEdit": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:09:00Z"
+     },
+     "2026-09-18\u001fpermission_denied\u001fBash": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:10:00Z"
+     },
+     "2026-09-18\u001fother\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:11:00Z"
+     },
+     "2026-09-18\u001fstring_not_found\u001funknown": {
+      "count": 2,
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "2026-09-19\u001fother\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-19T09:00:00Z"
+     }
+    },
+    "error_examples": {
+     "string_not_found": {
+      "example": "String to replace not found, same second.",
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "permission_denied": {
+      "example": "Permission for this action was denied by the user.",
+      "last_seen": "2026-09-18T10:10:00Z"
+     },
+     "other": {
+      "example": "Something else broke badly",
+      "last_seen": "2026-09-18T10:11:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-18\u001fa.py\u001fEdit": {
+      "errors": 1
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 2,
+      "last_seen": "2026-09-18T12:30:00Z"
+     },
+     "2026-09-18\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T12:15:00Z"
+     }
+    },
+    "msgs": {
+     "m1": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m2": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      19,
+      0
+     ],
+     "m5": [
+      "2026-09-18T11",
+      "claude-sonnet-5",
+      "2026-09-18",
+      null,
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ]
+    }
+   },
+   "projects/-home-user-repos-demo/sA/subagents/agent-1.jsonl": {
+    "project": "demo",
+    "msgs": {
+     "m4": [
+      "2026-09-18T10",
+      "claude-sonnet-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m2": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      13,
+      17
+     ]
+    }
+   },
+   "projects/-home-user-repos-legacy/s3.jsonl": {
+    "project": "legacy",
+    "buckets": {
+     "2026-09-17T09\u001fclaude-opus-5": {
+      "input": 1,
+      "output": 2,
+      "cache_read": 3,
+      "cache_write_5m": 4,
+      "cache_write_1h": 5,
+      "messages": 1
+     },
+     "2026-09-18T10\u001fclaude-opus-5": {
+      "input": 10,
+      "output": 20,
+      "cache_read": 30,
+      "cache_write_5m": 40,
+      "cache_write_1h": 50,
+      "messages": 2
+     }
+    },
+    "tools": {
+     "2026-09-18\u001fEdit": {
+      "calls": 4,
+      "errors": 2
+     }
+    },
+    "errors": {
+     "2026-09-18\u001fstring_not_found\u001fEdit": {
+      "count": 2,
+      "last_seen": "2026-09-18T23:00:00Z"
+     }
+    },
+    "error_examples": {
+     "string_not_found": {
+      "example": "legacy example",
+      "last_seen": "2026-09-18T10:12:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-18\u001fa.py\u001fEdit": {
+      "errors": 2
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 3,
+      "last_seen": "2026-09-18T01:00:00Z"
+     }
+    },
+    "sessions": {
+     "2026-09-18\u001fsA\u001f0\u001fclaude-opus-5": {
+      "project": "legacy",
+      "input": 5,
+      "output": 5,
+      "cache_read": 5,
+      "cache_write_5m": 5,
+      "cache_write_1h": 5,
+      "messages": 1
+     }
+    }
+   },
+   "projects/-home-user-repos-other/s2.jsonl": {
+    "project": "other",
+    "tools": {
+     "2026-09-19\u001fRead": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001funknown": {
+      "calls": 0,
+      "errors": 1
+     }
+    },
+    "errors": {
+     "2026-09-19\u001ffile_not_found\u001fRead": {
+      "count": 1,
+      "last_seen": "2026-09-19T08:02:00Z"
+     },
+     "2026-09-18\u001fstring_not_found\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:12:00Z"
+     }
+    },
+    "error_examples": {
+     "file_not_found": {
+      "example": "File does not exist.",
+      "last_seen": "2026-09-19T08:02:00Z"
+     },
+     "string_not_found": {
+      "example": "String to replace not found tie.",
+      "last_seen": "2026-09-18T10:12:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-19\u001f/x/b.py\u001fRead": {
+      "errors": 1
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 1,
+      "last_seen": "2026-09-18T11:00:00Z"
+     }
+    },
+    "msgs": {
+     "m1": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m3": [
+      "2026-09-19T08",
+      "claude-haiku-5",
+      "2026-09-19",
+      "sB",
+      "0",
+      1,
+      2,
+      11,
+      13,
+      17
+     ]
+    }
+   }
+  }
+ },
+ "second": {
+  "usage_buckets": [
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 6,
+    "output": 14,
+    "cache_read": 22,
+    "cache_write_5m": 32,
+    "cache_write_1h": 17,
+    "messages": 2
+   },
+   {
+    "hour": "2026-09-18T11",
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-17T09",
+    "model": "claude-opus-5",
+    "project": "legacy",
+    "input": 1,
+    "output": 2,
+    "cache_read": 3,
+    "cache_write_5m": 4,
+    "cache_write_1h": 5,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-opus-5",
+    "project": "legacy",
+    "input": 10,
+    "output": 20,
+    "cache_read": 30,
+    "cache_write_5m": 40,
+    "cache_write_1h": 50,
+    "messages": 2
+   },
+   {
+    "hour": "2026-09-19T08",
+    "model": "claude-haiku-5",
+    "project": "other",
+    "input": 1,
+    "output": 2,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  ],
+  "tool_buckets": [
+   {
+    "day": "2026-09-18",
+    "tool": "Edit",
+    "calls": 5,
+    "errors": 3
+   },
+   {
+    "day": "2026-09-18",
+    "tool": "Bash",
+    "calls": 1,
+    "errors": 1
+   },
+   {
+    "day": "2026-09-18",
+    "tool": "unknown",
+    "calls": 1,
+    "errors": 4
+   },
+   {
+    "day": "2026-09-19",
+    "tool": "unknown",
+    "calls": 0,
+    "errors": 1
+   },
+   {
+    "day": "2026-09-19",
+    "tool": "Read",
+    "calls": 1,
+    "errors": 1
+   }
+  ],
+  "error_buckets": [
+   {
+    "day": "2026-09-18",
+    "kind": "string_not_found",
+    "tool": "Edit",
+    "count": 3,
+    "last_seen": "2026-09-18T23:00:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "permission_denied",
+    "tool": "Bash",
+    "count": 1,
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "other",
+    "tool": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-18T10:11:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "string_not_found",
+    "tool": "unknown",
+    "count": 3,
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   {
+    "day": "2026-09-19",
+    "kind": "other",
+    "tool": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-19T09:00:00Z"
+   },
+   {
+    "day": "2026-09-19",
+    "kind": "file_not_found",
+    "tool": "Read",
+    "count": 1,
+    "last_seen": "2026-09-19T08:02:00Z"
+   }
+  ],
+  "error_examples": [
+   {
+    "kind": "string_not_found",
+    "example": "String to replace not found tie.",
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   {
+    "kind": "permission_denied",
+    "example": "Permission for this action was denied by the user.",
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   {
+    "kind": "other",
+    "example": "Something else broke badly",
+    "last_seen": "2026-09-18T10:11:00Z"
+   },
+   {
+    "kind": "file_not_found",
+    "example": "File does not exist.",
+    "last_seen": "2026-09-19T08:02:00Z"
+   }
+  ],
+  "trouble_file_buckets": [
+   {
+    "day": "2026-09-18",
+    "path": "a.py",
+    "tool": "Edit",
+    "errors": 3
+   },
+   {
+    "day": "2026-09-19",
+    "path": "/x/b.py",
+    "tool": "Read",
+    "errors": 1
+   }
+  ],
+  "api_error_buckets": [
+   {
+    "day": "2026-09-18",
+    "kind": "rate_limit",
+    "count": 6,
+    "last_seen": "2026-09-18T12:30:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-18T12:15:00Z"
+   }
+  ],
+  "session_buckets": [
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 0,
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 8,
+    "output": 12,
+    "cache_read": 16,
+    "cache_write_5m": 18,
+    "cache_write_1h": 22,
+    "messages": 2
+   },
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 1,
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 19,
+    "cache_write_1h": 0,
+    "messages": 1
+   },
+   {
+    "day": "2026-09-19",
+    "session_id": "sB",
+    "is_sidechain": 0,
+    "model": "claude-haiku-5",
+    "project": "other",
+    "input": 1,
+    "output": 2,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 1,
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  ]
+ },
+ "second_state": {
+  "kimi_files": {
+   "keep": "me"
+  },
+  "files": {
+   "projects/-home-user-repos-demo/s1.jsonl": {
+    "project": "demo",
+    "tools": {
+     "2026-09-18\u001fEdit": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001fBash": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001funknown": {
+      "calls": 1,
+      "errors": 3
+     },
+     "2026-09-19\u001funknown": {
+      "calls": 0,
+      "errors": 1
+     }
+    },
+    "errors": {
+     "2026-09-18\u001fstring_not_found\u001fEdit": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:09:00Z"
+     },
+     "2026-09-18\u001fpermission_denied\u001fBash": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:10:00Z"
+     },
+     "2026-09-18\u001fother\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:11:00Z"
+     },
+     "2026-09-18\u001fstring_not_found\u001funknown": {
+      "count": 2,
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "2026-09-19\u001fother\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-19T09:00:00Z"
+     }
+    },
+    "error_examples": {
+     "string_not_found": {
+      "example": "String to replace not found, same second.",
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "permission_denied": {
+      "example": "Permission for this action was denied by the user.",
+      "last_seen": "2026-09-18T10:10:00Z"
+     },
+     "other": {
+      "example": "Something else broke badly",
+      "last_seen": "2026-09-18T10:11:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-18\u001fa.py\u001fEdit": {
+      "errors": 1
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 2,
+      "last_seen": "2026-09-18T12:30:00Z"
+     },
+     "2026-09-18\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T12:15:00Z"
+     }
+    },
+    "msgs": {
+     "m1": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m2": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      19,
+      0
+     ],
+     "m5": [
+      "2026-09-18T11",
+      "claude-sonnet-5",
+      "2026-09-18",
+      null,
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ]
+    }
+   },
+   "projects/-home-user-repos-demo/sA/subagents/agent-1.jsonl": {
+    "project": "demo",
+    "msgs": {
+     "m4": [
+      "2026-09-18T10",
+      "claude-sonnet-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m2": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      13,
+      17
+     ]
+    }
+   },
+   "projects/-home-user-repos-legacy/s3.jsonl": {
+    "project": "legacy",
+    "buckets": {
+     "2026-09-17T09\u001fclaude-opus-5": {
+      "input": 1,
+      "output": 2,
+      "cache_read": 3,
+      "cache_write_5m": 4,
+      "cache_write_1h": 5,
+      "messages": 1
+     },
+     "2026-09-18T10\u001fclaude-opus-5": {
+      "input": 10,
+      "output": 20,
+      "cache_read": 30,
+      "cache_write_5m": 40,
+      "cache_write_1h": 50,
+      "messages": 2
+     }
+    },
+    "tools": {
+     "2026-09-18\u001fEdit": {
+      "calls": 4,
+      "errors": 2
+     }
+    },
+    "errors": {
+     "2026-09-18\u001fstring_not_found\u001fEdit": {
+      "count": 2,
+      "last_seen": "2026-09-18T23:00:00Z"
+     }
+    },
+    "error_examples": {
+     "string_not_found": {
+      "example": "legacy example",
+      "last_seen": "2026-09-18T10:12:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-18\u001fa.py\u001fEdit": {
+      "errors": 2
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 3,
+      "last_seen": "2026-09-18T01:00:00Z"
+     }
+    },
+    "sessions": {
+     "2026-09-18\u001fsA\u001f0\u001fclaude-opus-5": {
+      "project": "legacy",
+      "input": 5,
+      "output": 5,
+      "cache_read": 5,
+      "cache_write_5m": 5,
+      "cache_write_1h": 5,
+      "messages": 1
+     }
+    }
+   },
+   "projects/-home-user-repos-other/s2.jsonl": {
+    "project": "other",
+    "tools": {
+     "2026-09-19\u001fRead": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001funknown": {
+      "calls": 0,
+      "errors": 1
+     }
+    },
+    "errors": {
+     "2026-09-19\u001ffile_not_found\u001fRead": {
+      "count": 1,
+      "last_seen": "2026-09-19T08:02:00Z"
+     },
+     "2026-09-18\u001fstring_not_found\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:12:00Z"
+     }
+    },
+    "error_examples": {
+     "file_not_found": {
+      "example": "File does not exist.",
+      "last_seen": "2026-09-19T08:02:00Z"
+     },
+     "string_not_found": {
+      "example": "String to replace not found tie.",
+      "last_seen": "2026-09-18T10:12:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-19\u001f/x/b.py\u001fRead": {
+      "errors": 1
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 1,
+      "last_seen": "2026-09-18T11:00:00Z"
+     }
+    },
+    "msgs": {
+     "m1": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m3": [
+      "2026-09-19T08",
+      "claude-haiku-5",
+      "2026-09-19",
+      "sB",
+      "0",
+      1,
+      2,
+      11,
+      13,
+      17
+     ]
+    }
+   }
+  }
+ },
+ "third": {
+  "usage_buckets": [
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 6,
+    "output": 14,
+    "cache_read": 22,
+    "cache_write_5m": 32,
+    "cache_write_1h": 17,
+    "messages": 2
+   },
+   {
+    "hour": "2026-09-18T11",
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-17T09",
+    "model": "claude-opus-5",
+    "project": "legacy",
+    "input": 1,
+    "output": 2,
+    "cache_read": 3,
+    "cache_write_5m": 4,
+    "cache_write_1h": 5,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-opus-5",
+    "project": "legacy",
+    "input": 10,
+    "output": 20,
+    "cache_read": 30,
+    "cache_write_5m": 40,
+    "cache_write_1h": 50,
+    "messages": 2
+   },
+   {
+    "hour": "2026-09-19T08",
+    "model": "claude-haiku-5",
+    "project": "other",
+    "input": 1,
+    "output": 2,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-19T09",
+    "model": "claude-haiku-5",
+    "project": "other",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   },
+   {
+    "hour": "2026-09-18T10",
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  ],
+  "tool_buckets": [
+   {
+    "day": "2026-09-18",
+    "tool": "Edit",
+    "calls": 5,
+    "errors": 3
+   },
+   {
+    "day": "2026-09-18",
+    "tool": "Bash",
+    "calls": 1,
+    "errors": 1
+   },
+   {
+    "day": "2026-09-18",
+    "tool": "unknown",
+    "calls": 1,
+    "errors": 4
+   },
+   {
+    "day": "2026-09-19",
+    "tool": "unknown",
+    "calls": 0,
+    "errors": 1
+   },
+   {
+    "day": "2026-09-19",
+    "tool": "Read",
+    "calls": 1,
+    "errors": 1
+   },
+   {
+    "day": "2026-09-19",
+    "tool": "Write",
+    "calls": 1,
+    "errors": 1
+   }
+  ],
+  "error_buckets": [
+   {
+    "day": "2026-09-18",
+    "kind": "string_not_found",
+    "tool": "Edit",
+    "count": 3,
+    "last_seen": "2026-09-18T23:00:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "permission_denied",
+    "tool": "Bash",
+    "count": 1,
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "other",
+    "tool": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-18T10:11:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "string_not_found",
+    "tool": "unknown",
+    "count": 3,
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   {
+    "day": "2026-09-19",
+    "kind": "other",
+    "tool": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-19T09:00:00Z"
+   },
+   {
+    "day": "2026-09-19",
+    "kind": "file_not_found",
+    "tool": "Read",
+    "count": 1,
+    "last_seen": "2026-09-19T08:02:00Z"
+   },
+   {
+    "day": "2026-09-19",
+    "kind": "other",
+    "tool": "Write",
+    "count": 1,
+    "last_seen": "2026-09-19T09:02:00Z"
+   }
+  ],
+  "error_examples": [
+   {
+    "kind": "string_not_found",
+    "example": "String to replace not found tie.",
+    "last_seen": "2026-09-18T10:12:00Z"
+   },
+   {
+    "kind": "permission_denied",
+    "example": "Permission for this action was denied by the user.",
+    "last_seen": "2026-09-18T10:10:00Z"
+   },
+   {
+    "kind": "other",
+    "example": "File has not been read yet.",
+    "last_seen": "2026-09-19T09:02:00Z"
+   },
+   {
+    "kind": "file_not_found",
+    "example": "File does not exist.",
+    "last_seen": "2026-09-19T08:02:00Z"
+   }
+  ],
+  "trouble_file_buckets": [
+   {
+    "day": "2026-09-18",
+    "path": "a.py",
+    "tool": "Edit",
+    "errors": 3
+   },
+   {
+    "day": "2026-09-19",
+    "path": "/x/b.py",
+    "tool": "Read",
+    "errors": 1
+   },
+   {
+    "day": "2026-09-19",
+    "path": "c.py",
+    "tool": "Write",
+    "errors": 1
+   }
+  ],
+  "api_error_buckets": [
+   {
+    "day": "2026-09-18",
+    "kind": "rate_limit",
+    "count": 6,
+    "last_seen": "2026-09-18T12:30:00Z"
+   },
+   {
+    "day": "2026-09-18",
+    "kind": "unknown",
+    "count": 1,
+    "last_seen": "2026-09-18T12:15:00Z"
+   }
+  ],
+  "session_buckets": [
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 0,
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 8,
+    "output": 12,
+    "cache_read": 16,
+    "cache_write_5m": 18,
+    "cache_write_1h": 22,
+    "messages": 2
+   },
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 1,
+    "model": "claude-opus-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 19,
+    "cache_write_1h": 0,
+    "messages": 1
+   },
+   {
+    "day": "2026-09-19",
+    "session_id": "sB",
+    "is_sidechain": 0,
+    "model": "claude-haiku-5",
+    "project": "other",
+    "input": 4,
+    "output": 9,
+    "cache_read": 22,
+    "cache_write_5m": 26,
+    "cache_write_1h": 34,
+    "messages": 2
+   },
+   {
+    "day": "2026-09-18",
+    "session_id": "sA",
+    "is_sidechain": 1,
+    "model": "claude-sonnet-5",
+    "project": "demo",
+    "input": 3,
+    "output": 7,
+    "cache_read": 11,
+    "cache_write_5m": 13,
+    "cache_write_1h": 17,
+    "messages": 1
+   }
+  ]
+ },
+ "third_state": {
+  "kimi_files": {
+   "keep": "me"
+  },
+  "files": {
+   "projects/-home-user-repos-demo/s1.jsonl": {
+    "project": "demo",
+    "tools": {
+     "2026-09-18\u001fEdit": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001fBash": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001funknown": {
+      "calls": 1,
+      "errors": 3
+     },
+     "2026-09-19\u001funknown": {
+      "calls": 0,
+      "errors": 1
+     }
+    },
+    "errors": {
+     "2026-09-18\u001fstring_not_found\u001fEdit": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:09:00Z"
+     },
+     "2026-09-18\u001fpermission_denied\u001fBash": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:10:00Z"
+     },
+     "2026-09-18\u001fother\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:11:00Z"
+     },
+     "2026-09-18\u001fstring_not_found\u001funknown": {
+      "count": 2,
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "2026-09-19\u001fother\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-19T09:00:00Z"
+     }
+    },
+    "error_examples": {
+     "string_not_found": {
+      "example": "String to replace not found, same second.",
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "permission_denied": {
+      "example": "Permission for this action was denied by the user.",
+      "last_seen": "2026-09-18T10:10:00Z"
+     },
+     "other": {
+      "example": "Something else broke badly",
+      "last_seen": "2026-09-18T10:11:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-18\u001fa.py\u001fEdit": {
+      "errors": 1
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 2,
+      "last_seen": "2026-09-18T12:30:00Z"
+     },
+     "2026-09-18\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T12:15:00Z"
+     }
+    },
+    "msgs": {
+     "m1": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m2": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      19,
+      0
+     ],
+     "m5": [
+      "2026-09-18T11",
+      "claude-sonnet-5",
+      "2026-09-18",
+      null,
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ]
+    }
+   },
+   "projects/-home-user-repos-demo/sA/subagents/agent-1.jsonl": {
+    "project": "demo",
+    "msgs": {
+     "m4": [
+      "2026-09-18T10",
+      "claude-sonnet-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m2": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "1",
+      3,
+      7,
+      11,
+      13,
+      17
+     ]
+    }
+   },
+   "projects/-home-user-repos-legacy/s3.jsonl": {
+    "project": "legacy",
+    "buckets": {
+     "2026-09-17T09\u001fclaude-opus-5": {
+      "input": 1,
+      "output": 2,
+      "cache_read": 3,
+      "cache_write_5m": 4,
+      "cache_write_1h": 5,
+      "messages": 1
+     },
+     "2026-09-18T10\u001fclaude-opus-5": {
+      "input": 10,
+      "output": 20,
+      "cache_read": 30,
+      "cache_write_5m": 40,
+      "cache_write_1h": 50,
+      "messages": 2
+     }
+    },
+    "tools": {
+     "2026-09-18\u001fEdit": {
+      "calls": 4,
+      "errors": 2
+     }
+    },
+    "errors": {
+     "2026-09-18\u001fstring_not_found\u001fEdit": {
+      "count": 2,
+      "last_seen": "2026-09-18T23:00:00Z"
+     }
+    },
+    "error_examples": {
+     "string_not_found": {
+      "example": "legacy example",
+      "last_seen": "2026-09-18T10:12:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-18\u001fa.py\u001fEdit": {
+      "errors": 2
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 3,
+      "last_seen": "2026-09-18T01:00:00Z"
+     }
+    },
+    "sessions": {
+     "2026-09-18\u001fsA\u001f0\u001fclaude-opus-5": {
+      "project": "legacy",
+      "input": 5,
+      "output": 5,
+      "cache_read": 5,
+      "cache_write_5m": 5,
+      "cache_write_1h": 5,
+      "messages": 1
+     }
+    }
+   },
+   "projects/-home-user-repos-other/s2.jsonl": {
+    "project": "other",
+    "tools": {
+     "2026-09-19\u001fRead": {
+      "calls": 1,
+      "errors": 1
+     },
+     "2026-09-18\u001funknown": {
+      "calls": 0,
+      "errors": 1
+     },
+     "2026-09-19\u001fWrite": {
+      "calls": 1,
+      "errors": 1
+     }
+    },
+    "errors": {
+     "2026-09-19\u001ffile_not_found\u001fRead": {
+      "count": 1,
+      "last_seen": "2026-09-19T08:02:00Z"
+     },
+     "2026-09-18\u001fstring_not_found\u001funknown": {
+      "count": 1,
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "2026-09-19\u001fother\u001fWrite": {
+      "count": 1,
+      "last_seen": "2026-09-19T09:02:00Z"
+     }
+    },
+    "error_examples": {
+     "file_not_found": {
+      "example": "File does not exist.",
+      "last_seen": "2026-09-19T08:02:00Z"
+     },
+     "string_not_found": {
+      "example": "String to replace not found tie.",
+      "last_seen": "2026-09-18T10:12:00Z"
+     },
+     "other": {
+      "example": "File has not been read yet.",
+      "last_seen": "2026-09-19T09:02:00Z"
+     }
+    },
+    "trouble_files": {
+     "2026-09-19\u001f/x/b.py\u001fRead": {
+      "errors": 1
+     },
+     "2026-09-19\u001fc.py\u001fWrite": {
+      "errors": 1
+     }
+    },
+    "api_errors": {
+     "2026-09-18\u001frate_limit": {
+      "count": 1,
+      "last_seen": "2026-09-18T11:00:00Z"
+     }
+    },
+    "msgs": {
+     "m1": [
+      "2026-09-18T10",
+      "claude-opus-5",
+      "2026-09-18",
+      "sA",
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ],
+     "m3": [
+      "2026-09-19T08",
+      "claude-haiku-5",
+      "2026-09-19",
+      "sB",
+      "0",
+      1,
+      2,
+      11,
+      13,
+      17
+     ],
+     "m6": [
+      "2026-09-19T09",
+      "claude-haiku-5",
+      "2026-09-19",
+      "sB",
+      "0",
+      3,
+      7,
+      11,
+      13,
+      17
+     ]
+    }
+   }
+  }
+ }
+}
