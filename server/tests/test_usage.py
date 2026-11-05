@@ -724,7 +724,7 @@ def _usage_collector(tmp_store, glob_, ctx=None, now=None):
 
 
 def _rows(store, where="1=1"):
-    return store._conn.execute(f"SELECT * FROM usage_events WHERE {where} ORDER BY message_id").fetchall()
+    return store._conn.execute(f"SELECT * FROM usage_events WHERE {where} ORDER BY message_id").fetchall()  # noqa: S608 -- test helper; where is a literal from in-file test calls
 
 
 @pytest.mark.asyncio

@@ -552,7 +552,7 @@ class Store:
                         COALESCE(SUM(cache_write_1h),0) AS cache_write_1h,
                         COALESCE(SUM(messages),0) AS messages
                     FROM remote_usage_buckets {where}
-                    GROUP BY {col_list}""",  # col_list/where built from a fixed whitelist above
+                    GROUP BY {col_list}""",  # noqa: S608 -- group cols checked against a fixed whitelist; where from fixed clauses; values bind via ?
                 params,
             ).fetchall()
 
@@ -597,7 +597,7 @@ class Store:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
             return self._conn.execute(
-                f"SELECT * FROM usage_events {where} ORDER BY ts ASC", params
+                f"SELECT * FROM usage_events {where} ORDER BY ts ASC", params  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
             ).fetchall()
 
     def usage_totals(self, since_iso: str | None = None, host: str | None = None) -> dict:
@@ -619,7 +619,7 @@ class Store:
                         COALESCE(SUM(cache_write_5m + cache_write_1h),0) AS cache_write,
                         COALESCE(SUM(cost_usd),0.0) AS cost_usd,
                         COUNT(*) AS messages
-                    FROM usage_events {where}""",
+                    FROM usage_events {where}""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchone()
         total = row["input"] + row["output"] + row["cache_read"] + row["cache_write"]
@@ -645,7 +645,7 @@ class Store:
                         COALESCE(SUM(cache_write_5m + cache_write_1h),0) AS cache_write,
                         COALESCE(SUM(cost_usd),0.0) AS cost_usd,
                         COUNT(*) AS messages
-                    FROM usage_events {where} GROUP BY model""",
+                    FROM usage_events {where} GROUP BY model""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -658,7 +658,7 @@ class Store:
                         COALESCE(SUM(input+output+cache_read+cache_write_5m+cache_write_1h),0) AS total,
                         COALESCE(SUM(cost_usd),0.0) AS cost_usd,
                         COUNT(*) AS messages
-                    FROM usage_events {where} GROUP BY project""",
+                    FROM usage_events {where} GROUP BY project""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -671,7 +671,7 @@ class Store:
                         COALESCE(SUM(input+output+cache_read+cache_write_5m+cache_write_1h),0) AS total,
                         COALESCE(SUM(cost_usd),0.0) AS cost_usd,
                         COUNT(*) AS messages
-                    FROM usage_events {where} GROUP BY session_id""",
+                    FROM usage_events {where} GROUP BY session_id""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -755,7 +755,7 @@ class Store:
                         COALESCE(SUM(cost_usd),0.0) AS cost_usd,
                         COUNT(*) AS messages
                     FROM usage_events WHERE ts >= ?
-                    GROUP BY bucket, host, model ORDER BY bucket ASC""",  # bucket_expr from fixed whitelist
+                    GROUP BY bucket, host, model ORDER BY bucket ASC""",  # noqa: S608 -- bucket_expr is one of two fixed literals chosen after bucket validation; values bind via ?
                 (since_iso,),
             ).fetchall()
 
@@ -789,7 +789,7 @@ class Store:
                         COALESCE(SUM(cache_write_1h),0) AS cache_write_1h,
                         COALESCE(SUM(messages),0) AS messages
                     FROM remote_usage_buckets WHERE hour >= ?
-                    GROUP BY bucket, host, model ORDER BY bucket ASC""",
+                    GROUP BY bucket, host, model ORDER BY bucket ASC""",  # noqa: S608 -- bucket_expr is one of two fixed literals chosen after bucket validation; values bind via ?
                 (since_iso[:13],),
             ).fetchall()
 
@@ -815,7 +815,7 @@ class Store:
                         COALESCE(SUM(tokens),0) AS tokens,
                         COUNT(*) AS messages
                     FROM kimi_turn_events WHERE ts >= ?
-                    GROUP BY bucket, host, model ORDER BY bucket ASC""",
+                    GROUP BY bucket, host, model ORDER BY bucket ASC""",  # noqa: S608 -- bucket_expr is one of two fixed literals chosen after bucket validation; values bind via ?
                 (since_iso,),
             ).fetchall()
 
@@ -959,7 +959,7 @@ class Store:
                 f"""SELECT error_kind AS kind, tool,
                         COUNT(*) AS count, MAX(ts) AS last_seen
                     FROM tool_call_events {where}
-                    GROUP BY error_kind, tool""",  # where built from fixed clauses only
+                    GROUP BY error_kind, tool""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -972,7 +972,7 @@ class Store:
         with self._lock:
             return self._conn.execute(
                 f"""SELECT error_excerpt, ts FROM tool_call_events {where}
-                    ORDER BY ts DESC LIMIT 1""",
+                    ORDER BY ts DESC LIMIT 1""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchone()
 
@@ -986,7 +986,7 @@ class Store:
             return self._conn.execute(
                 f"""SELECT tool, COUNT(*) AS calls,
                         SUM(is_error) AS errors
-                    FROM tool_call_events {where} GROUP BY tool""",
+                    FROM tool_call_events {where} GROUP BY tool""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -999,7 +999,7 @@ class Store:
         with self._lock:
             return self._conn.execute(
                 f"""SELECT file_path, tool, COUNT(*) AS errors
-                    FROM tool_call_events {where} GROUP BY file_path, tool""",
+                    FROM tool_call_events {where} GROUP BY file_path, tool""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -1012,7 +1012,7 @@ class Store:
         with self._lock:
             return self._conn.execute(
                 f"""SELECT kind, COUNT(*) AS count, MAX(ts) AS last_seen
-                    FROM api_error_events {where} GROUP BY kind""",
+                    FROM api_error_events {where} GROUP BY kind""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -1033,7 +1033,7 @@ class Store:
                         GROUP_CONCAT(DISTINCT model) AS models,
                         MAX(project) AS project
                     FROM usage_events {where} AND session_id IS NOT NULL
-                    GROUP BY session_id, is_sidechain""",
+                    GROUP BY session_id, is_sidechain""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -1316,7 +1316,7 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 f"""SELECT COALESCE(SUM(tokens),0) AS tokens, COUNT(*) AS messages
-                    FROM kimi_turn_events {where}""",  # where built from fixed clauses only
+                    FROM kimi_turn_events {where}""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchone()
         return {"tokens": row["tokens"], "messages": row["messages"]}
@@ -1337,7 +1337,7 @@ class Store:
             return self._conn.execute(
                 f"""SELECT session_id, COALESCE(SUM(tokens),0) AS tokens, COUNT(*) AS messages,
                         MAX(ts) AS last_ts
-                    FROM kimi_turn_events {where} GROUP BY session_id""",
+                    FROM kimi_turn_events {where} GROUP BY session_id""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -1354,7 +1354,7 @@ class Store:
         with self._lock:
             return self._conn.execute(
                 f"""SELECT kind, COUNT(*) AS count, MAX(ts) AS last_seen
-                    FROM kimi_error_events {where} GROUP BY kind""",
+                    FROM kimi_error_events {where} GROUP BY kind""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -1395,7 +1395,7 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 f"""SELECT COALESCE(SUM(tokens),0) AS tokens, COALESCE(SUM(turns),0) AS messages
-                    FROM remote_kimi_usage_buckets {where}""",
+                    FROM remote_kimi_usage_buckets {where}""",  # noqa: S608 -- where is built from fixed clause literals; values bind via ?
                 params,
             ).fetchone()
         return {"tokens": row["tokens"], "messages": row["messages"]}
@@ -1477,7 +1477,7 @@ class Store:
                         COALESCE(SUM(cache_write),0) AS cache_write,
                         {messages} AS messages, {"MAX(hour)" if remote else "MAX(ts)"} AS last_ts
                     FROM {table} {where}
-                    GROUP BY {col_list}""",
+                    GROUP BY {col_list}""",  # noqa: S608 -- cols whitelisted, table/messages/time_col are fixed literals; values bind via ?
                 params,
             ).fetchall()
 
@@ -1508,7 +1508,7 @@ class Store:
                         COALESCE(SUM(cache_write),0) AS cache_write,
                         {messages} AS messages
                     FROM {table} WHERE {time_col} >= ?
-                    GROUP BY bucket, provider, host, model ORDER BY bucket ASC""",
+                    GROUP BY bucket, provider, host, model ORDER BY bucket ASC""",  # noqa: S608 -- bucket_expr/table/time_col/messages are fixed literals from validated bucket and remote flag; values bind via ?
                 (param,),
             ).fetchall()
 
