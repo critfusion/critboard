@@ -22,42 +22,56 @@ from ..knowledge import now_iso as knowledge_now_iso
 from ..modules import enabled_modules, module_config
 from . import Deps
 
+_KNOWLEDGE_HTTP = {
+    "not_found": 404, "not_configured": 503, "token_file_missing": 503,
+    "token_file_permissions": 503, "token_file_invalid": 503, "book_not_found": 503,
+}
 
-def register(app: FastAPI, d: Deps) -> None:
-    config, store, snap = d.config, d.store, d.snap
 
-    # ---- opt-in modules (see modules.py; off unless sources.json enables) ----
-    knowledge = BookStackAdapter(config.sources)
-    app.state.knowledge = knowledge  # exposed for tests: inject a fake transport
+def _knowledge_allowed_hosts(src: dict) -> set[str]:
+    """Loopback, the bind host (unless a wildcard), the configured host
+    and host-list names, plus modules.knowledge.allowed_hosts (names
+    only, no port). A wildcard bind (0.0.0.0) cannot know which names
+    reach it: list those in allowed_hosts."""
+    names = {"localhost", "127.0.0.1", "::1", str(src.get("host") or "")}
+    bind = str(src.get("bind_host") or "")
+    if bind not in ("0.0.0.0", "::", ""):
+        names.add(bind)
+    names.update(str(h.get("name") or "") for h in src.get("hosts") or [] if isinstance(h, dict))
+    extra = (module_config(src, "knowledge") or {}).get("allowed_hosts")
+    if isinstance(extra, list):
+        names.update(str(x) for x in extra)
+    return {n.strip("[]").lower() for n in names if n}
 
-    @app.get("/api/modules")
-    async def get_modules():
-        config.reload_sources()
-        return JSONResponse({"enabled": enabled_modules(config.sources)})
 
-    def _knowledge_allowed_hosts() -> set[str]:
-        """Loopback, the bind host (unless a wildcard), the configured host
-        and host-list names, plus modules.knowledge.allowed_hosts (names
-        only, no port). A wildcard bind (0.0.0.0) cannot know which names
-        reach it: list those in allowed_hosts."""
-        src = config.sources
-        names = {"localhost", "127.0.0.1", "::1", str(src.get("host") or "")}
-        bind = str(src.get("bind_host") or "")
-        if bind not in ("0.0.0.0", "::", ""):
-            names.add(bind)
-        names.update(str(h.get("name") or "") for h in src.get("hosts") or [] if isinstance(h, dict))
-        extra = (module_config(src, "knowledge") or {}).get("allowed_hosts")
-        if isinstance(extra, list):
-            names.update(str(x) for x in extra)
-        return {n.strip("[]").lower() for n in names if n}
+def _knowledge_refused(knowledge: BookStackAdapter, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "error": {"code": code, "message": message, "http_status": 403},
+         "status": knowledge.status()},
+        status_code=403, headers={"Cache-Control": "no-store"},
+    )
 
-    def _knowledge_refused(code: str, message: str) -> JSONResponse:
-        return JSONResponse(
-            {"ok": False, "error": {"code": code, "message": message, "http_status": 403},
-             "status": knowledge.status()},
-            status_code=403, headers={"Cache-Control": "no-store"},
-        )
 
+def _knowledge_error(knowledge: BookStackAdapter, err: KnowledgeError) -> JSONResponse:
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": {"code": err.code, "message": err.message, "http_status": err.http_status},
+            "status": knowledge.status(),
+        },
+        status_code=_KNOWLEDGE_HTTP.get(err.code, 502),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _knowledge_ok(knowledge: BookStackAdapter, data: dict) -> JSONResponse:
+    return JSONResponse(
+        {"ok": True, **data, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _make_knowledge_gate(config, knowledge: BookStackAdapter) -> Callable[..., JSONResponse | None]:
     def _knowledge_gate(request: Request, module: str = "knowledge") -> JSONResponse | None:
         """None = allowed; else the 403 body in the normal ok:false shape.
         `module` is the module whose routes these are (Infrastructure shares
@@ -70,37 +84,46 @@ def register(app: FastAPI, d: Deps) -> None:
         # any whose Origin host differs from the Host the request came to.
         origin = request.headers.get("origin")
         if origin and urlsplit(origin).netloc != request.headers.get("host"):
-            return _knowledge_refused("origin_not_allowed", "cross-origin request refused")
+            return _knowledge_refused(knowledge, "origin_not_allowed", "cross-origin request refused")
         # DNS rebinding: an attacker's name that resolves to this machine
         # passes the Origin==Host check above (both are the attacker's name).
         # Refuse any Host that is not one of ours. Knowledge routes only.
         host = (urlsplit("//" + (request.headers.get("host") or "")).hostname or "").lower()
-        if host not in _knowledge_allowed_hosts():
-            return _knowledge_refused("host_not_allowed", "host not allowed")
+        if host not in _knowledge_allowed_hosts(config.sources):
+            return _knowledge_refused(knowledge, "host_not_allowed", "host not allowed")
         return None
 
-    _KNOWLEDGE_HTTP = {
-        "not_found": 404, "not_configured": 503, "token_file_missing": 503,
-        "token_file_permissions": 503, "token_file_invalid": 503, "book_not_found": 503,
-    }
+    return _knowledge_gate
 
-    def _knowledge_error(err: KnowledgeError) -> JSONResponse:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": {"code": err.code, "message": err.message, "http_status": err.http_status},
-                "status": knowledge.status(),
-            },
-            status_code=_KNOWLEDGE_HTTP.get(err.code, 502),
-            headers={"Cache-Control": "no-store"},
-        )
 
-    def _knowledge_ok(data: dict) -> JSONResponse:
-        return JSONResponse(
-            {"ok": True, **data, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
-            headers={"Cache-Control": "no-store"},
-        )
+def register(app: FastAPI, d: Deps) -> None:
+    config = d.config
 
+    # ---- opt-in modules (see modules.py; off unless sources.json enables) ----
+    knowledge = BookStackAdapter(config.sources)
+    app.state.knowledge = knowledge  # exposed for tests: inject a fake transport
+
+    @app.get("/api/modules")
+    async def get_modules():
+        config.reload_sources()
+        return JSONResponse({"enabled": enabled_modules(config.sources)})
+
+    _knowledge_gate = _make_knowledge_gate(config, knowledge)
+    served = context_mod.ServedMarker()
+    app.state.served = served  # exposed for tests
+
+    _register_knowledge(app, knowledge, served, _knowledge_gate)
+    _register_infrastructure(app, knowledge, _knowledge_gate)
+    _register_workflow(app, d, knowledge, _knowledge_gate)
+    _register_context(app, d, knowledge, served, _knowledge_gate)
+
+
+def _register_knowledge(
+    app: FastAPI,
+    knowledge: BookStackAdapter,
+    served: context_mod.ServedMarker,
+    _knowledge_gate: Callable[..., JSONResponse | None],
+) -> None:
     @app.get("/api/knowledge/status")
     async def knowledge_status(request: Request):
         if (refused := _knowledge_gate(request)) is not None:
@@ -108,11 +131,8 @@ def register(app: FastAPI, d: Deps) -> None:
         try:
             await knowledge.probe()
         except KnowledgeError as err:
-            return _knowledge_error(err)
-        return _knowledge_ok({})
-
-    served = context_mod.ServedMarker()
-    app.state.served = served  # exposed for tests
+            return _knowledge_error(knowledge, err)
+        return _knowledge_ok(knowledge, {})
 
     @app.get("/api/knowledge/search")
     async def knowledge_search(request: Request, q: str = Query("", max_length=200)):
@@ -122,9 +142,9 @@ def register(app: FastAPI, d: Deps) -> None:
             data = await knowledge.search(q)
             for r in data["results"]:
                 r["served"] = served.status(r["id"], r.get("updated_at"))
-            return _knowledge_ok(data)
+            return _knowledge_ok(knowledge, data)
         except KnowledgeError as err:
-            return _knowledge_error(err)
+            return _knowledge_error(knowledge, err)
 
     @app.get("/api/knowledge/page/{page_id}")
     async def knowledge_page(request: Request, page_id: int):
@@ -135,18 +155,33 @@ def register(app: FastAPI, d: Deps) -> None:
         try:
             data = await knowledge.page(page_id)
             data["served"] = served.status(page_id, data.get("updated_at"))
-            return _knowledge_ok(data)
+            return _knowledge_ok(knowledge, data)
         except KnowledgeError as err:
-            return _knowledge_error(err)
+            return _knowledge_error(knowledge, err)
 
+
+def _register_infrastructure(
+    app: FastAPI,
+    knowledge: BookStackAdapter,
+    _knowledge_gate: Callable[..., JSONResponse | None],
+) -> None:
     @app.get("/api/infrastructure")
     async def infrastructure(request: Request):
         if (refused := _knowledge_gate(request, "infrastructure")) is not None:
             return refused
         try:
-            return _knowledge_ok(await knowledge.infrastructure())
+            return _knowledge_ok(knowledge, await knowledge.infrastructure())
         except KnowledgeError as err:
-            return _knowledge_error(err)
+            return _knowledge_error(knowledge, err)
+
+
+def _register_workflow(
+    app: FastAPI,
+    d: Deps,
+    knowledge: BookStackAdapter,
+    _knowledge_gate: Callable[..., JSONResponse | None],
+) -> None:
+    config, store, snap = d.config, d.store, d.snap
 
     @app.get("/api/workflow")
     async def workflow_view(request: Request):
@@ -172,8 +207,6 @@ def register(app: FastAPI, d: Deps) -> None:
             {"ok": True, **body, "fetched_at": knowledge_now_iso(), "status": knowledge.status()},
             headers={"Cache-Control": "no-store"},
         )
-
-    _register_context(app, d, knowledge, served, _knowledge_gate)
 
 
 def _register_context(
