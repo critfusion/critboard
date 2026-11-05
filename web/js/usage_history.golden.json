@@ -1,0 +1,6680 @@
+{
+ "spend": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip excluded",
+         "attrs": {
+          "style": "font-size:9px;",
+          "title": "excluded from spend -- no per-token cost data"
+         },
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2 (moonshot)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "no cost data"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$2.00"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$1.76"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$0.40"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "kimi-k2 (moonshot): subscription billing, no per-token cost data -- excluded from spend, not free."
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "shaded: before 2026-09-18 not every fleet host was reporting yet -- totals there undercount the fleet, they are not a real drop."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": false,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "spend_after_click": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip excluded",
+         "attrs": {
+          "style": "font-size:9px;",
+          "title": "excluded from spend -- no per-token cost data"
+         },
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2 (moonshot)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "no cost data"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$2.00"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip dimmed",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "false",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none; opacity:.4;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$1.76"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$0.40"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "kimi-k2 (moonshot): subscription billing, no per-token cost data -- excluded from spend, not free."
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "shaded: before 2026-09-18 not every fleet host was reporting yet -- totals there undercount the fleet, they are not a real drop."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": false,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.1,
+      0.1,
+      0.1,
+      0.1
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "spend_after_key": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip excluded",
+         "attrs": {
+          "style": "font-size:9px;",
+          "title": "excluded from spend -- no per-token cost data"
+         },
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2 (moonshot)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "no cost data"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$2.00"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$1.76"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$0.40"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "kimi-k2 (moonshot): subscription billing, no per-token cost data -- excluded from spend, not free."
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "shaded: before 2026-09-18 not every fleet host was reporting yet -- totals there undercount the fleet, they are not a real drop."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.1,
+      0.1,
+      0.1,
+      0.1
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": false,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "spend_after_other_key": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip excluded",
+         "attrs": {
+          "style": "font-size:9px;",
+          "title": "excluded from spend -- no per-token cost data"
+         },
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2 (moonshot)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "no cost data"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$2.00"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip dimmed",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "false",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none; opacity:.4;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$1.76"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$0.40"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "kimi-k2 (moonshot): subscription billing, no per-token cost data -- excluded from spend, not free."
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "shaded: before 2026-09-18 not every fleet host was reporting yet -- totals there undercount the fleet, they are not a real drop."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.1,
+      0.1,
+      0.1,
+      0.1
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": false,
+    "sizes": [
+     {
+      "width": 900,
+      "height": 300
+     }
+    ],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.1,
+      0.1,
+      0.1,
+      0.1
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "frames_queued": 1,
+ "after_resize": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip excluded",
+         "attrs": {
+          "style": "font-size:9px;",
+          "title": "excluded from spend -- no per-token cost data"
+         },
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2 (moonshot)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "no cost data"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$2.00"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip dimmed",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "false",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none; opacity:.4;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$1.76"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$0.40"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "kimi-k2 (moonshot): subscription billing, no per-token cost data -- excluded from spend, not free."
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "shaded: before 2026-09-18 not every fleet host was reporting yet -- totals there undercount the fleet, they are not a real drop."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.1,
+      0.1,
+      0.1,
+      0.1
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   },
+   {
+    "destroyed": false,
+    "sizes": [
+     {
+      "width": 900,
+      "height": 300
+     }
+    ],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.1,
+      0.1,
+      0.1,
+      0.1
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": true,
+    "observesContainer": true
+   },
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "tokens": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "select",
+         "class": "table-sort-select",
+         "attrs": {
+          "aria-label": "window"
+         },
+         "value": "7d",
+         "on": [
+          "change"
+         ],
+         "children": [
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "today"
+           },
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "7d"
+           },
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "30d"
+           },
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "90d"
+           },
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "select",
+         "class": "table-sort-select",
+         "attrs": {
+          "aria-label": "groupBy"
+         },
+         "value": "host",
+         "on": [
+          "change"
+         ],
+         "children": [
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "model"
+           },
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "provider"
+           },
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "host"
+           },
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "select",
+         "class": "table-sort-select",
+         "attrs": {
+          "aria-label": "metric"
+         },
+         "value": "tokens",
+         "on": [
+          "change"
+         ],
+         "children": [
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "tokens"
+           },
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "option",
+           "attrs": {
+            "value": "spend"
+           },
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "26K"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "2.1K"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "100"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "4"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "Token counts are dominated by cheap cache reads, so they do not track spend -- switch to SPEND to compare cost."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": false,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      5000,
+      6000,
+      7000,
+      8000
+     ],
+     [
+      5100,
+      8000,
+      7000,
+      8050
+     ],
+     [
+      5110,
+      8020,
+      7030,
+      8090
+     ],
+     [
+      5111,
+      8021,
+      7031,
+      8091
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 70,
+       "size": 28,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 46,
+       "size": 54,
+       "values": [
+        "0",
+        "1",
+        "12",
+        "1.5K",
+        "2.5M"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "claude-haiku-5",
+       "stroke": "#00ffff",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "kimi-k2",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#00ffff33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        4,
+        5
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "labels": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "26K"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "2.1K"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "100"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "4"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "Token counts are dominated by cheap cache reads, so they do not track spend -- switch to SPEND to compare cost."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": false,
+    "sizes": [],
+    "data": [
+     [
+      0,
+      1,
+      2,
+      3
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      5000,
+      6000,
+      7000,
+      8000
+     ],
+     [
+      5100,
+      8000,
+      7000,
+      8050
+     ],
+     [
+      5110,
+      8020,
+      7030,
+      8090
+     ],
+     [
+      5111,
+      8021,
+      7031,
+      8091
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": false
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 55,
+       "size": 34,
+       "values": [
+        "a",
+        "b",
+        "c",
+        ""
+       ]
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "0",
+        "1",
+        "12",
+        "1.5K",
+        "2.5M"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "claude-haiku-5",
+       "stroke": "#00ffff",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "kimi-k2",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#00ffff33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        4,
+        5
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "empty": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       }
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       }
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "class": "empty-state",
+         "children": [
+          "No usage data for this window."
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [],
+  "observers": [],
+  "roFrame": null
+ },
+ "unknown_only": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip excluded",
+         "attrs": {
+          "style": "font-size:9px;",
+          "title": "excluded from spend -- no per-token cost data"
+         },
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2 (moonshot)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "no cost data"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "kimi-k2 (moonshot): subscription billing, no per-token cost data -- excluded from spend, not free."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "class": "empty-state",
+         "children": [
+          "No series with cost data in this window."
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [],
+  "observers": [],
+  "roFrame": null
+ },
+ "all_hidden": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip dimmed",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "false",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none; opacity:.4;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "2.1K"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "Token counts are dominated by cheap cache reads, so they do not track spend -- switch to SPEND to compare cost."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "class": "empty-state",
+         "children": [
+          "All series hidden -- click a legend entry to show one."
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": true,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      100,
+      2000,
+      0,
+      50
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "0",
+        "1",
+        "12",
+        "1.5K",
+        "2.5M"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#00ffff",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#00ffff33",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [
+      [
+       "save"
+      ],
+      [
+       "fillStyle",
+       "#f2a93b1a"
+      ],
+      [
+       "fillRect",
+       0,
+       5,
+       7200,
+       100
+      ],
+      [
+       "restore"
+      ]
+     ],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": true,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "early_coverage": {
+  "dom": {
+   "tag": "div",
+   "class": "chart-panel-body",
+   "children": [
+    {
+     "tag": "div",
+     "attrs": {
+      "style": "display:flex; flex-direction:column; width:100%; height:100%;"
+     },
+     "children": [
+      {
+       "tag": "div",
+       "class": "table-toolbar",
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TODAY"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "7D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "30D"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "90D"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px; padding-right:8px; margin-right:4px; border-right:1px solid var(--color-border);"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "MODEL"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "PROVIDER"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "HOST"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "display:flex; gap:4px;"
+         },
+         "children": [
+          {
+           "tag": "button",
+           "class": "table-filter-toggle",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "false"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "TOKENS"
+           ]
+          },
+          {
+           "tag": "button",
+           "class": "table-filter-toggle active",
+           "attrs": {
+            "type": "button",
+            "aria-pressed": "true"
+           },
+           "on": [
+            "click"
+           ],
+           "children": [
+            "SPEND"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "span",
+         "class": "legend-chip excluded",
+         "attrs": {
+          "style": "font-size:9px;",
+          "title": "excluded from spend -- no per-token cost data"
+         },
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#00ffff; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "kimi-k2 (moonshot)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "no cost data"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#f2a93b; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "gpt-x"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$2.00"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#3fe08a; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-opus-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$1.76"
+           ]
+          }
+         ]
+        },
+        {
+         "tag": "span",
+         "class": "legend-chip",
+         "attrs": {
+          "style": "font-size:9px;",
+          "tabindex": "0",
+          "role": "button",
+          "aria-pressed": "true",
+          "title": "click to toggle this series"
+         },
+         "on": [
+          "click",
+          "keydown"
+         ],
+         "children": [
+          {
+           "tag": "span",
+           "attrs": {
+            "style": "width:8px; height:8px; border-radius:2px; background:#5aa8f2; flex:none;"
+           }
+          },
+          {
+           "tag": "span",
+           "class": "mono truncate",
+           "attrs": {
+            "style": "max-width:150px; color:var(--color-text-dim);"
+           },
+           "children": [
+            "claude-haiku-5 (anthropic)"
+           ]
+          },
+          {
+           "tag": "span",
+           "class": "mono tabular-nums faint",
+           "children": [
+            "$0.40"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "display:flex; flex-direction:column; padding:2px 4px 0; flex:none;"
+       },
+       "children": [
+        {
+         "tag": "div",
+         "attrs": {
+          "style": "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;"
+         },
+         "children": [
+          "kimi-k2 (moonshot): subscription billing, no per-token cost data -- excluded from spend, not free."
+         ]
+        }
+       ]
+      },
+      {
+       "tag": "div",
+       "attrs": {
+        "style": "width:100%; flex:1; min-height:0;"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "charts": [
+   {
+    "destroyed": false,
+    "sizes": [],
+    "data": [
+     [
+      1789718400,
+      1789722000,
+      1789725600,
+      1789729200
+     ],
+     [
+      0,
+      0,
+      0,
+      0
+     ],
+     [
+      2,
+      0,
+      0,
+      0
+     ],
+     [
+      2.5,
+      1.25,
+      0,
+      0.01
+     ],
+     [
+      2.6,
+      1.35,
+      0.1,
+      0.11
+     ]
+    ],
+    "opts": {
+     "width": 640,
+     "height": 220,
+     "padding": [
+      8,
+      8,
+      0,
+      8
+     ],
+     "legend": {
+      "show": false
+     },
+     "cursor": {
+      "points": {
+       "show": false
+      }
+     },
+     "scales": {
+      "x": {
+       "time": true
+      }
+     },
+     "axes": [
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 40,
+       "size": 34,
+       "values": "undefined"
+      },
+      {
+       "stroke": "#111111",
+       "grid": {
+        "stroke": "#131a22",
+        "width": 1
+       },
+       "ticks": {
+        "stroke": "#131a22"
+       },
+       "space": 32,
+       "size": 58,
+       "values": [
+        "$0.00",
+        "$0.50",
+        "$12.35",
+        "$1,500.00",
+        "$2,500,000.00"
+       ]
+      }
+     ],
+     "series": [
+      {},
+      {
+       "show": false,
+       "label": "zero"
+      },
+      {
+       "label": "gpt-x",
+       "stroke": "#f2a93b",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-opus-5 (anthropic)",
+       "stroke": "#3fe08a",
+       "width": 1.5,
+       "fill": "transparent"
+      },
+      {
+       "label": "claude-haiku-5 (anthropic)",
+       "stroke": "#5aa8f2",
+       "width": 1.5,
+       "fill": "transparent"
+      }
+     ],
+     "bands": [
+      {
+       "series": [
+        1,
+        2
+       ],
+       "fill": "#f2a93b33",
+       "dir": 1
+      },
+      {
+       "series": [
+        2,
+        3
+       ],
+       "fill": "#3fe08a33",
+       "dir": 1
+      },
+      {
+       "series": [
+        3,
+        4
+       ],
+       "fill": "#5aa8f233",
+       "dir": 1
+      }
+     ],
+     "hooks": {
+      "drawClear": [
+       null
+      ]
+     },
+     "hookCalls": [],
+     "hookKeys": [
+      "drawClear"
+     ]
+    },
+    "hostIsChartHost": true
+   }
+  ],
+  "observers": [
+   {
+    "disconnected": false,
+    "observesContainer": true
+   }
+  ],
+  "roFrame": null
+ },
+ "fetched": [
+  [
+   "/api/history/usage?window=today&bucket=hour&group_by=model",
+   {
+    "cache": "no-store"
+   }
+  ],
+  [
+   "/api/history/usage?window=7d&bucket=day&group_by=host",
+   {
+    "cache": "no-store"
+   }
+  ],
+  [
+   "/api/history/usage?window=today&bucket=hour&group_by=provider",
+   {
+    "cache": "no-store"
+   }
+  ],
+  [
+   "/api/history/usage?window=today&bucket=hour&group_by=model",
+   {
+    "cache": "no-store"
+   }
+  ],
+  [
+   "/api/history/usage?window=today&bucket=hour&group_by=model",
+   {
+    "cache": "no-store"
+   }
+  ],
+  [
+   "/api/history/usage?window=today&bucket=hour&group_by=model",
+   {
+    "cache": "no-store"
+   }
+  ],
+  [
+   "/api/history/usage?window=today&bucket=hour&group_by=model",
+   {
+    "cache": "no-store"
+   }
+  ]
+ ]
+}
