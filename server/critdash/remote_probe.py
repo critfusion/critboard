@@ -132,14 +132,15 @@ def project_name_from_dir(dirname: str) -> str:
     return os.path.basename(full_path.rstrip("/")) or dirname
 
 
-# -- wave-2 analytics (mirrors collectors/analytics.py) ----------------------
-# Duplicated here rather than imported -- same reason as agents/worktrees
-# above: this file must survive being copied alone to a host with no critdash
-# package installed. If you change the classification rules or extraction
-# logic in collectors/analytics.py, mirror the change here too -- a test
-# (tests/test_remote_probe.py) checks both copies classify the same fixed
-# sample set identically, as a drift detector.
+# -- wave-2 analytics: error rules and extraction helpers ---------------------
+# This file owns these rules. collectors/analytics.py imports them from here
+# rather than keeping its own copy: this file must stay stdlib-only and
+# survive being copied alone to a host with no critdash package installed,
+# so the dependency can only point this way.
 
+# First matching rule wins. Order matters: more specific patterns (e.g. "string
+# to replace not found", which is itself a kind of "not found") are checked
+# before generic ones. Add a new failure mode by adding one tuple here.
 _ERROR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("string_not_found", (
         "string to replace not found", "old_string not found", "no such string",
@@ -158,9 +159,12 @@ _ERROR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "rate limit", "concurrent subagent limit reached",
         "temporarily unavailable", "overloaded", " 529",
     )),
-    # Kept in sync with collectors/analytics.py's _ERROR_RULES -- see that
-    # module's comment on why Kimi's quota exhaustion is its own kind rather
-    # than folded into rate_limit.
+    # Kimi's quota exhaustion (verified live: "403 You've reached your
+    # monthly usage limit for this billing cycle... purchase extra usage or
+    # upgrade your plan") is a distinct failure mode from a transient
+    # rate_limit above -- it does not clear on retry, only on the next
+    # billing cycle or a plan change, so it gets its own kind rather than
+    # being folded into rate_limit.
     ("quota_exceeded", (
         "usage limit", "monthly usage limit", "billing cycle",
         "upgrade your plan", "purchase extra usage", "quota will be refreshed",
@@ -184,6 +188,13 @@ def classify_error(text: str) -> str:
 
 
 def classify_api_error(doc: dict) -> str:
+    """isApiErrorMessage rows carry their own `error` field (rate_limit,
+    invalid_request, authentication_failed, server_error -- verified against
+    real errors on this host 2026-09-18), which is a better signal than text
+    matching. The one gap: apiErrorStatus 529 (real, observed) is reported
+    with error="server_error" too, indistinguishable from a real 5xx without
+    the status code, so 529 is special-cased to the more useful
+    "overloaded_error" kind the briefing asks for."""
     if doc.get("apiErrorStatus") == 529:
         return "overloaded_error"
     return doc.get("error") or _DEFAULT_ERROR_KIND
@@ -207,6 +218,8 @@ def make_example(text: str | None) -> str | None:
 
 
 def tool_result_text(content) -> str:
+    """tool_result's `content` is either a plain string or a list of blocks
+    (text/image/...). Only text is ever surfaced in an example excerpt."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):

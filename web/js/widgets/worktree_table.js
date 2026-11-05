@@ -1,4 +1,4 @@
-import { el, fmtRelTime, loadJSON, saveJSON, mobileLimit, renderWithShowAll } from "../utils.js";
+import { el, fmtRelTime, loadJSON, saveJSON, panelStorageKey, mobileLimit, renderWithShowAll } from "../utils.js";
 import { openWorktreeModal } from "../detail.js";
 
 // Two repo_roots (e.g. /home/user/repos and /home/user/src, per config/sources.json)
@@ -30,10 +30,6 @@ const COLUMNS = [
 ];
 
 const SEARCH_FIELDS = ["repo", "branch", "root", "host", "last_commit_msg", "last_commit_author"];
-
-function storageKey(panelId) {
-  return `critdash.table.${panelId}`;
-}
 
 function defaultStateFor(options) {
   const legacy = options?.sort;
@@ -360,7 +356,7 @@ function fullBuild(container, ctx) {
   container.innerHTML = "";
 
   const panelId = ctx.panel.id;
-  const persisted = loadJSON(storageKey(panelId), null);
+  const persisted = loadJSON(panelStorageKey("table", panelId), null);
   const tstate = persisted && typeof persisted === "object" ? { ...defaultStateFor(ctx.options), ...persisted } : defaultStateFor(ctx.options);
 
   const items = Array.isArray(ctx.data?.worktrees) ? ctx.data.worktrees : [];
@@ -371,7 +367,7 @@ function fullBuild(container, ctx) {
   }
 
   const isMobile = ctx.breakpoint === "mobile";
-  const persist = () => saveJSON(storageKey(panelId), tstate);
+  const persist = () => saveJSON(panelStorageKey("table", panelId), tstate);
 
   const onToolbarChange = () => {
     persist();

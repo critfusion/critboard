@@ -25,117 +25,25 @@ from __future__ import annotations
 
 import glob
 import os
-import re
 from datetime import UTC, datetime, timedelta
 
 from ..pricing import compute_cost_usd
+
+# Error rules and extraction helpers live in remote_probe.py (stdlib-only, so
+# the probe can run alone on a remote host); import them so there is one copy.
+from ..remote_probe import (
+    _DEFAULT_ERROR_KIND,
+    classify_api_error,
+    classify_error,
+    extract_file_path,
+    make_example,
+    redact_secrets,
+    tool_result_text,
+)
 from . import BaseCollector
 from .usage import parse_jsonl_bytes, project_name_from_dir
 
 _ANALYTICS_OFFSET_PREFIX = "analytics::"
-
-# -- error classification: small, ordered rule table -------------------------
-# First matching rule wins. Order matters: more specific patterns (e.g. "string
-# to replace not found", which is itself a kind of "not found") are checked
-# before generic ones. Add a new failure mode by adding one tuple here.
-_ERROR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("string_not_found", (
-        "string to replace not found", "old_string not found", "no such string",
-    )),
-    ("file_not_found", (
-        "no such file or directory", "file does not exist", "cannot access", "enoent",
-    )),
-    ("permission_denied", (
-        "permission denied", "permission for this action was denied",
-        "eacces", "the user doesn't want to proceed",
-    )),
-    ("timeout", (
-        "timed out", "command timed out", "timeout",
-    )),
-    ("rate_limit", (
-        "rate limit", "concurrent subagent limit reached",
-        "temporarily unavailable", "overloaded", " 529",
-    )),
-    # Kimi's quota exhaustion (verified live: "403 You've reached your
-    # monthly usage limit for this billing cycle... purchase extra usage or
-    # upgrade your plan") is a distinct failure mode from a transient
-    # rate_limit above -- it does not clear on retry, only on the next
-    # billing cycle or a plan change, so it gets its own kind rather than
-    # being folded into rate_limit.
-    ("quota_exceeded", (
-        "usage limit", "monthly usage limit", "billing cycle",
-        "upgrade your plan", "purchase extra usage", "quota will be refreshed",
-    )),
-    ("invalid_json", (
-        "invalid json", "jsondecodeerror", "unexpected token", "expecting value",
-    )),
-    ("command_failed", (
-        "exit code", "non-zero exit", "command failed",
-    )),
-)
-_DEFAULT_ERROR_KIND = "other"
-
-
-def classify_error(text: str) -> str:
-    low = f" {(text or '').lower()} "
-    for kind, patterns in _ERROR_RULES:
-        if any(p in low for p in patterns):
-            return kind
-    return _DEFAULT_ERROR_KIND
-
-
-def classify_api_error(doc: dict) -> str:
-    """isApiErrorMessage rows carry their own `error` field (rate_limit,
-    invalid_request, authentication_failed, server_error -- verified against
-    real errors on this host 2026-09-18), which is a better signal than text
-    matching. The one gap: apiErrorStatus 529 (real, observed) is reported
-    with error="server_error" too, indistinguishable from a real 5xx without
-    the status code, so 529 is special-cased to the more useful
-    "overloaded_error" kind the briefing asks for."""
-    if doc.get("apiErrorStatus") == 529:
-        return "overloaded_error"
-    return doc.get("error") or _DEFAULT_ERROR_KIND
-
-
-_SECRET_RE = re.compile(
-    r"(?i)\b(api[_-]?key|secret|token|password|bearer|authorization)\b\s*[:=]\s*\S+"
-)
-_MAX_EXAMPLE_LEN = 200
-
-
-def redact_secrets(text: str) -> str:
-    return _SECRET_RE.sub(lambda m: f"{m.group(1)}=<redacted>", text)
-
-
-def make_example(text: str | None) -> str | None:
-    if not text:
-        return None
-    collapsed = " ".join(redact_secrets(text).split())
-    return collapsed[:_MAX_EXAMPLE_LEN] if collapsed else None
-
-
-def tool_result_text(content) -> str:
-    """tool_result's `content` is either a plain string or a list of blocks
-    (text/image/...). Only text is ever surfaced in an example excerpt."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
-        return " ".join(parts)
-    return ""
-
-
-_FILE_PATH_INPUT_KEYS = ("file_path", "path", "notebook_path")
-
-
-def extract_file_path(tool_input) -> str | None:
-    if not isinstance(tool_input, dict):
-        return None
-    for key in _FILE_PATH_INPUT_KEYS:
-        val = tool_input.get(key)
-        if isinstance(val, str) and val:
-            return val
-    return None
 
 
 def parse_doc_for_analytics(

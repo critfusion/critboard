@@ -1,4 +1,4 @@
-import { el, fmtTokens, fmtCost, loadJSON, saveJSON } from "../utils.js";
+import { el, fmtTokens, fmtCost, loadJSON, saveJSON, panelStorageKey } from "../utils.js";
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -40,12 +40,8 @@ function paletteColor(idx) {
   return cssVar(varName) || fallback;
 }
 
-function storageKey(panelId) {
-  return `critdash.usage_history.${panelId}`;
-}
-
 function loadState(panelId) {
-  const saved = loadJSON(storageKey(panelId), null);
+  const saved = loadJSON(panelStorageKey("usage_history", panelId), null);
   const state = { window: "today", groupBy: "model", metric: "spend" };
   if (saved && typeof saved === "object") {
     if (WINDOWS.some(([k]) => k === saved.window)) state.window = saved.window;
@@ -56,7 +52,7 @@ function loadState(panelId) {
 }
 
 function saveState(panelId, state) {
-  saveJSON(storageKey(panelId), { window: state.window, groupBy: state.groupBy, metric: state.metric });
+  saveJSON(panelStorageKey("usage_history", panelId), { window: state.window, groupBy: state.groupBy, metric: state.metric });
 }
 
 async function fetchHistory(windowKey, groupBy) {
