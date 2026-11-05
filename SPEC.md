@@ -24,7 +24,11 @@ critdash/
   server/            # Python 3.13, FastAPI + uvicorn, managed by uv
     critdash/
       __init__.py
-      main.py        # FastAPI app, static mount, SSE
+      main.py        # build_app(): lifespan, middleware, static mount
+      wiring.py      # collector wiring and enablement
+      background.py  # background loops started by the lifespan
+      config_schema.py  # layout.json / theme.json validation
+      routes/        # HTTP routes, one module per area (snapshot+SSE, history, config, beads, ...)
       state.py       # Snapshot dataclasses + in-memory store
       store.py       # SQLite history (timeseries, events)
       config.py      # loads config/*.json, env overrides

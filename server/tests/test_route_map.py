@@ -102,3 +102,32 @@ def test_middleware_stack_is_pinned():
 def test_app_state_hooks_exist():
     for attr in ("snap", "store", "knowledge", "served", "context_cache"):
         assert hasattr(app.state, attr), attr
+
+
+def test_collector_registration_order_is_pinned(tmp_path, monkeypatch):
+    """Every collector forced on: the scheduler sees them in this order.
+    No lifespan runs here, so no collector starts."""
+    import json
+
+    from critdash import config as config_mod
+    from critdash import main as main_mod
+
+    names = ["beads", "dispatch", "remote"]
+    sources = dict(config_mod.DEFAULT_SOURCES)
+    sources["db_path"] = str(tmp_path / "test.db")
+    sources["collectors"] = {n: {"enabled": True} for n in names}
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "sources.json").write_text(json.dumps(sources))
+    (config_dir / "sources.example.json").write_text(json.dumps(config_mod.DEFAULT_SOURCES))
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
+    for key in ("CRITDASH_BIND_HOST", "CRITDASH_BIND_PORT", "CRITDASH_DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+
+    built = main_mod.build_app()
+    order = list(built.state.snap.full_snapshot()["sources"])
+    assert order == [
+        "beads", "agents", "worktrees", "usage", "kimi", "provider_usage",
+        "dispatch", "system", "remote", "productivity", "analytics",
+    ]
+    built.state.store.close()

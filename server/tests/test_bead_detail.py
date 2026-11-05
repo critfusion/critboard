@@ -13,6 +13,7 @@ from critdash.collectors.beads import (
     transform_bead_detail,
     validate_bead_id,
 )
+from critdash.routes import beads as beads_routes
 
 # -- validate_bead_id ---------------------------------------------------------
 
@@ -157,8 +158,8 @@ def test_get_bead_detail_endpoint_success(monkeypatch):
     async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0, beads_dir=""):
         return {"id": bead_id, "title": "fake bead", "status": "open"}
 
-    monkeypatch.setattr(main_mod, "fetch_bead_detail", fake_fetch)
-    main_mod._bead_detail_cache.clear()
+    monkeypatch.setattr(beads_routes, "fetch_bead_detail", fake_fetch)
+    beads_routes._bead_detail_cache.clear()
     client = TestClient(main_mod.app)
     resp = client.get("/api/bead/test-endpoint-ok-1")
     assert resp.status_code == 200
@@ -170,8 +171,8 @@ def test_get_bead_detail_endpoint_404(monkeypatch):
     async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0, beads_dir=""):
         raise BeadNotFoundError(bead_id)
 
-    monkeypatch.setattr(main_mod, "fetch_bead_detail", fake_fetch)
-    main_mod._bead_detail_cache.clear()
+    monkeypatch.setattr(beads_routes, "fetch_bead_detail", fake_fetch)
+    beads_routes._bead_detail_cache.clear()
     client = TestClient(main_mod.app)
     resp = client.get("/api/bead/test-endpoint-missing-1")
     assert resp.status_code == 404
@@ -182,7 +183,7 @@ def test_get_bead_detail_endpoint_rejects_invalid_id(monkeypatch):
     async def fake_fetch(beads_env, bd_bin, actor, bead_id, timeout=20.0, beads_dir=""):
         raise AssertionError("must not call fetch_bead_detail for an invalid id")
 
-    monkeypatch.setattr(main_mod, "fetch_bead_detail", fake_fetch)
+    monkeypatch.setattr(beads_routes, "fetch_bead_detail", fake_fetch)
     client = TestClient(main_mod.app)
     resp = client.get("/api/bead/--dangerous-flag")
     assert resp.status_code == 400
@@ -195,8 +196,8 @@ def test_get_bead_detail_endpoint_uses_cache_on_repeat_lookup(monkeypatch):
         calls.append(bead_id)
         return {"id": bead_id, "title": "fake bead", "status": "open"}
 
-    monkeypatch.setattr(main_mod, "fetch_bead_detail", fake_fetch)
-    main_mod._bead_detail_cache.clear()
+    monkeypatch.setattr(beads_routes, "fetch_bead_detail", fake_fetch)
+    beads_routes._bead_detail_cache.clear()
     client = TestClient(main_mod.app)
     client.get("/api/bead/test-endpoint-cached-1")
     client.get("/api/bead/test-endpoint-cached-1")
