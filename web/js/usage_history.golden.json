@@ -2988,12 +2988,7 @@
    },
    {
     "destroyed": false,
-    "sizes": [
-     {
-      "width": 900,
-      "height": 300
-     }
-    ],
+    "sizes": [],
     "data": [
      [
       1789718400,

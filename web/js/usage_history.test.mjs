@@ -184,7 +184,12 @@ const { default: widget } = await import("./widgets/usage_history.js");
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+// Copied at call time: later redraws and resizes must not change an earlier record.
 function snap(container) {
+  return JSON.parse(JSON.stringify(snapLive(container)));
+}
+
+function snapLive(container) {
   return {
     dom: serialize(container),
     charts: charts.map((c) => ({
