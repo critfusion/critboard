@@ -94,3 +94,35 @@ def compute_cost_usd(
         + cache_write_5m_tokens / 1_000_000 * rate.get("cache_write_5m", 0.0)
         + cache_write_1h_tokens / 1_000_000 * rate.get("cache_write_1h", 0.0)
     )
+
+
+# Providers billed per token, so a priced figure can exist. Everything else
+# (Grok, Kimi, Cursor) has no cost at all, whatever its token count.
+PRICED_PROVIDERS = frozenset({"codex"})
+
+
+def compute_provider_cost_usd(
+    pricing: dict, provider: str, model: str,
+    input_tokens: int, output_tokens: int, cache_read_tokens: int, cache_write_tokens: int,
+) -> float | None:
+    """Dollar cost for a non-Claude provider, or None when it is UNKNOWN.
+
+    None is "we cannot say", never 0.0, and callers must not sum it as 0.
+    Only Codex is billed per token (API key): its rates live in
+    `pricing.codex_models.<model-id-prefix>` = {input, output, cache_read,
+    cache_write} (USD per 1,000,000 tokens; cache_write falls back to the
+    input rate when absent). A model with no entry has no cost -- there is
+    deliberately no default rate, because inventing one would put a made-up
+    number in the spend totals. Every other provider (Grok: OAuth login,
+    costUsdTicks unit unverified; Kimi, Cursor: subscription) is always None."""
+    if provider not in PRICED_PROVIDERS:
+        return None
+    rate = _longest_prefix_match(pricing.get("codex_models") or {}, model)
+    if rate is None:
+        return None
+    return (
+        input_tokens / 1_000_000 * rate.get("input", 0.0)
+        + output_tokens / 1_000_000 * rate.get("output", 0.0)
+        + cache_read_tokens / 1_000_000 * rate.get("cache_read", 0.0)
+        + cache_write_tokens / 1_000_000 * rate.get("cache_write", rate.get("input", 0.0))
+    )

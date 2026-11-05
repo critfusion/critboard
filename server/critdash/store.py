@@ -326,6 +326,43 @@ CREATE TABLE IF NOT EXISTS remote_kimi_error_buckets (
 );
 CREATE INDEX IF NOT EXISTS idx_remote_kimi_error_buckets_day ON remote_kimi_error_buckets(day);
 
+-- Codex and Grok token usage (critfusion-fleet-q733.11 phase 2). One table
+-- for both: events carry the same input/output/cache split Claude's do, but
+-- NO stored cost -- cost is derived at read time from pricing.json (Codex,
+-- API-key billing) or is unknown (Grok), so a price change or a still-missing
+-- price never leaves a stale or invented dollar figure in the database.
+-- `input` EXCLUDES cached and cache-written tokens (same convention as
+-- usage_events). event_key is the provider's own per-response/per-turn
+-- identity, so re-reading a file inserts nothing twice.
+CREATE TABLE IF NOT EXISTS provider_usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    host TEXT NOT NULL DEFAULT 'localhost',
+    session_id TEXT NOT NULL,
+    event_key TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT 'unknown',
+    project TEXT,
+    input INTEGER NOT NULL DEFAULT 0,
+    output INTEGER NOT NULL DEFAULT 0,
+    cache_read INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(provider, host, session_id, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_provider_usage_events_ts ON provider_usage_events(ts);
+CREATE INDEX IF NOT EXISTS idx_provider_usage_events_session ON provider_usage_events(session_id);
+
+-- Remote-host Codex/Grok usage, hour-granularity, replace-semantics upsert
+-- (same shape as remote_usage_buckets; pricing is applied centrally).
+CREATE TABLE IF NOT EXISTS remote_provider_usage_buckets (
+    host TEXT NOT NULL, provider TEXT NOT NULL, hour TEXT NOT NULL, model TEXT NOT NULL,
+    input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0,
+    cache_read INTEGER NOT NULL DEFAULT 0, cache_write INTEGER NOT NULL DEFAULT 0,
+    messages INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (host, provider, hour, model)
+);
+CREATE INDEX IF NOT EXISTS idx_remote_provider_usage_buckets_hour ON remote_provider_usage_buckets(hour);
+
 -- Manually-triggered AI-provider quota check cache (critdash/quota.py). One
 -- row per provider, replaced wholesale on every POST /api/quota/refresh.
 -- `payload` is the full JSON result dict quota.py builds -- numbers and
@@ -1369,6 +1406,124 @@ class Store:
                 """SELECT kind, COALESCE(SUM(count),0) AS count, MAX(last_seen) AS last_seen
                    FROM remote_kimi_error_buckets WHERE day >= ? GROUP BY kind""",
                 (since_day,),
+            ).fetchall()
+
+    # -- Codex/Grok usage (provider_usage_events) -----------------------------
+    _PROVIDER_GROUP_COLS = ("provider", "model", "host", "session_id", "project")
+
+    def insert_provider_usage_events(self, rows: Iterable[dict]) -> int:
+        rows = [{**r, "host": r.get("host") or "localhost"} for r in rows]
+        if not rows:
+            return 0
+        with self._lock:
+            cur = self._conn.executemany(
+                """INSERT OR IGNORE INTO provider_usage_events
+                   (provider, host, session_id, event_key, ts, model, project,
+                    input, output, cache_read, cache_write)
+                   VALUES (:provider, :host, :session_id, :event_key, :ts, :model, :project,
+                           :input, :output, :cache_read, :cache_write)""",
+                rows,
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def upsert_remote_provider_usage_buckets(self, rows: Iterable[dict]) -> int:
+        rows = list(rows)
+        if not rows:
+            return 0
+        with self._lock:
+            self._conn.executemany(
+                """INSERT INTO remote_provider_usage_buckets
+                   (host, provider, hour, model, input, output, cache_read, cache_write, messages)
+                   VALUES (:host, :provider, :hour, :model, :input, :output, :cache_read,
+                           :cache_write, :messages)
+                   ON CONFLICT(host, provider, hour, model) DO UPDATE SET
+                       input=excluded.input, output=excluded.output, cache_read=excluded.cache_read,
+                       cache_write=excluded.cache_write, messages=excluded.messages""",
+                rows,
+            )
+            self._conn.commit()
+            return len(rows)
+
+    def provider_usage_grouped(
+        self, group_cols: tuple[str, ...], since_iso: str | None = None,
+        host: str | None = None, remote: bool = False,
+    ) -> list[sqlite3.Row]:
+        """Token sums grouped by `group_cols` (fixed whitelist) from this
+        host's provider_usage_events (remote=False) or every other host's
+        remote_provider_usage_buckets (remote=True; no session_id/project
+        there). Both return the same columns so callers can merge them."""
+        cols = tuple(group_cols)
+        allowed = self._PROVIDER_GROUP_COLS[:3] if remote else self._PROVIDER_GROUP_COLS
+        if not cols or not all(c in allowed for c in cols):
+            raise ValueError(f"invalid group_cols: {group_cols!r}")
+        clauses = []
+        params: list = []
+        if since_iso:
+            clauses.append("hour >= ?" if remote else "ts >= ?")
+            params.append(_first_whole_hour_prefix(since_iso) if remote else since_iso)
+        if host:
+            clauses.append("host = ?")
+            params.append(host)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        col_list = ", ".join(cols)
+        table = "remote_provider_usage_buckets" if remote else "provider_usage_events"
+        messages = "COALESCE(SUM(messages),0)" if remote else "COUNT(*)"
+        with self._lock:
+            return self._conn.execute(
+                f"""SELECT {col_list},
+                        COALESCE(SUM(input),0) AS input, COALESCE(SUM(output),0) AS output,
+                        COALESCE(SUM(cache_read),0) AS cache_read,
+                        COALESCE(SUM(cache_write),0) AS cache_write,
+                        {messages} AS messages, {"MAX(hour)" if remote else "MAX(ts)"} AS last_ts
+                    FROM {table} {where}
+                    GROUP BY {col_list}""",  # noqa: S608 -- identifiers from fixed whitelists above
+                params,
+            ).fetchall()
+
+    def provider_usage_grouped_timeline(
+        self, since_iso: str, bucket: str, tz_name: str = "UTC", remote: bool = False,
+    ) -> list[sqlite3.Row] | list[dict]:
+        """(bucket, provider, host, model) token sums, local or remote, same
+        hour-widen-and-fold treatment of bucket='day' with a non-UTC tz as
+        usage_events_grouped_timeline."""
+        if bucket not in ("hour", "day"):
+            raise ValueError(f"invalid bucket: {bucket!r}")
+        if bucket == "day" and tz_name and tz_name != "UTC":
+            hourly = self.provider_usage_grouped_timeline(_widen_since_hour(since_iso), "hour", remote=remote)
+            return fold_hour_rows_to_local_day(hourly, tz_name, key_cols=("provider", "host", "model"))
+        if remote:
+            bucket_expr = "substr(hour,1,10)" if bucket == "day" else "hour || ':00:00Z'"
+            table, time_col, messages, param = (
+                "remote_provider_usage_buckets", "hour", "COALESCE(SUM(messages),0)", since_iso[:13],
+            )
+        else:
+            bucket_expr = "substr(ts,1,10)" if bucket == "day" else "substr(ts,1,13) || ':00:00Z'"
+            table, time_col, messages, param = "provider_usage_events", "ts", "COUNT(*)", since_iso
+        with self._lock:
+            return self._conn.execute(
+                f"""SELECT {bucket_expr} AS bucket, provider, host, model,
+                        COALESCE(SUM(input),0) AS input, COALESCE(SUM(output),0) AS output,
+                        COALESCE(SUM(cache_read),0) AS cache_read,
+                        COALESCE(SUM(cache_write),0) AS cache_write,
+                        {messages} AS messages
+                    FROM {table} WHERE {time_col} >= ?
+                    GROUP BY bucket, provider, host, model ORDER BY bucket ASC""",  # noqa: S608
+                (param,),
+            ).fetchall()
+
+    def provider_usage_first_seen(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT provider, host, model, MIN(ts) AS first_ts FROM provider_usage_events"
+                " GROUP BY provider, host, model"
+            ).fetchall()
+
+    def remote_provider_usage_first_seen(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT provider, host, model, MIN(hour) AS first_ts FROM remote_provider_usage_buckets"
+                " GROUP BY provider, host, model"
             ).fetchall()
 
     # -- AI-provider quota cache (critdash/quota.py) -------------------------

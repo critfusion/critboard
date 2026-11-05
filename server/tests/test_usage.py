@@ -650,7 +650,7 @@ def test_by_provider_present_for_every_window(tmp_store):
     windows = {r["window"] for r in rollups["by_provider"]}
     assert windows == {"today", "7d", "30d", "all"}
     providers = {r["provider"] for r in rollups["by_provider"]}
-    assert providers == {"claude", "kimi"}
+    assert providers == {"claude", "kimi", "codex", "grok", "cursor"}
 
 
 # -- regression: adding Kimi data must not change a single Claude figure -----

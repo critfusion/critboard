@@ -230,16 +230,27 @@ def herdr_pane_bead(raw: dict) -> str | None:
     return bead if isinstance(bead, str) and validate_bead_id(bead) else None
 
 
-def _usage_fields(session: str | None, usage_by_session: dict) -> dict:
+# Kinds whose usage this dashboard cannot attribute to a card: Cursor keeps
+# no local token data at all; a REMOTE Codex/Grok card has bucket totals but
+# no per-session figure. Their usage fields are null (unknown), never 0.
+_UNKNOWN_USAGE = {"tokens_today": None, "cost_today_usd": None, "msg_count_today": None}
+
+
+def _usage_fields(session: str | None, usage_by_session: dict, kind: str | None = None) -> dict:
     usage = usage_by_session.get(session, {}) if session else {}
     default_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}
+    # Grok's cost is always unknown (tokens only); Codex's is 0.0 until a
+    # session has events, then priced or None (see usage._provider_session_map).
+    default_cost = None if kind == "grok" else 0.0
+    unknown = _UNKNOWN_USAGE if kind == "cursor" else {}
     return {
         "tokens_today": usage.get("tokens_today", default_tokens),
-        "cost_today_usd": usage.get("cost_today_usd", 0.0),
+        "cost_today_usd": usage.get("cost_today_usd", default_cost),
         "msg_count_today": usage.get("msg_count_today", 0),
         "subagents_active": usage.get("subagents_active", 0),
         "last_activity": usage.get("last_activity"),
         "last_model": usage.get("last_model"),
+        **unknown,
     }
 
 
@@ -251,7 +262,7 @@ def _build_herdr_agent(raw: dict, worktrees: list[dict], host: str, usage_by_ses
     repo = wt.get("repo") if wt else None
     title = raw.get("terminal_title_stripped") or raw.get("terminal_title")
     kind = raw.get("agent")
-    usage = _usage_fields(session, usage_by_session)
+    usage = _usage_fields(session, usage_by_session, kind)
 
     return {
         "id": session,
@@ -771,6 +782,8 @@ class AgentsCollector(BaseCollector):
             for a in rh.get("agents", []):
                 remote_entry = dict(a)
                 remote_entry["stale"] = stale
+                if remote_entry.get("kind") in ("codex", "grok", "cursor"):
+                    remote_entry.update(_UNKNOWN_USAGE)
                 remote_entry.setdefault("bead_tracked", remote_entry.get("kind") in BEAD_TRACKED_KINDS)
                 remote_entry["bead"] = None
                 remote_entry.setdefault("bead_title", None)

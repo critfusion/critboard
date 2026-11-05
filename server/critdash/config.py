@@ -96,6 +96,7 @@ DEFAULT_SOURCES = {
         "worktrees": 60,
         "usage": 10,
         "kimi": 10,
+        "provider_usage": 10,
         "dispatch": 30,
         "system": 15,
         "analytics": 90,

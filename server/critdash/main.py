@@ -40,6 +40,7 @@ from .collectors.dispatch import DispatchCollector
 from .collectors.dispatch import availability_issue as dispatch_availability_issue
 from .collectors.kimi import KimiCollector
 from .collectors.productivity import ProductivityCollector
+from .collectors.provider_usage import ProviderUsageCollector
 from .collectors.remote import RemoteCollector
 from .collectors.remote import availability_issue as remote_availability_issue
 from .collectors.system import SystemCollector
@@ -345,6 +346,14 @@ def build_app() -> FastAPI:
     kimi_collector.interval_s = config.interval("kimi")
     scheduler.register(kimi_collector)
 
+    provider_usage_collector = ProviderUsageCollector(
+        ctx=app_ctx, store=store, host=local_host,
+        codex_dir=config.sources.get("codex_dir", "~/.codex"),
+        grok_dir=config.sources.get("grok_dir", "~/.grok"),
+    )
+    provider_usage_collector.interval_s = config.interval("provider_usage")
+    scheduler.register(provider_usage_collector)
+
     overlord_dir = config.expand("overlord_dir")
 
     def _build_dispatch_collector() -> DispatchCollector:
@@ -545,6 +554,7 @@ def build_app() -> FastAPI:
             path == "/"
             or path.endswith((".html", ".js", ".css"))
             or path.startswith("/api/config/")
+            or path in ("/config/layout.json", "/config/theme.json")
             or path.startswith("/api/bead/")
         ):
             response.headers["Cache-Control"] = "no-cache"
@@ -667,6 +677,12 @@ def build_app() -> FastAPI:
         rows = store.agent_status_history(since)
         return [{"t": r["ts"], "agent_id": r["agent_id"], "status": r["status"]} for r in rows]
 
+    # The fixture harness (web/dev.html, index.html?fixture=1) fetches
+    # config/layout.json and config/theme.json as static paths. web/config is
+    # a symlink to ../config, which the StaticFiles mount below will not
+    # follow, so these two paths are answered here instead. Only these two:
+    # mounting config/ whole would also serve sources.json (hosts, paths).
+    @app.get("/config/layout.json")
     @app.get("/api/config/layout")
     async def get_layout():
         if not config.layout_path.exists():
@@ -674,6 +690,7 @@ def build_app() -> FastAPI:
         with config.layout_path.open() as f:
             return JSONResponse(json.load(f))
 
+    @app.get("/config/theme.json")
     @app.get("/api/config/theme")
     async def get_theme():
         if not config.theme_path.exists():
