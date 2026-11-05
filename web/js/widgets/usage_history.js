@@ -197,16 +197,11 @@ function buildLegendChip(label, color, total, metric, { excluded = false, dimmed
   return chip;
 }
 
-// Rebuilds the legend, coverage/cost notices, and the uPlot chart itself for
-// the given already-fetched `json`. Called both after a fresh fetch and
-// synchronously from legend-click toggles (no re-fetch needed for that).
-function drawChart(container, refs, json, state, hiddenKeys) {
-  const { chartHost, legendHost, noticeHost } = refs;
-
-  // Tear down the previous chart instance/observer before rebuilding --
-  // same guard spend_timeline.js uses at the top of render(), needed here
-  // too since redraws happen from in-panel control changes, not just a
-  // fresh app.js render() pass.
+// Tear down the previous chart instance/observer before rebuilding --
+// same guard spend_timeline.js uses at the top of render(), needed here
+// too since redraws happen from in-panel control changes, not just a
+// fresh app.js render() pass.
+function teardownChart(container) {
   if (container.__ro) {
     container.__ro.disconnect();
     container.__ro = null;
@@ -219,48 +214,30 @@ function drawChart(container, refs, json, state, hiddenKeys) {
     container.__chart.destroy();
     container.__chart = null;
   }
+}
 
-  chartHost.innerHTML = "";
-  legendHost.innerHTML = "";
-  noticeHost.innerHTML = "";
+function warnNotice(text) {
+  return el(
+    "div",
+    { style: "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;" },
+    text
+  );
+}
 
-  const buckets = json.buckets || [];
-  const allSeries = json.series || [];
-  const metric = state.metric;
-
-  if (metric === "tokens") {
-    noticeHost.appendChild(
-      el(
-        "div",
-        { style: "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;" },
-        "Token counts are dominated by cheap cache reads, so they do not track spend -- switch to SPEND to compare cost."
-      )
-    );
-  }
-
-  if (!window.uPlot) {
-    chartHost.appendChild(el("div", { class: "empty-state" }, "uPlot failed to load (web/vendor/uplot.js)."));
-    return;
-  }
-  if (buckets.length === 0 || allSeries.length === 0) {
-    chartHost.appendChild(el("div", { class: "empty-state" }, "No usage data for this window." ));
-    return;
-  }
-
-  // Rank every series by its metric total so the biggest series gets the
-  // first palette color and legend order is stable. Cost-unknown series
-  // rank by token total instead (they never enter the spend stack, but
-  // still need a sensible legend position).
-  const ranked = allSeries
+// Rank every series by its metric total so the biggest series gets the
+// first palette color and legend order is stable. Cost-unknown series
+// rank by token total instead (they never enter the spend stack, but
+// still need a sensible legend position).
+function rankSeries(allSeries, metric) {
+  return allSeries
     .map((s) => ({ s, unknown: isCostUnknown(s), total: seriesTotal(s, metric) }))
     .sort((a, b) => (b.total ?? seriesTotal(b.s, "tokens") ?? 0) - (a.total ?? seriesTotal(a.s, "tokens") ?? 0));
+}
 
-  const colorForKey = (key) => {
-    const idx = ranked.findIndex((r) => r.s.key === key);
-    return paletteColor(idx < 0 ? 0 : idx);
-  };
-
-  // ---- legend (every series gets an entry; excluded ones are marked, never zeroed) ----
+// Every series gets a legend entry; excluded ones are marked, never zeroed.
+// Returns the labels of series excluded from the spend stack.
+function renderLegend(legendHost, ranked, colorForKey, state, hiddenKeys, onToggle) {
+  const metric = state.metric;
   const excludedLabels = [];
   ranked.forEach(({ s, unknown, total }) => {
     const color = colorForKey(s.key);
@@ -275,40 +252,17 @@ function drawChart(container, refs, json, state, hiddenKeys) {
         : () => {
             if (hiddenKeys.has(s.key)) hiddenKeys.delete(s.key);
             else hiddenKeys.add(s.key);
-            drawChart(container, refs, json, state, hiddenKeys);
+            onToggle();
           },
     });
     legendHost.appendChild(chip);
   });
+  return excludedLabels;
+}
 
-  if (excludedLabels.length > 0) {
-    noticeHost.appendChild(
-      el(
-        "div",
-        { style: "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;" },
-        `${excludedLabels.join(", ")}: subscription billing, no per-token cost data -- excluded from spend, not free.`
-      )
-    );
-  }
-
-  const coverage = json.coverage || {};
-  const fleetCompleteFromMs = coverage.fleet_complete_from ? Date.parse(coverage.fleet_complete_from) : NaN;
-  const { xs, isTime } = parseXs(buckets);
-
-  const stackable = ranked.filter(({ s, unknown }) => !hiddenKeys.has(s.key) && !(metric === "spend" && unknown));
-
-  if (stackable.length === 0) {
-    chartHost.appendChild(
-      el(
-        "div",
-        { class: "empty-state" },
-        metric === "spend" ? "No series with cost data in this window." : "All series hidden -- click a legend entry to show one."
-      )
-    );
-    return;
-  }
-
-  const zero = new Array(xs.length).fill(0);
+// Cumulative arrays, one per stacked series, for uPlot's band stack.
+function stackSeries(stackable, metric, length) {
+  const zero = new Array(length).fill(0);
   let cum = zero;
   const cumArrays = [];
   for (const { s } of stackable) {
@@ -316,22 +270,44 @@ function drawChart(container, refs, json, state, hiddenKeys) {
     cum = cum.map((c, i) => c + (vals[i] || 0));
     cumArrays.push(cum.slice());
   }
+  return { zero, cumArrays };
+}
 
+// Shade the region before fleet_complete_from -- not every host's
+// history reaches back that far, so a fleet total there is a partial
+// total, not a real dip/spike. drawClear fires before series are
+// painted, so the shading sits behind the bands, not on top.
+function coverageShadeHook(fleetCompleteFromMs, isTime, warnColor) {
+  return (u) => {
+    try {
+      if (Number.isNaN(fleetCompleteFromMs) || !isTime) return;
+      const covSec = fleetCompleteFromMs / 1000;
+      const xMin = u.scales.x.min;
+      const xMax = u.scales.x.max;
+      if (xMin == null || xMax == null || covSec <= xMin) return;
+      const xEnd = Math.min(covSec, xMax);
+      const leftPx = u.valToPos(xMin, "x", true);
+      const endPx = u.valToPos(xEnd, "x", true);
+      const ctx = u.ctx;
+      ctx.save();
+      ctx.fillStyle = warnColor + "1a";
+      ctx.fillRect(leftPx, u.bbox.top, Math.max(0, endPx - leftPx), u.bbox.height);
+      ctx.restore();
+    } catch (e) {
+      // never let a cosmetic shading pass break the chart
+    }
+  };
+}
+
+function buildChartOpts({ size, isTime, buckets, metric, stackable, colorForKey, state, fleetCompleteFromMs }) {
   const textFaint = cssVar("--color-text-faint") || "#546575";
   const gridLine = cssVar("--color-grid-line") || "#131a22";
   const warnColor = cssVar("--color-status-warn") || "#f2a93b";
 
   const { isMobile, isTablet } = state;
 
-  // Same sizing discipline as spend_timeline.js: measure the chart host's
-  // real laid-out box, never a hand-tuned fudge constant.
-  const sizeFor = () => {
-    const rect = chartHost.getBoundingClientRect();
-    return { width: Math.max(200, Math.floor(rect.width)), height: Math.max(100, Math.floor(rect.height)) };
-  };
-
-  const opts = {
-    ...sizeFor(),
+  return {
+    ...size,
     padding: [8, 8, 0, 8],
     legend: { show: false },
     cursor: { points: { show: false } },
@@ -364,53 +340,17 @@ function drawChart(container, refs, json, state, hiddenKeys) {
     // same fix in spend_timeline.js).
     bands: stackable.map((r, i) => ({ series: [i + 1, i + 2], fill: colorForKey(r.s.key) + "33", dir: 1 })),
     hooks: {
-      // Shade the region before fleet_complete_from -- not every host's
-      // history reaches back that far, so a fleet total there is a partial
-      // total, not a real dip/spike. drawClear fires before series are
-      // painted, so the shading sits behind the bands, not on top.
-      drawClear: [
-        (u) => {
-          try {
-            if (Number.isNaN(fleetCompleteFromMs) || !isTime) return;
-            const covSec = fleetCompleteFromMs / 1000;
-            const xMin = u.scales.x.min;
-            const xMax = u.scales.x.max;
-            if (xMin == null || xMax == null || covSec <= xMin) return;
-            const xEnd = Math.min(covSec, xMax);
-            const leftPx = u.valToPos(xMin, "x", true);
-            const endPx = u.valToPos(xEnd, "x", true);
-            const ctx = u.ctx;
-            ctx.save();
-            ctx.fillStyle = warnColor + "1a";
-            ctx.fillRect(leftPx, u.bbox.top, Math.max(0, endPx - leftPx), u.bbox.height);
-            ctx.restore();
-          } catch (e) {
-            // never let a cosmetic shading pass break the chart
-          }
-        },
-      ],
+      drawClear: [coverageShadeHook(fleetCompleteFromMs, isTime, warnColor)],
     },
   };
+}
 
-  const chart = new window.uPlot(opts, [xs, zero, ...cumArrays], chartHost);
-  container.__chart = chart;
-
-  if (!Number.isNaN(fleetCompleteFromMs) && isTime && fleetCompleteFromMs / 1000 > xs[0]) {
-    const dateStr = String(coverage.fleet_complete_from).slice(0, 10);
-    noticeHost.appendChild(
-      el(
-        "div",
-        { style: "font-size:9px; color:var(--color-status-warn); font-family:var(--font-mono); padding:1px 0;" },
-        `shaded: before ${dateStr} not every fleet host was reporting yet -- totals there undercount the fleet, they are not a real drop.`
-      )
-    );
-  }
-
-  // ---- resize discipline, copied from spend_timeline.js: re-entrancy
-  // guard + 2px threshold + rAF coalescing, observing the panel body
-  // (container), not the inner chart host -- matches app.js's
-  // teardownPanels(), which only looks for `entry.body.__ro`. ----
-  let lastSize = { width: opts.width, height: opts.height };
+// ---- resize discipline, copied from spend_timeline.js: re-entrancy
+// guard + 2px threshold + rAF coalescing, observing the panel body
+// (container), not the inner chart host -- matches app.js's
+// teardownPanels(), which only looks for `entry.body.__ro`. ----
+function observeResize(container, chart, sizeFor, initialSize) {
+  let lastSize = initialSize;
   let roApplying = false;
   const RESIZE_THRESHOLD_PX = 2;
 
@@ -438,6 +378,95 @@ function drawChart(container, refs, json, state, hiddenKeys) {
     });
   });
   container.__ro.observe(container);
+}
+
+// Rebuilds the legend, coverage/cost notices, and the uPlot chart itself for
+// the given already-fetched `json`. Called both after a fresh fetch and
+// synchronously from legend-click toggles (no re-fetch needed for that).
+function drawChart(container, refs, json, state, hiddenKeys) {
+  const { chartHost, legendHost, noticeHost } = refs;
+
+  teardownChart(container);
+
+  chartHost.innerHTML = "";
+  legendHost.innerHTML = "";
+  noticeHost.innerHTML = "";
+
+  const buckets = json.buckets || [];
+  const allSeries = json.series || [];
+  const metric = state.metric;
+
+  if (metric === "tokens") {
+    noticeHost.appendChild(
+      warnNotice("Token counts are dominated by cheap cache reads, so they do not track spend -- switch to SPEND to compare cost.")
+    );
+  }
+
+  if (!window.uPlot) {
+    chartHost.appendChild(el("div", { class: "empty-state" }, "uPlot failed to load (web/vendor/uplot.js)."));
+    return;
+  }
+  if (buckets.length === 0 || allSeries.length === 0) {
+    chartHost.appendChild(el("div", { class: "empty-state" }, "No usage data for this window." ));
+    return;
+  }
+
+  const ranked = rankSeries(allSeries, metric);
+
+  const colorForKey = (key) => {
+    const idx = ranked.findIndex((r) => r.s.key === key);
+    return paletteColor(idx < 0 ? 0 : idx);
+  };
+
+  const excludedLabels = renderLegend(legendHost, ranked, colorForKey, state, hiddenKeys, () =>
+    drawChart(container, refs, json, state, hiddenKeys)
+  );
+
+  if (excludedLabels.length > 0) {
+    noticeHost.appendChild(
+      warnNotice(`${excludedLabels.join(", ")}: subscription billing, no per-token cost data -- excluded from spend, not free.`)
+    );
+  }
+
+  const coverage = json.coverage || {};
+  const fleetCompleteFromMs = coverage.fleet_complete_from ? Date.parse(coverage.fleet_complete_from) : NaN;
+  const { xs, isTime } = parseXs(buckets);
+
+  const stackable = ranked.filter(({ s, unknown }) => !hiddenKeys.has(s.key) && !(metric === "spend" && unknown));
+
+  if (stackable.length === 0) {
+    chartHost.appendChild(
+      el(
+        "div",
+        { class: "empty-state" },
+        metric === "spend" ? "No series with cost data in this window." : "All series hidden -- click a legend entry to show one."
+      )
+    );
+    return;
+  }
+
+  const { zero, cumArrays } = stackSeries(stackable, metric, xs.length);
+
+  // Same sizing discipline as spend_timeline.js: measure the chart host's
+  // real laid-out box, never a hand-tuned fudge constant.
+  const sizeFor = () => {
+    const rect = chartHost.getBoundingClientRect();
+    return { width: Math.max(200, Math.floor(rect.width)), height: Math.max(100, Math.floor(rect.height)) };
+  };
+
+  const opts = buildChartOpts({ size: sizeFor(), isTime, buckets, metric, stackable, colorForKey, state, fleetCompleteFromMs });
+
+  const chart = new window.uPlot(opts, [xs, zero, ...cumArrays], chartHost);
+  container.__chart = chart;
+
+  if (!Number.isNaN(fleetCompleteFromMs) && isTime && fleetCompleteFromMs / 1000 > xs[0]) {
+    const dateStr = String(coverage.fleet_complete_from).slice(0, 10);
+    noticeHost.appendChild(
+      warnNotice(`shaded: before ${dateStr} not every fleet host was reporting yet -- totals there undercount the fleet, they are not a real drop.`)
+    );
+  }
+
+  observeResize(container, chart, sizeFor, { width: opts.width, height: opts.height });
 }
 
 function mount(container, ctx) {
