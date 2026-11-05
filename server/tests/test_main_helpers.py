@@ -672,7 +672,7 @@ def test_get_update_check_syncs_snapshot_state_after_a_push(isolated_app, monkey
             "checked_at": "2020-01-01T00:05:00.000Z", "update_available": False,
         }
 
-    monkeypatch.setattr(main_mod.update_mod, "check_for_update", fake_check_for_update)
+    monkeypatch.setattr(update_mod, "check_for_update", fake_check_for_update)
 
     resp = isolated_app.get("/api/update/check")
     assert resp.status_code == 200
@@ -700,7 +700,7 @@ def test_get_update_check_syncs_persisted_periodic_state_too(isolated_app, monke
             "checked_at": "2020-01-01T00:05:00.000Z", "update_available": False,
         }
 
-    monkeypatch.setattr(main_mod.update_mod, "check_for_update", fake_check_for_update)
+    monkeypatch.setattr(update_mod, "check_for_update", fake_check_for_update)
 
     resp = isolated_app.get("/api/update/check")
     assert resp.status_code == 200
@@ -730,7 +730,7 @@ def test_get_update_check_no_repo_configured_does_not_touch_snapshot_state(isola
             "repo_configured": False, "message": "no update repo configured",
         }
 
-    monkeypatch.setattr(main_mod.update_mod, "check_for_update", fake_check_for_update)
+    monkeypatch.setattr(update_mod, "check_for_update", fake_check_for_update)
     isolated_app.get("/api/update/check")
 
     snap_update = isolated_app.get("/api/snapshot").json()["update"]
@@ -924,7 +924,7 @@ def test_post_update_apply_reloads_sources_before_allow_self_update_gate(tmp_pat
             "reinstalled": False, "restart_requested": False, "applied_at": "now",
         }
 
-    monkeypatch.setattr(main_mod.update_mod, "apply_update", fake_apply_update)
+    monkeypatch.setattr(update_mod, "apply_update", fake_apply_update)
 
     resp = client.post("/api/update/apply")
 
@@ -1120,22 +1120,23 @@ def test_history_usage_today_window_starts_at_local_midnight(monkeypatch):
     from fastapi.testclient import TestClient
 
     from critdash import main as main_mod
+    from critdash.routes import history as history_routes
 
     class _Frozen(datetime):
         @classmethod
         def now(cls, tz=None):
             return datetime(2026, 10, 2, 0, 47, tzinfo=UTC)  # 20:47 EDT on Oct 1
 
-    monkeypatch.setattr(main_mod, "datetime", _Frozen)
+    monkeypatch.setattr(history_routes, "datetime", _Frozen)
     client = TestClient(main_mod.app)
 
-    monkeypatch.setattr(main_mod, "_read_layout_timezone", lambda config: "America/New_York")
+    monkeypatch.setattr(history_routes, "_read_layout_timezone", lambda config: "America/New_York")
     ny = client.get("/api/history/usage?window=today&bucket=hour").json()
     # local midnight = 04:00Z Oct 1 .. 00:47Z Oct 2: 21 hourly buckets
     assert len(ny) == 21
     assert ny[0]["t"].startswith("2026-10-01T04")
 
-    monkeypatch.setattr(main_mod, "_read_layout_timezone", lambda config: "UTC")
+    monkeypatch.setattr(history_routes, "_read_layout_timezone", lambda config: "UTC")
     utc = client.get("/api/history/usage?window=today&bucket=hour").json()
     assert len(utc) == 1
 
@@ -1144,13 +1145,14 @@ def test_window_to_since_today_honors_timezone(monkeypatch):
     from datetime import UTC, datetime
 
     from critdash import main as main_mod
+    from critdash.routes import history as history_routes
 
     class _Frozen(datetime):
         @classmethod
         def now(cls, tz=None):
             return datetime(2026, 10, 2, 0, 47, tzinfo=UTC)
 
-    monkeypatch.setattr(main_mod, "datetime", _Frozen)
+    monkeypatch.setattr(history_routes, "datetime", _Frozen)
     assert main_mod._window_to_since("today", "America/New_York") == "2026-10-01T04:00:00Z"
     assert main_mod._window_to_since("today") == "2026-10-02T00:00:00Z"
 

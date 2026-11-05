@@ -200,7 +200,7 @@ def load_openai_key(path: str) -> str | None:
 def _safe_body(r: httpx.Response, limit: int = 200) -> str:
     try:
         text = r.text
-    except Exception:  # noqa: BLE001 - a broken response body must never crash the check
+    except Exception:  # a broken response body must never crash the check
         return ""
     return (text or "")[:limit]
 
@@ -503,7 +503,7 @@ async def _guard(provider: str, coro, timeout_s: float) -> dict:
         return _result(
             provider, ok=False, source="provider_api", error=f"timed out after {timeout_s:.0f}s",
         )
-    except Exception as exc:  # noqa: BLE001 - a check must never crash the refresh endpoint
+    except Exception as exc:  # a check must never crash the refresh endpoint
         return _result(
             provider, ok=False, source="provider_api",
             error=f"unexpected error: {type(exc).__name__}",

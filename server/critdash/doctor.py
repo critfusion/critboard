@@ -23,7 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import detect
-from .collectors.beads import NO_WORKSPACE_REMEDY, check_beads_workspace, check_sync_remote, resolve_any_workspace
+from .collectors.beads import (
+    NO_WORKSPACE_REMEDY,
+    check_beads_workspace,
+    check_sync_remote,
+    resolve_any_workspace,
+)
 from .config import DEFAULT_SOURCES, load_config
 
 # (key, kind, collector, canonical binary name for kind == "binary")

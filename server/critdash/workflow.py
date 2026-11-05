@@ -57,7 +57,11 @@ def _iso(when: datetime) -> str:
 
 
 def _text(value, limit: int = MAX_TEXT_CHARS) -> str:
-    text = str(value).strip()[:limit] if isinstance(value, str | int | float) and not isinstance(value, bool) else ""
+    text = (
+        str(value).strip()[:limit]
+        if isinstance(value, str | int | float) and not isinstance(value, bool)
+        else ""
+    )
     return text or UNKNOWN
 
 
@@ -132,25 +136,31 @@ def observed_sessions(agents) -> list[dict]:
         if not isinstance(a, dict):
             continue
         cost = a.get("cost_today_usd")
-        out.append({
-            "id": _text(a.get("id")),
-            "role": _role(a),
-            "runner": _text(a.get("kind"), 64),
-            "model": _text(a.get("model"), 100),
-            "provider": _provider(a.get("model")),
-            "account": UNKNOWN,
-            "host": _text(a.get("host"), 100),
-            "coordinated": UNKNOWN,
-            "status": _text(a.get("status"), 32),
-            "repo": _text(a.get("repo"), 100),
-            "bead": a.get("bead") if isinstance(a.get("bead"), str) else None,
-            "subagents_active": a.get("subagents_active") if isinstance(a.get("subagents_active"), int) else None,
-            "last_activity": a.get("last_activity") if isinstance(a.get("last_activity"), str) else None,
-            # Token cost priced from a local table. Not billing, not spend,
-            # not remaining quota.
-            "cost_estimate_today_usd": cost if isinstance(cost, int | float) and not isinstance(cost, bool) else None,
-            "cost_basis": "estimate",
-        })
+        out.append(
+            {
+                "id": _text(a.get("id")),
+                "role": _role(a),
+                "runner": _text(a.get("kind"), 64),
+                "model": _text(a.get("model"), 100),
+                "provider": _provider(a.get("model")),
+                "account": UNKNOWN,
+                "host": _text(a.get("host"), 100),
+                "coordinated": UNKNOWN,
+                "status": _text(a.get("status"), 32),
+                "repo": _text(a.get("repo"), 100),
+                "bead": a.get("bead") if isinstance(a.get("bead"), str) else None,
+                "subagents_active": a.get("subagents_active")
+                if isinstance(a.get("subagents_active"), int)
+                else None,
+                "last_activity": a.get("last_activity") if isinstance(a.get("last_activity"), str) else None,
+                # Token cost priced from a local table. Not billing, not spend,
+                # not remaining quota.
+                "cost_estimate_today_usd": cost
+                if isinstance(cost, int | float) and not isinstance(cost, bool)
+                else None,
+                "cost_basis": "estimate",
+            }
+        )
     return out
 
 
@@ -184,8 +194,16 @@ def _bead_people(labels) -> dict:
 
 def _needs_review(labels) -> bool:
     """A review label that is not one of the people labels above."""
-    return any("review" in str(lb).lower() and str(lb).partition(":")[0].strip().lower() not in _BEAD_LABEL_FIELDS
-               for lb in labels if isinstance(lb, str)) if isinstance(labels, list) else False
+    return (
+        any(
+            "review" in str(lb).lower()
+            and str(lb).partition(":")[0].strip().lower() not in _BEAD_LABEL_FIELDS
+            for lb in labels
+            if isinstance(lb, str)
+        )
+        if isinstance(labels, list)
+        else False
+    )
 
 
 def assignments(beads, agents) -> list[dict]:
@@ -282,16 +300,32 @@ def _owner_rows(reports, ttl_s: int, now: datetime) -> list[dict]:
             out.append(_row(_text(r["provider"], 64), "unknown", None, ttl_s, now, "unknown", None,
                             "owner report has no readable observed_at"))
             continue
-        out.append(_row(_text(r["provider"], 64), "owner-reported", observed, ttl_s, now,
-                        _text(r.get("state"), 64), None, _text(r.get("note"), 200) if r.get("note") else None))
+        out.append(
+            _row(
+                _text(r["provider"], 64),
+                "owner-reported",
+                observed,
+                ttl_s,
+                now,
+                _text(r.get("state"), 64),
+                None,
+                _text(r.get("note"), 200) if r.get("note") else None,
+            )
+        )
     return out
 
 
 def availability(quota_response: dict, owner_reported, ttl_s: int, now: datetime) -> dict:
     rows = [_quota_row(e, ttl_s, now) for e in quota_response.get("providers") or [] if isinstance(e, dict)]
     rows += _owner_rows(owner_reported, ttl_s, now)
-    return {"ttl_s": ttl_s, "rows": rows,
-            "note": "Readings expire after ttl_s seconds. An expired reading is stale and its numbers are not shown."}
+    return {
+        "ttl_s": ttl_s,
+        "rows": rows,
+        "note": (
+            "Readings expire after ttl_s seconds. "
+            "An expired reading is stale and its numbers are not shown."
+        ),
+    }
 
 
 def build(snapshot: dict, quota_response: dict, cfg: dict, policy: dict, now: datetime) -> dict:
@@ -299,13 +333,25 @@ def build(snapshot: dict, quota_response: dict, cfg: dict, policy: dict, now: da
     agents = snapshot.get("agents")
     beads = (snapshot.get("beads") or {}).get("items")
     sources = snapshot.get("sources") if isinstance(snapshot.get("sources"), dict) else {}
-    health = {k: {"ok": bool((sources.get(k) or {}).get("ok")), "stale": bool((sources.get(k) or {}).get("stale", True))}
-              for k in ("agents", "beads")}
+    health = {
+        k: {
+            "ok": bool((sources.get(k) or {}).get("ok")),
+            "stale": bool((sources.get(k) or {}).get("stale", True)),
+        }
+        for k in ("agents", "beads")
+    }
     return {
         "policy": policy,
-        "observed": {"label": "observed runtime", "snapshot_at": snapshot.get("generated_at"),
-                     "sources": health, "sessions": observed_sessions(agents),
-                     "cost_note": "cost_estimate_today_usd is an estimate from local token counts. It is not spend and not remaining quota."},
+        "observed": {
+            "label": "observed runtime",
+            "snapshot_at": snapshot.get("generated_at"),
+            "sources": health,
+            "sessions": observed_sessions(agents),
+            "cost_note": (
+                "cost_estimate_today_usd is an estimate from local token counts. "
+                "It is not spend and not remaining quota."
+            ),
+        },
         "assignments": {"label": "assignments", "items": assignments(beads, agents)},
         "availability": availability(quota_response, cfg.get("owner_reported"), availability_ttl_s(cfg), now),
     }
