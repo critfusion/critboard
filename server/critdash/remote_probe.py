@@ -2725,7 +2725,7 @@ def build_result(
         provider_buckets = collect_provider_usage(
             os.path.expanduser(codex_dir), os.path.expanduser(grok_dir), state_file,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         provider_buckets = dict(_EMPTY_PROVIDER_BUCKETS)
 
     return {

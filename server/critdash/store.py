@@ -1477,7 +1477,7 @@ class Store:
                         COALESCE(SUM(cache_write),0) AS cache_write,
                         {messages} AS messages, {"MAX(hour)" if remote else "MAX(ts)"} AS last_ts
                     FROM {table} {where}
-                    GROUP BY {col_list}""",  # noqa: S608 -- identifiers from fixed whitelists above
+                    GROUP BY {col_list}""",
                 params,
             ).fetchall()
 
@@ -1508,7 +1508,7 @@ class Store:
                         COALESCE(SUM(cache_write),0) AS cache_write,
                         {messages} AS messages
                     FROM {table} WHERE {time_col} >= ?
-                    GROUP BY bucket, provider, host, model ORDER BY bucket ASC""",  # noqa: S608
+                    GROUP BY bucket, provider, host, model ORDER BY bucket ASC""",
                 (param,),
             ).fetchall()
 
