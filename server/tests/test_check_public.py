@@ -111,3 +111,12 @@ def test_stop_list_is_the_reviewed_set():
         "grok-review", "waiting-review",
         "security",
     ])
+
+
+def test_name_exemption_filter_is_the_reviewed_set():
+    # The grep -vE filter drops names from the ground-truth list before the scan.
+    # A pattern added to it hides a name from the scanner, so changing it must
+    # be a deliberate edit here too.
+    text = SCRIPT.read_text()
+    filters = re.findall(r"grep -vE '([^']*)'", text)
+    assert filters == [r"^$|^\.|^wt-|^repo$"]
