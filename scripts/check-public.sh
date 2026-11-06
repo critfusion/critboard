@@ -172,8 +172,7 @@ if [ "$ground_truth_mode" -eq 1 ]; then
 
     if [ "$use_cache" -eq 0 ]; then
         # Small, named stop-list: product vocabulary this project ships on
-        # purpose (its own routing-label names) plus the one owner name
-        # that has been explicitly reviewed and accepted (see report). Every
+        # purpose (its own routing-label names). Every
         # entry here is something a human reviewed and said is not private
         # -- not a token added because it happened to fail the scan.
         declare -a STOP_LIST=(
@@ -182,7 +181,6 @@ if [ "$ground_truth_mode" -eq 1 ]; then
             needs-codex needs-grok needs-claude needs-opencode
             needs-cursor needs-kimi needs-review approved
             grok-review waiting-review
-            bryan
             security
         )
 

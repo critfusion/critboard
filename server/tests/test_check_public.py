@@ -14,16 +14,37 @@ import pytest
 SCRIPT = Path(__file__).resolve().parent.parent.parent / "scripts" / "check-public.sh"
 
 
-def _run(tmp_path, content):
+def _run(tmp_path, content, local_overrides=None, args=(), env=None):
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, repo / "scripts" / "check-public.sh")
+    if local_overrides is not None:
+        (repo / "scripts" / "check-public.local").write_text(local_overrides)
     (repo / "note.txt").write_text(content)
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     return subprocess.run(
-        ["bash", "scripts/check-public.sh"], cwd=repo,
+        ["bash", "scripts/check-public.sh", *args], cwd=repo, env=env,
         capture_output=True, text=True, timeout=60, check=False,
     )
+
+
+def _isolated_env(tmp_path, repo_roots):
+    # PATH holds only the tools the script needs, so ground-truth mode cannot
+    # reach `gh` or `bd` on the host and sees exactly the roots given here.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for tool in ("bash", "git", "grep", "sed", "tr", "sort", "awk", "comm", "ls",
+                 "mkdir", "stat", "date", "mktemp", "rm", "mv", "cat", "dirname",
+                 "hostname", "uname", "find", "head", "wc", "cut", "xargs"):
+        found = shutil.which(tool)
+        if found:
+            (bindir / tool).symlink_to(found)
+    return {
+        "PATH": str(bindir),
+        "HOME": str(tmp_path / "home"),
+        "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        "CHECK_PUBLIC_REPO_ROOTS": str(repo_roots),
+    }
 
 
 def test_clean_tree_passes(tmp_path):
@@ -42,3 +63,28 @@ def test_new_leak_classes_are_caught(tmp_path, line, reason):
     result = _run(tmp_path, line + "\n")
     assert result.returncode == 1
     assert reason in result.stdout
+
+
+# A private name that is not in the stop-list must be flagged when it arrives
+# through either documented channel. The name below is synthetic.
+PRIVATE_NAME = "zorblaxsynth"
+
+
+def test_name_in_local_overrides_is_flagged(tmp_path):
+    result = _run(
+        tmp_path, f"owner is {PRIVATE_NAME} here\n",
+        local_overrides=f"{PRIVATE_NAME}|private name from local overrides\n",
+    )
+    assert result.returncode == 1
+    assert "private name from local overrides" in result.stdout
+
+
+def test_name_from_ground_truth_is_flagged(tmp_path):
+    roots = tmp_path / "roots"
+    (roots / PRIVATE_NAME).mkdir(parents=True)
+    result = _run(
+        tmp_path, f"owner is {PRIVATE_NAME} here\n", args=("--ground-truth",),
+        env=_isolated_env(tmp_path, roots),
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "--ground-truth mode" in result.stdout

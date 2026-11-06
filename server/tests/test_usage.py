@@ -56,13 +56,13 @@ def test_parse_jsonl_bytes_mixed(fixtures_dir):
     assert len(docs) == 2
 
 
-def test_real_assistant_row_extracted(fixtures_dir):
-    line = (fixtures_dir / "usage_real_assistant.jsonl").read_bytes()
+def test_assistant_row_extracted(fixtures_dir):
+    line = (fixtures_dir / "usage_assistant_single.jsonl").read_bytes()
     doc = json.loads(line)
     row = extract_usage_row(doc, "demo-app", "/home/user/work/demo-app", PRICING)
     assert row is not None
     assert row["model"] == "claude-opus-5"
-    assert row["message_id"] == "msg_011CfAvsXNareSej2iKBixBi"
+    assert row["message_id"] == "msg_synthetic_0001"
     assert row["input"] == 2
     assert row["output"] == 449
     assert row["cache_read"] == 23978
