@@ -111,3 +111,22 @@ def test_stop_list_is_the_reviewed_set():
         "grok-review", "waiting-review",
         "security",
     ])
+
+
+def test_name_exemption_filter_is_the_reviewed_set():
+    # The grep -vE filter drops names from the ground-truth list before the scan.
+    # A pattern added to it hides a name from the scanner, so changing it must
+    # be a deliberate edit here too.
+    text = SCRIPT.read_text()
+    filters = re.findall(r"grep -vE '([^']*)'", text)
+    assert filters == [r"^$|^\.|^wt-|^repo$"]
+    # Pin the whole name pipeline: an extra stage or a longer length floor also
+    # hides names, so any change between the tr and the sort must be deliberate.
+    pipeline = re.search(r"tr 'A-Z' 'a-z' < \"\$raw_names_file\" \\\n(.*?)\| sort -u", text, re.DOTALL)
+    assert pipeline, "name pipeline not found in check-public.sh"
+    stages = [line.strip().rstrip("\\").strip() for line in pipeline.group(1).splitlines() if line.strip()]
+    assert stages == [
+        r"| sed 's/\.git$//'",
+        r"| grep -vE '^$|^\.|^wt-|^repo$'",
+        r"| awk 'length($0) >= 4'",
+    ]

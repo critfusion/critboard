@@ -132,7 +132,7 @@ Notes on real shapes observed on this host:
     "lanes": {"ready": ["id"], "in_progress": ["id"], "blocked": ["id"], "review": ["id"]}
   },
   "agents": [{
-    "id": "ac025f78-…",               // agent_session.value, stable key
+    "id": "00000000-0000-4000-8000-000000000003",               // agent_session.value, stable key
     "kind": "claude",
     "status": "working",              // working|idle|done|unknown
     "cwd": "/home/user/work/dashboard",
@@ -141,7 +141,7 @@ Notes on real shapes observed on this host:
     "pane": "w5:p1", "workspace": "w5",
     "title": "CritBoard",
     "focused": true,
-    "session_id": "ac025f78-…",
+    "session_id": "00000000-0000-4000-8000-000000000003",
     // "bead"/"bead_title": derived from THIS session's own transcript (the
     // exact bd commands it ran, tokenized respecting shell quoting, and
     // their results), never from actor name (one actor claims for many
@@ -188,7 +188,7 @@ Notes on real shapes observed on this host:
     "ahead": 2, "behind": 0,
     "upstream": "origin/main",
     "last_commit_at": "…", "last_commit_msg": "…", "last_commit_author": "…",
-    "agents": ["ac025f78-…"],          // agent ids whose cwd is inside
+    "agents": ["00000000-0000-4000-8000-000000000003"],          // agent ids whose cwd is inside
     "stale_days": 4
   }],
   "usage": {

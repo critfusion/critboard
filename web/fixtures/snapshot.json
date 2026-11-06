@@ -401,7 +401,7 @@
   },
   "agents": [
     {
-      "id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+      "id": "00000000-0000-4000-8000-000000000003",
       "kind": "claude",
       "status": "working",
       "cwd": "/home/user/repos/dashboard",
@@ -411,7 +411,7 @@
       "workspace": "w1",
       "title": "CritBoard Dashboard",
       "focused": true,
-      "session_id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+      "session_id": "00000000-0000-4000-8000-000000000003",
       "bead": "demo-fleet-9k2m",
       "last_activity": "2026-09-18T13:00:00Z",
       "status_since": "2026-09-18T12:54:00Z",
@@ -1344,7 +1344,7 @@
     ],
     "by_agent": [
       {
-        "agent_id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+        "agent_id": "00000000-0000-4000-8000-000000000003",
         "window": "today",
         "total": 5222784,
         "cost_usd": 5.5889
@@ -1934,7 +1934,7 @@
       "kind": "agent_status",
       "severity": "info",
       "text": "agent dashboard (claude) -> working",
-      "ref": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5"
+      "ref": "00000000-0000-4000-8000-000000000003"
     },
     {
       "t": "2026-09-18T12:58:00Z",
@@ -2331,7 +2331,7 @@
       },
       "sessions": [
         {
-          "session_id": "1dc87a84-446d-477e-9e45-fcb5dd1a4971",
+          "session_id": "00000000-0000-4000-8000-000000000004",
           "host": "localhost",
           "project": "demo-web",
           "main_cost_usd": 47.986724,
@@ -2355,7 +2355,7 @@
           ]
         },
         {
-          "session_id": "ac025f78-adc8-4cbf-84ad-b9d8277a21e5",
+          "session_id": "00000000-0000-4000-8000-000000000003",
           "host": "localhost",
           "project": "dashboard",
           "main_cost_usd": 21.857753,
@@ -2367,7 +2367,7 @@
           ]
         },
         {
-          "session_id": "250005d0-194b-4ace-942d-1402dbac8cd1",
+          "session_id": "00000000-0000-4000-8000-000000000002",
           "host": "localhost",
           "project": "ffw",
           "main_cost_usd": 7.268408,
