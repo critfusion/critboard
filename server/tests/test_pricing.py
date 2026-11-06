@@ -90,7 +90,7 @@ def test_cost_math_5m_and_1h_are_not_collapsed():
 
 
 def test_cost_math_real_sample():
-    # from tests/fixtures/usage_real_assistant.jsonl: input=2, output=449,
+    # from tests/fixtures/usage_assistant_single.jsonl: input=2, output=449,
     # cache_read=23978, cache_write_5m=0, cache_write_1h=29923, model claude-opus-5
     cost = compute_cost_usd(PRICING, "claude-opus-5", 2, 449, 23978, 0, 29923)
     rate = PRICING["models"]["claude-opus-5"]

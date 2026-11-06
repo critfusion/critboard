@@ -24,7 +24,7 @@ Grok -- ~/.grok/sessions/<url-quoted-cwd>/<session>/usage.json, rewritten
   includes reasoningTokens, same as Codex. `costUsdTicks` is NOT read: its
   unit is unverified and Grok is an OAuth login, so cost stays unknown.
 
-Billing basis (Bryan-approved recommendation, bead q733.11): Codex is an API
+Billing basis (approved recommendation, bead q733.11): Codex is an API
 key -> real per-token cost from pricing.json `codex_models` (None when a
 model has no price); Grok -> tokens only, cost None. The database stores
 tokens only; cost is derived at read time (pricing.compute_provider_cost_usd).

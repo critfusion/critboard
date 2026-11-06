@@ -210,7 +210,7 @@ function buildToolbar(container, panelId, tstate, onChange, isMobile, options) {
   // lane is it in" -- a separate question from the QUICK_FILTERS lane pills
   // above, so it gets its own wrapper + divider (same visual pattern as
   // SHOW CLOSED) rather than being mixed into that group. This is what lets
-  // Bryan list the unroutable beads directly.
+  // an operator list the unroutable beads directly.
   const routingWrap = el("div", { class: "table-routing-filter" });
   const routingBtns = {};
   for (const rf of ROUTING_FILTERS) {
