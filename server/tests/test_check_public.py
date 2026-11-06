@@ -88,3 +88,18 @@ def test_name_from_ground_truth_is_flagged(tmp_path):
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert "--ground-truth mode" in result.stdout
+
+
+def test_stop_list_is_the_reviewed_set():
+    # Every STOP_LIST entry exempts a name from ground-truth mode, so an added
+    # entry weakens the scanner. Adding one must be a deliberate edit here too.
+    text = SCRIPT.read_text()
+    block = text.split("declare -a STOP_LIST=(", 1)[1].split(")", 1)[0]
+    assert sorted(block.split()) == sorted([
+        "dashboard", "fleet", "medium", "profile", "smoke", "handoff", "critboard",
+        "__pycache__", "readme.md",
+        "needs-codex", "needs-grok", "needs-claude", "needs-opencode",
+        "needs-cursor", "needs-kimi", "needs-review", "approved",
+        "grok-review", "waiting-review",
+        "security",
+    ])
