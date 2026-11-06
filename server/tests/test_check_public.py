@@ -120,3 +120,13 @@ def test_name_exemption_filter_is_the_reviewed_set():
     text = SCRIPT.read_text()
     filters = re.findall(r"grep -vE '([^']*)'", text)
     assert filters == [r"^$|^\.|^wt-|^repo$"]
+    # Pin the whole name pipeline: an extra stage or a longer length floor also
+    # hides names, so any change between the tr and the sort must be deliberate.
+    pipeline = re.search(r"tr 'A-Z' 'a-z' < \"\$raw_names_file\" \\\n(.*?)\| sort -u", text, re.DOTALL)
+    assert pipeline, "name pipeline not found in check-public.sh"
+    stages = [line.strip().rstrip("\\").strip() for line in pipeline.group(1).splitlines() if line.strip()]
+    assert stages == [
+        r"| sed 's/\.git$//'",
+        r"| grep -vE '^$|^\.|^wt-|^repo$'",
+        r"| awk 'length($0) >= 4'",
+    ]
