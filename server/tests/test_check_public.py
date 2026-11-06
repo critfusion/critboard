@@ -5,6 +5,7 @@ repo."""
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,6 +40,10 @@ def _isolated_env(tmp_path, repo_roots):
         found = shutil.which(tool)
         if found:
             (bindir / tool).symlink_to(found)
+    (tmp_path / "home").mkdir()
+    (tmp_path / "cache").mkdir()
+    # Deliberately not merged with os.environ: the real HOME and repo roots
+    # must not leak into the scan.
     return {
         "PATH": str(bindir),
         "HOME": str(tmp_path / "home"),
@@ -94,8 +99,11 @@ def test_stop_list_is_the_reviewed_set():
     # Every STOP_LIST entry exempts a name from ground-truth mode, so an added
     # entry weakens the scanner. Adding one must be a deliberate edit here too.
     text = SCRIPT.read_text()
-    block = text.split("declare -a STOP_LIST=(", 1)[1].split(")", 1)[0]
-    assert sorted(block.split()) == sorted([
+    assigns = re.findall(r"^\s*(?:declare -a )?STOP_LIST\+?=", text, re.MULTILINE)
+    assert len(assigns) == 1, "STOP_LIST must be assigned exactly once (no += appends)"
+    match = re.search(r"^\s*declare -a STOP_LIST=\(([^)]*)\)", text, re.MULTILINE)
+    assert match, "STOP_LIST array definition not found in check-public.sh"
+    assert sorted(match.group(1).split()) == sorted([
         "dashboard", "fleet", "medium", "profile", "smoke", "handoff", "critboard",
         "__pycache__", "readme.md",
         "needs-codex", "needs-grok", "needs-claude", "needs-opencode",
