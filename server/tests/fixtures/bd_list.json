@@ -39,7 +39,7 @@
     "updated_at": "2026-09-18T12:01:40Z",
     "started_at": "2026-09-18T11:53:53Z",
     "closed_at": "2026-09-18T12:01:40Z",
-    "close_reason": "Handoff complete: wave 12 gated+merged at e716bbe; finding 6 is 78jr.9. PR #3 head e716bbeb5c5b37611b7720160633b6f821281544",
+    "close_reason": "Handoff complete: wave 12 gated+merged at 0000000; finding 6 is 78jr.9. PR #3 head 0000000000000000000000000000000000000001",
     "external_ref": "gh:demo-org/demo-web#3",
     "labels": ["demo-web"],
     "dependencies": [
@@ -66,7 +66,7 @@
     "updated_at": "2026-09-18T02:45:29Z",
     "started_at": "2026-09-18T02:41:27Z",
     "closed_at": "2026-09-18T02:45:29Z",
-    "close_reason": "Handoff complete: waiting on coder DONE on 78jr.6 with live watch. PR #3 head 750d48342b66fe8fd44fb1b1bf5d9d7e061195bf",
+    "close_reason": "Handoff complete: waiting on coder DONE on 78jr.6 with live watch. PR #3 head 0000000000000000000000000000000000000002",
     "external_ref": "gh:demo-org/demo-web#3",
     "labels": ["demo-web", "needs-grok"],
     "dependencies": [
