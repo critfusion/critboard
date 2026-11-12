@@ -54,9 +54,9 @@ beads setup and uninstall: [INSTALL.md](INSTALL.md).
 | **Quota** | Manually-triggered remaining-balance check per provider. Never polled. |
 
 Supports Claude Code and Kimi Code today, on one host or many over SSH, on
-Linux or macOS. A provider or optional dependency (`bd`, a fleet dispatch directory,
-an SSH host) whose files are absent is simply inactive — nothing to
-configure, and nothing gets scheduled to fail on a loop until it's installed.
+Linux or macOS. A provider or optional dependency (`bd`, the dispatch directory
+(`overlord_dir`), an SSH host) whose files are absent is simply inactive — nothing to configure,
+and nothing gets scheduled to fail on a loop until it's installed.
 
 ## How the numbers are kept honest
 

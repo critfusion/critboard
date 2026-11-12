@@ -312,7 +312,7 @@ curl -fs http://127.0.0.1:9999/api/healthz | python3 -m json.tool
 Per-collector `"ok"` fields inside `"collectors"` reflect what's actually
 configured -- `beads`/`dispatch`/`remote` staying `false` with
 `"optional": true` and a `reason_code` is expected if you don't have `bd`
-installed, no `~/.overlord`, or no remote `hosts` configured; it is not a
+installed, no dispatch directory (config key `overlord_dir`), or no remote `hosts` configured; it is not a
 failed install. A collector in that state is auto-detected as inactive and
 is not scheduled at all (no repeated failing subprocess every cycle) -- see
 "Config reference" below.
@@ -791,8 +791,8 @@ if a key is missing entirely. Notable ones for a fresh install:
   skipped, not a failure.
 - `collectors` -- per-collector `{"enabled": true|false}` overrides. Defaults
   to `{}` (auto-detect everything): `beads`/`dispatch`/`remote` start
-  inactive on their own when their dependency (`bd`, `~/.overlord`, an
-  `ssh`-mode host) is absent, and are re-checked every
+  inactive on their own when their dependency (`bd`, the dispatch directory
+  named by `overlord_dir`, an `ssh`-mode host) is absent, and are re-checked every
   `collector_redetect_interval_s` (default 60s) -- installing `bd` later
   brings that panel alive with no restart. Force one on or off regardless of
   detection with e.g. `{"beads": {"enabled": false}}`.
@@ -894,7 +894,7 @@ and "Obtaining `beads_dir` safely" under "Setting up beads" for the fix.
 | `beads_dir` | **Optional.** The beads workspace's `.beads` directory itself -- exported as `BEADS_DIR` before every `bd` call, taking precedence over `beads_env`. Empty by default | `beads` panel | Not searched for -- `install.sh` tries `bd where --json` once, on first config write, uses its `"path"` field only if that same path then passes the workspace check below too, and otherwise leaves it empty, a normal state. Validated as a real workspace (not just an existing directory) by running `bd where --json` with `BEADS_DIR` set to the candidate -- the same check `make doctor`/`--probe` and the live collector both run; see `check_beads_workspace` in `server/critdash/collectors/beads.py` and "NOT_WORKSPACE" above |
 | `claude_projects_dir` | Claude Code's session logs | `agents`, `usage`, `analytics` panels | `~/.claude/projects` on every platform (Claude Code does not use a macOS Application Support directory) |
 | `kimi_dir` | Kimi Code CLI's session/credentials directory | `kimi` panel, Kimi quota check | `~/.kimi-code` (dotfile, same on every platform this dashboard has verified). `~/Library/Application Support/Kimi` is probed as an unconfirmed, defensive fallback candidate on macOS only -- checked, never assumed |
-| `overlord_dir` | Optional integration with a fleet dispatch tool | `dispatch` panel | `~/.overlord` (a homegrown dotfile, not a packaged/Homebrew tool -- no macOS-specific location exists to check) |
+| `overlord_dir` | Optional: the directory your own dispatch tool writes its log, routes and pause files to | `dispatch` panel | The value of `overlord_dir` in `config/sources.example.json` (a plain directory in your home folder, not a packaged/Homebrew tool -- no macOS-specific location exists to check). Point it at your own dispatch directory, or leave the panel inactive |
 | `opencode_auth_path` | OpenCode CLI's stored keys (openrouter/opencode/google) | Quota check | `~/.local/share/opencode/auth.json`; no macOS-specific location confirmed |
 | `grok_auth_path` | xAI/Grok CLI's OAuth session | Quota check (xai) | `~/.grok/auth.json`; no macOS-specific location confirmed |
 | `codex_auth_path` | Codex CLI's stored key | Quota check (openai) | `~/.codex/auth.json`; no macOS-specific location confirmed |
