@@ -66,7 +66,7 @@ critdash/
 | agents | `herdr agent list` (JSON on stdout, one line) | 5s |
 | worktrees | `git -C <dir>` over dirs in `sources.json:repo_roots` | 60s |
 | usage | `~/.claude/projects/*/*.jsonl`, incremental by byte offset | 10s |
-| dispatch | `~/.overlord/fleet-dispatch.log`, `~/.overlord/routes.conf`, `~/.overlord/pause/` | 30s |
+| dispatch | `<overlord_dir>/fleet-dispatch.log`, `<overlord_dir>/routes.conf`, `<overlord_dir>/pause/` | 30s |
 | system | /proc loadavg, meminfo, `df` on / and /srv | 15s |
 
 Notes on real shapes observed on this host:
